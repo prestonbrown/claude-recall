@@ -8,6 +8,7 @@ A dynamic learning system for [Claude Code](https://github.com/anthropics/claude
 - **Star rating system**: Lessons gain stars with each use, promoting high-value ones
 - **Automatic injection**: Lessons shown at session start
 - **Citation tracking**: When Claude applies a lesson, it gains stars
+- **Slash command**: Type `/lessons` to view all lessons with star ratings
 - **Export/Import**: Sync lessons across machines via SSH or tarball
 
 ## 🚀 Quick Install
@@ -39,6 +40,10 @@ SYSTEM LESSON: preference: Git commits - Use simple double-quoted strings
 Format: `LESSON: [category:] title - content`
 
 **Categories:** `pattern`, `correction`, `decision`, `gotcha`, `preference`
+
+### Viewing Lessons
+
+Type `/lessons` in Claude Code to see all your lessons with star ratings in a formatted table.
 
 ### How It Works
 
@@ -89,6 +94,8 @@ Format: `LESSON: [category:] title - content`
 ├── LESSONS.md              # System lessons (apply everywhere)
 ├── CLAUDE.md               # Instructions (lessons section added)
 ├── settings.json           # Hooks configuration
+├── commands/
+│   └── lessons.md          # /lessons slash command
 └── hooks/
     ├── lessons-manager.sh      # Core CLI
     ├── lessons-inject-hook.sh  # SessionStart hook

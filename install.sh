@@ -624,6 +624,38 @@ SYSTEM LESSON: title - content             # Add system lesson directly
     fi
 }
 
+# Create /lessons slash command
+write_lessons_command() {
+    local commands_dir="$CLAUDE_DIR/commands"
+    local command_file="$commands_dir/lessons.md"
+
+    mkdir -p "$commands_dir"
+
+    if [[ ! -f "$command_file" ]]; then
+        log_info "Creating /lessons slash command..."
+        cat > "$command_file" << 'EOF'
+# Show Active Lessons
+
+Display the current lessons with star ratings and usage counts.
+
+Run this command to show lessons:
+```bash
+~/.claude/hooks/lessons-manager.sh list
+```
+
+Then summarize the output in a table showing:
+1. **Top 5 lessons** by usage (highest stars first) with their ID, star rating, title, and content
+2. Total count of project vs system lessons
+3. Any lessons close to promotion (40+ uses)
+
+Format the output as a clear markdown table for easy scanning.
+EOF
+        log_success "Created /lessons command"
+    else
+        log_info "/lessons command already exists"
+    fi
+}
+
 # Export lessons to tarball
 export_lessons() {
     local output_file="${1:-$HOME/claude-lessons-export.tar.gz}"
@@ -967,6 +999,7 @@ main() {
     update_settings
     init_system_lessons
     add_claude_md_instructions
+    write_lessons_command
 
     echo ""
     log_success "Installation complete!"
@@ -974,12 +1007,14 @@ main() {
     echo "Usage:"
     echo "  • Start a new Claude Code session to see lessons"
     echo "  • Type 'LESSON: title - content' to add a lesson"
+    echo "  • Type '/lessons' to view all lessons with star ratings"
     echo "  • Claude will cite [L###] when applying lessons"
     echo ""
     echo "Files created:"
     echo "  • $HOOKS_DIR/lessons-*.sh (4 hook scripts)"
     echo "  • $SETTINGS_FILE (hooks configuration)"
     echo "  • $CLAUDE_DIR/LESSONS.md (system lessons)"
+    echo "  • $CLAUDE_DIR/commands/lessons.md (slash command)"
     echo ""
 }
 
