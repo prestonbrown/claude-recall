@@ -67,6 +67,7 @@ PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 SYSTEM_LESSONS_FILE="$HOME/.claude/LESSONS.md"
 MAX_LESSONS="${MAX_LESSONS:-30}"
 SYSTEM_PROMOTION_THRESHOLD="${SYSTEM_PROMOTION_THRESHOLD:-50}"
+STALE_DAYS="${STALE_DAYS:-60}"
 
 find_project_root() {
     local dir="$PROJECT_DIR"
@@ -131,7 +132,78 @@ get_next_id() {
     printf "%s%03d" "$prefix" $((max_id + 1))
 }
 
+# Calculate days between two dates (YYYY-MM-DD format)
+days_since() {
+    local date_str="$1"
+    local today=$(date +%s)
+    local then
+    # macOS and Linux compatible date parsing
+    if date -j >/dev/null 2>&1; then
+        # macOS
+        then=$(date -j -f "%Y-%m-%d" "$date_str" +%s 2>/dev/null || echo "$today")
+    else
+        # Linux
+        then=$(date -d "$date_str" +%s 2>/dev/null || echo "$today")
+    fi
+    echo $(( (today - then) / 86400 ))
+}
+
+# Check for duplicate lessons by title similarity
+check_duplicate() {
+    local title="$1" file="$2"
+    [[ ! -f "$file" ]] && return 1
+
+    # Normalize title for comparison (lowercase, remove punctuation)
+    local normalized=$(echo "$title" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]' | tr -s ' ')
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^###[[:space:]]*\[[LS][0-9]+\][[:space:]]*\[[^\]]+\][[:space:]]*(.*) ]]; then
+            local existing_title="${BASH_REMATCH[1]}"
+            local existing_norm=$(echo "$existing_title" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]' | tr -s ' ')
+            # Check if titles are very similar (one contains the other or exact match)
+            if [[ "$normalized" == "$existing_norm" ]] || \
+               [[ "$normalized" == *"$existing_norm"* && ${#existing_norm} -gt 10 ]] || \
+               [[ "$existing_norm" == *"$normalized"* && ${#normalized} -gt 10 ]]; then
+                echo "$existing_title"
+                return 0
+            fi
+        fi
+    done < "$file"
+    return 1
+}
+
 add_lesson() {
+    local level="$1" category="$2" title="$3" content="$4"
+    local file prefix
+    if [[ "$level" == "system" ]]; then
+        file="$SYSTEM_LESSONS_FILE"; prefix="S"
+    else
+        file="$PROJECT_LESSONS_FILE"; prefix="L"
+    fi
+    init_lessons_file "$file" "$level"
+
+    # Check for duplicates
+    local duplicate
+    if duplicate=$(check_duplicate "$title" "$file"); then
+        echo "WARNING: Similar lesson already exists: '$duplicate'" >&2
+        echo "Add anyway? Use 'add --force' to skip this check" >&2
+        return 1
+    fi
+
+    local lesson_id=$(get_next_id "$file" "$prefix")
+    local date_learned=$(date +%Y-%m-%d)
+    local stars=$(uses_to_stars 1)
+    cat >> "$file" << EOF
+
+### [$lesson_id] $stars $title
+- **Uses**: 1 | **Learned**: $date_learned | **Last**: $date_learned | **Category**: $category
+> $content
+
+EOF
+    echo "Added $level lesson $lesson_id: $title"
+}
+
+add_lesson_force() {
     local level="$1" category="$2" title="$3" content="$4"
     local file prefix
     if [[ "$level" == "system" ]]; then
@@ -192,24 +264,176 @@ cite_lesson() {
     fi
 }
 
+# Edit a lesson's content
+edit_lesson() {
+    local lesson_id="$1" new_content="$2"
+    local file
+    [[ "$lesson_id" =~ ^S ]] && file="$SYSTEM_LESSONS_FILE" || file="$PROJECT_LESSONS_FILE"
+    [[ ! -f "$file" ]] && { echo "Lessons file not found: $file" >&2; return 1; }
+    grep -q "\[$lesson_id\]" "$file" || { echo "Lesson $lesson_id not found" >&2; return 1; }
+
+    local tmp_file=$(mktemp) found=false
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^###[[:space:]]*\[$lesson_id\] ]]; then
+            found=true
+            echo "$line" >> "$tmp_file"
+            IFS= read -r meta_line
+            echo "$meta_line" >> "$tmp_file"
+            IFS= read -r content_line  # Skip old content
+            echo "> $new_content" >> "$tmp_file"
+        else
+            echo "$line" >> "$tmp_file"
+        fi
+    done < "$file"
+
+    if $found; then
+        mv "$tmp_file" "$file"
+        echo "Updated $lesson_id content"
+    else
+        rm "$tmp_file"
+        return 1
+    fi
+}
+
+# Delete a lesson
+delete_lesson() {
+    local lesson_id="$1"
+    local file
+    [[ "$lesson_id" =~ ^S ]] && file="$SYSTEM_LESSONS_FILE" || file="$PROJECT_LESSONS_FILE"
+    [[ ! -f "$file" ]] && { echo "Lessons file not found: $file" >&2; return 1; }
+    grep -q "\[$lesson_id\]" "$file" || { echo "Lesson $lesson_id not found" >&2; return 1; }
+
+    local tmp_file=$(mktemp) skip_until_next=false deleted_title=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^###[[:space:]]*\[$lesson_id\][[:space:]]*\[[^\]]+\][[:space:]]*(.*) ]]; then
+            skip_until_next=true
+            deleted_title="${BASH_REMATCH[1]}"
+            continue
+        fi
+        if $skip_until_next; then
+            # Skip until we hit next lesson header or end of lessons section
+            if [[ "$line" =~ ^###[[:space:]]*\[[LS][0-9]+\] ]] || [[ -z "$line" && $(tail -1 "$tmp_file" 2>/dev/null) == "" ]]; then
+                skip_until_next=false
+                [[ "$line" =~ ^### ]] && echo "$line" >> "$tmp_file"
+            fi
+            continue
+        fi
+        echo "$line" >> "$tmp_file"
+    done < "$file"
+
+    mv "$tmp_file" "$file"
+    echo "Deleted $lesson_id: $deleted_title"
+}
+
+# Enhanced list with search, category filter, and staleness
 list_lessons() {
-    local scope="${1:---all}"
+    local scope="--all" search="" category="" show_stale=false verbose=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project|--system|--all) scope="$1"; shift ;;
+            --search|-s) search="$2"; shift 2 ;;
+            --category|-c) category="$2"; shift 2 ;;
+            --stale) show_stale=true; shift ;;
+            --verbose|-v) verbose=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    # Collect lessons from appropriate files
+    local files=()
     case "$scope" in
-        --project)
-            echo "=== PROJECT LESSONS ($PROJECT_ROOT) ==="
-            [[ -f "$PROJECT_LESSONS_FILE" ]] && grep -E "^### \[[LS][0-9]+\]" "$PROJECT_LESSONS_FILE" || echo "(none)"
-            ;;
-        --system)
-            echo "=== SYSTEM LESSONS ==="
-            [[ -f "$SYSTEM_LESSONS_FILE" ]] && grep -E "^### \[[LS][0-9]+\]" "$SYSTEM_LESSONS_FILE" || echo "(none)"
-            ;;
+        --project) [[ -f "$PROJECT_LESSONS_FILE" ]] && files+=("$PROJECT_LESSONS_FILE") ;;
+        --system) [[ -f "$SYSTEM_LESSONS_FILE" ]] && files+=("$SYSTEM_LESSONS_FILE") ;;
         *)
-            echo "=== PROJECT LESSONS ($PROJECT_ROOT) ==="
-            [[ -f "$PROJECT_LESSONS_FILE" ]] && grep -E "^### \[[LS][0-9]+\]" "$PROJECT_LESSONS_FILE" || echo "(none)"
-            echo ""; echo "=== SYSTEM LESSONS ==="
-            [[ -f "$SYSTEM_LESSONS_FILE" ]] && grep -E "^### \[[LS][0-9]+\]" "$SYSTEM_LESSONS_FILE" || echo "(none)"
+            [[ -f "$PROJECT_LESSONS_FILE" ]] && files+=("$PROJECT_LESSONS_FILE")
+            [[ -f "$SYSTEM_LESSONS_FILE" ]] && files+=("$SYSTEM_LESSONS_FILE")
             ;;
     esac
+
+    (( ${#files[@]} == 0 )) && { echo "(no lessons found)"; return; }
+
+    local current_file="" stale_count=0 total_count=0
+    for file in "${files[@]}"; do
+        local lesson_id="" stars="" title="" uses="" learned="" last="" cat="" content=""
+        local file_label
+        [[ "$file" == "$SYSTEM_LESSONS_FILE" ]] && file_label="SYSTEM" || file_label="PROJECT ($PROJECT_ROOT)"
+
+        [[ "$current_file" != "$file" ]] && { echo "=== $file_label LESSONS ==="; current_file="$file"; }
+
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^###[[:space:]]*(\[[LS][0-9]+\])[[:space:]]*(\[[^\]]+\])[[:space:]]*(.*) ]]; then
+                # Output previous lesson if we have one
+                if [[ -n "$lesson_id" ]]; then
+                    output_lesson "$lesson_id" "$stars" "$title" "$uses" "$learned" "$last" "$cat" "$content" \
+                        "$search" "$category" "$show_stale" "$verbose" && ((total_count++)) || true
+                fi
+                lesson_id="${BASH_REMATCH[1]}"
+                stars="${BASH_REMATCH[2]}"
+                title="${BASH_REMATCH[3]}"
+                uses="" learned="" last="" cat="" content=""
+            elif [[ -n "$lesson_id" && "$line" =~ \*\*Uses\*\*:[[:space:]]*([0-9]+) ]]; then
+                uses="${BASH_REMATCH[1]}"
+                [[ "$line" =~ \*\*Learned\*\*:[[:space:]]*([0-9-]+) ]] && learned="${BASH_REMATCH[1]}"
+                [[ "$line" =~ \*\*Last\*\*:[[:space:]]*([0-9-]+) ]] && last="${BASH_REMATCH[1]}"
+                [[ "$line" =~ \*\*Category\*\*:[[:space:]]*([a-z]+) ]] && cat="${BASH_REMATCH[1]}"
+            elif [[ -n "$lesson_id" && "$line" =~ ^\>[[:space:]]*(.*) ]]; then
+                content="${BASH_REMATCH[1]}"
+            fi
+        done < "$file"
+
+        # Output last lesson
+        if [[ -n "$lesson_id" ]]; then
+            output_lesson "$lesson_id" "$stars" "$title" "$uses" "$learned" "$last" "$cat" "$content" \
+                "$search" "$category" "$show_stale" "$verbose" && ((total_count++)) || true
+        fi
+        echo ""
+    done
+
+    echo "Total: $total_count lesson(s)"
+}
+
+# Helper to output a single lesson with filtering
+output_lesson() {
+    local id="$1" stars="$2" title="$3" uses="$4" learned="$5" last="$6" cat="$7" content="$8"
+    local search="$9" category="${10}" show_stale="${11}" verbose="${12}"
+
+    # Apply search filter
+    if [[ -n "$search" ]]; then
+        local search_lower=$(echo "$search" | tr '[:upper:]' '[:lower:]')
+        local title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+        local content_lower=$(echo "$content" | tr '[:upper:]' '[:lower:]')
+        [[ "$title_lower" != *"$search_lower"* && "$content_lower" != *"$search_lower"* ]] && return 1
+    fi
+
+    # Apply category filter
+    if [[ -n "$category" ]]; then
+        [[ "$cat" != "$category" ]] && return 1
+    fi
+
+    # Calculate staleness
+    local days_ago=0 stale_marker=""
+    if [[ -n "$last" ]]; then
+        days_ago=$(days_since "$last")
+        (( days_ago >= STALE_DAYS )) && stale_marker=" ⚠️ STALE(${days_ago}d)"
+    fi
+
+    # Apply stale filter
+    if [[ "$show_stale" == "true" ]]; then
+        (( days_ago < STALE_DAYS )) && return 1
+    fi
+
+    # Output
+    if [[ "$verbose" == "true" ]]; then
+        echo "$id $stars $title$stale_marker"
+        echo "    Uses: $uses | Category: $cat | Last: $last (${days_ago}d ago)"
+        echo "    -> $content"
+    else
+        echo "$id $stars $title$stale_marker"
+        [[ -n "$content" ]] && echo "    -> $content"
+    fi
+    return 0
 }
 
 evict_lessons() {
@@ -218,21 +442,76 @@ evict_lessons() {
     local count=$(grep -cE "^### \[L[0-9]+\]" "$file" 2>/dev/null || echo 0)
     (( count <= max_count )) && { echo "No eviction needed ($count <= $max_count)"; return; }
     echo "Eviction: removing $((count - max_count)) lowest-star lessons..."
-    # Simplified eviction - just warns for now
+    # TODO: Implement actual eviction
+}
+
+show_help() {
+    cat << 'HELPEOF'
+lessons-manager.sh - Manage Claude Code lessons
+
+COMMANDS:
+  list [options]           List lessons with optional filters
+    --project              Show only project lessons
+    --system               Show only system lessons
+    --search, -s <term>    Filter by title/content
+    --category, -c <cat>   Filter by category (pattern|correction|gotcha|preference|decision)
+    --stale                Show only stale lessons (uncited 60+ days)
+    --verbose, -v          Show full details
+
+  add <category> <title> <content>
+                           Add a project lesson (checks for duplicates)
+  add --force <category> <title> <content>
+                           Add without duplicate check
+  add-system <category> <title> <content>
+                           Add a system lesson
+
+  edit <id> <new_content>  Edit a lesson's content
+  delete <id>              Delete a lesson
+  cite <id>                Increment a lesson's usage count
+  evict [max]              Remove lowest-star lessons over limit
+
+EXAMPLES:
+  lessons-manager.sh list --search "spdlog"
+  lessons-manager.sh list --category gotcha --verbose
+  lessons-manager.sh list --stale
+  lessons-manager.sh edit L005 "New content for this lesson"
+  lessons-manager.sh delete L003
+HELPEOF
 }
 
 main() {
     local cmd="${1:-help}"; shift || true
     case "$cmd" in
-        add) [[ $# -lt 3 ]] && { echo "Usage: add <category> <title> <content>" >&2; exit 1; }
-             add_lesson "project" "$1" "$2" "$3" ;;
-        add-system) [[ $# -lt 3 ]] && { echo "Usage: add-system <cat> <title> <content>" >&2; exit 1; }
-             add_lesson "system" "$1" "$2" "$3" ;;
-        cite) [[ $# -lt 1 ]] && { echo "Usage: cite <lesson_id>" >&2; exit 1; }
-             cite_lesson "$1" ;;
-        list) list_lessons "${1:---all}" ;;
+        add)
+            if [[ "${1:-}" == "--force" ]]; then
+                shift
+                [[ $# -lt 3 ]] && { echo "Usage: add --force <category> <title> <content>" >&2; exit 1; }
+                add_lesson_force "project" "$1" "$2" "$3"
+            else
+                [[ $# -lt 3 ]] && { echo "Usage: add <category> <title> <content>" >&2; exit 1; }
+                add_lesson "project" "$1" "$2" "$3"
+            fi
+            ;;
+        add-system)
+            [[ $# -lt 3 ]] && { echo "Usage: add-system <cat> <title> <content>" >&2; exit 1; }
+            add_lesson "system" "$1" "$2" "$3"
+            ;;
+        edit)
+            [[ $# -lt 2 ]] && { echo "Usage: edit <lesson_id> <new_content>" >&2; exit 1; }
+            edit_lesson "$1" "$2"
+            ;;
+        delete)
+            [[ $# -lt 1 ]] && { echo "Usage: delete <lesson_id>" >&2; exit 1; }
+            delete_lesson "$1"
+            ;;
+        cite)
+            [[ $# -lt 1 ]] && { echo "Usage: cite <lesson_id>" >&2; exit 1; }
+            cite_lesson "$1"
+            ;;
+        list) list_lessons "$@" ;;
         evict) evict_lessons "${1:-}" ;;
-        *) echo "Usage: lessons-manager.sh {add|add-system|cite|list|evict} [args]" ;;
+        help|--help|-h) show_help ;;
+        *) show_help; exit 1 ;;
     esac
 }
 

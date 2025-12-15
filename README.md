@@ -119,12 +119,43 @@ Type `/lessons` in Claude Code to see all your lessons with star ratings in a fo
 ### Manager CLI
 
 ```bash
-~/.claude/hooks/lessons-manager.sh list              # Show all lessons
-~/.claude/hooks/lessons-manager.sh list --project    # Project only
-~/.claude/hooks/lessons-manager.sh list --system     # System only
-~/.claude/hooks/lessons-manager.sh cite L001         # Manually cite
-~/.claude/hooks/lessons-manager.sh evict             # Run eviction
+# Listing lessons
+~/.claude/hooks/lessons-manager.sh list                      # Show all lessons
+~/.claude/hooks/lessons-manager.sh list --project            # Project only
+~/.claude/hooks/lessons-manager.sh list --system             # System only
+~/.claude/hooks/lessons-manager.sh list --search "spdlog"    # Search by keyword
+~/.claude/hooks/lessons-manager.sh list --category gotcha    # Filter by category
+~/.claude/hooks/lessons-manager.sh list --stale              # Show stale lessons (60+ days uncited)
+~/.claude/hooks/lessons-manager.sh list --verbose            # Full details with staleness
+
+# Modifying lessons
+~/.claude/hooks/lessons-manager.sh edit L005 "New content"   # Edit a lesson's content
+~/.claude/hooks/lessons-manager.sh delete L003               # Delete a lesson
+~/.claude/hooks/lessons-manager.sh cite L001                 # Manually cite
+
+# Other
+~/.claude/hooks/lessons-manager.sh evict                     # Run eviction
+~/.claude/hooks/lessons-manager.sh help                      # Show all commands
 ```
+
+### Duplicate Detection
+
+When adding a lesson, the system checks for similar existing lessons by title. If a duplicate is found, you'll be warned:
+
+```
+WARNING: Similar lesson already exists: 'Verbose flags required'
+Add anyway? Use 'add --force' to skip this check
+```
+
+### Staleness Tracking
+
+Lessons that haven't been cited in 60+ days are marked as stale:
+
+```
+[L005] [+----/-----] Static buffers for subjects ⚠️ STALE(75d)
+```
+
+Use `list --stale` to see only stale lessons for review.
 
 ## 🤖 Claude's Behavior
 
