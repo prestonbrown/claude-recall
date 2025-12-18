@@ -725,6 +725,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANAGER="$SCRIPT_DIR/lessons-manager.sh"
 CONFIG_FILE="$HOME/.claude/settings.json"
+DEBUG_LOG="${LESSONS_DEBUG_LOG:-}"  # Set to a path to enable debug logging
+
+debug() {
+    [[ -n "$DEBUG_LOG" ]] && echo "[$(date +%H:%M:%S)] $*" >> "$DEBUG_LOG"
+}
 
 is_enabled() {
     [[ -f "$CONFIG_FILE" ]] && {
@@ -742,55 +747,113 @@ find_project_root() {
     echo "$1"
 }
 
-main() {
-    is_enabled || exit 0
-    local input=$(cat)
-    local response=$(echo "$input" | jq -r '.response // .message // .content // ""' 2>/dev/null || echo "")
-    local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
-    [[ -z "$response" ]] && exit 0
+extract_citations_from_transcript() {
+    local transcript_path="$1"
+    transcript_path="${transcript_path/#\~/$HOME}"  # Expand tilde
 
-    local project_root=$(find_project_root "$cwd")
+    [[ -z "$transcript_path" || ! -f "$transcript_path" ]] && return 1
 
-    # Check for CONFIRM-LESSON in Claude's response
-    if echo "$response" | grep -qi "CONFIRM-LESSON:"; then
-        echo "[lessons] Adding confirmed lesson..." >&2
-        echo "$response" | grep -i "CONFIRM-LESSON:" | head -1 | while IFS= read -r lesson_line; do
-            local lesson_text=$(echo "$lesson_line" | sed -E 's/.*CONFIRM-LESSON:[[:space:]]*//i')
-            local category="discovery"
-            if [[ "$lesson_text" =~ ^([a-z]+):[[:space:]]*(.*)$ ]]; then
-                category="${BASH_REMATCH[1]}"; lesson_text="${BASH_REMATCH[2]}"
-            fi
-            local title="" content=""
-            if [[ "$lesson_text" =~ ^([^-]+)[[:space:]]*-[[:space:]]*(.+)$ ]]; then
-                title="${BASH_REMATCH[1]}"; content="${BASH_REMATCH[2]}"
-            else
-                title="$lesson_text"; content="$lesson_text"
-            fi
-            title=$(echo "$title" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
-            content=$(echo "$content" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
-            [[ -n "$title" && -n "$content" ]] && {
-                local result=$(PROJECT_DIR="$project_root" "$MANAGER" add "$category" "$title" "$content" 2>&1)
-                echo "[lessons] ADDED: $result" >&2
-            }
-        done
-    fi
+    debug "Scanning transcript: $transcript_path"
 
-    # Find all lesson citations [L###] and [S###]
-    local citations=$(echo "$response" | grep -oE '\[[LS][0-9]{3}\]' | sort -u || true)
-    [[ -z "$citations" ]] && exit 0
+    # Use grep to find citations directly - much faster than parsing JSON
+    # Only scan last 50KB to keep it fast
+    tail -c 51200 "$transcript_path" 2>/dev/null | \
+        grep -oE '\[[LS][0-9]{3}\]' | \
+        sort -u || true
+}
 
+extract_confirm_lesson() {
+    local transcript_path="$1"
+    transcript_path="${transcript_path/#\~/$HOME}"
+
+    [[ -z "$transcript_path" || ! -f "$transcript_path" ]] && return 1
+
+    # Only scan last 20KB for CONFIRM-LESSON
+    tail -c 20480 "$transcript_path" 2>/dev/null | \
+        grep -i "CONFIRM-LESSON:" | \
+        tail -1 || true
+}
+
+process_citations() {
+    local citations="$1"
+    local project_root="$2"
+
+    [[ -z "$citations" ]] && return 0
+
+    debug "Found citations: $citations"
     echo "[lessons] Processing citations..." >&2
+
     local cited_count=0
     while IFS= read -r citation; do
+        [[ -z "$citation" ]] && continue
         local lesson_id=$(echo "$citation" | tr -d '[]')
         local result=$(PROJECT_DIR="$project_root" "$MANAGER" cite "$lesson_id" 2>&1 || true)
         if [[ "$result" == OK:* ]]; then
             local uses=$(echo "$result" | cut -d: -f2)
             echo "[lessons] $lesson_id cited (now $uses uses)" >&2
             ((cited_count++)) || true
+        else
+            debug "Failed to cite $lesson_id: $result"
         fi
     done <<< "$citations"
+
     (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
+}
+
+process_confirm_lesson() {
+    local lesson_line="$1"
+    local project_root="$2"
+
+    [[ -z "$lesson_line" ]] && return 0
+
+    echo "[lessons] Adding confirmed lesson..." >&2
+
+    local lesson_text=$(echo "$lesson_line" | sed -E 's/.*CONFIRM-LESSON:[[:space:]]*//i')
+    local category="discovery"
+    if [[ "$lesson_text" =~ ^([a-z]+):[[:space:]]*(.*)$ ]]; then
+        category="${BASH_REMATCH[1]}"
+        lesson_text="${BASH_REMATCH[2]}"
+    fi
+
+    local title="" content=""
+    if [[ "$lesson_text" =~ ^([^-]+)[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+        title="${BASH_REMATCH[1]}"
+        content="${BASH_REMATCH[2]}"
+    else
+        title="$lesson_text"
+        content="$lesson_text"
+    fi
+
+    title=$(echo "$title" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+    content=$(echo "$content" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+
+    [[ -n "$title" && -n "$content" ]] && {
+        local result=$(PROJECT_DIR="$project_root" "$MANAGER" add "$category" "$title" "$content" 2>&1)
+        echo "[lessons] ADDED: $result" >&2
+    }
+}
+
+main() {
+    is_enabled || exit 0
+
+    local input=$(cat)
+    debug "Hook input: ${#input} chars"
+
+    local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
+    local project_root=$(find_project_root "$cwd")
+    local transcript_path=$(echo "$input" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
+    debug "Project root: $project_root, transcript: $transcript_path"
+
+    # Fast path: grep citations directly from transcript (50KB tail)
+    local citations=$(extract_citations_from_transcript "$transcript_path")
+
+    # Process CONFIRM-LESSON if present (20KB tail)
+    local confirm_line=$(extract_confirm_lesson "$transcript_path")
+    [[ -n "$confirm_line" ]] && process_confirm_lesson "$confirm_line" "$project_root"
+
+    # Process citations
+    process_citations "$citations" "$project_root"
+
     exit 0
 }
 
