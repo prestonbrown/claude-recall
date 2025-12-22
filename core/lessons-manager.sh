@@ -440,6 +440,7 @@ COMMANDS:
   edit <id> <content>         Edit lesson content
   delete <id>                 Delete a lesson
   inject [n]                  Output top N lessons for session injection
+  reset-reminder              Reset the periodic reminder counter
 
 CATEGORIES: pattern, correction, decision, gotcha, preference
 
@@ -477,6 +478,9 @@ main() {
         inject) inject_context "${1:-5}" ;;
         list) list_lessons "$@" ;;
         evict) evict_lessons "${1:-}" ;;
+        reset-reminder)
+            rm -f "$LESSONS_BASE/.reminder-state"
+            echo "Reminder counter reset" ;;
         help|--help|-h) show_help ;;
         *) show_help; exit 1 ;;
     esac

@@ -64,10 +64,32 @@ Use the `/lessons` slash command:
 
 ### How It Works
 
-1. **Session Start**: Lessons are injected as context
-2. **When the agent applies a lesson**: It cites `[L001]` → star count increases
-3. **50+ uses**: Project lesson promotes to system level
-4. **Eviction**: Lowest-star lessons removed when cache fills (default: 30)
+1. **Session Start**: Lessons are injected as context, reminder counter resets
+2. **Periodic Reminders**: Every 12 prompts, high-star lessons appear as `📚 LESSON CHECK`
+3. **When the agent applies a lesson**: It cites `[L001]` → star count increases
+4. **50+ uses**: Project lesson promotes to system level
+5. **Eviction**: Lowest-star lessons removed when cache fills (default: 30)
+
+### Periodic Reminders
+
+High-star lessons (3+ stars) are shown every 12 prompts to keep them top of mind:
+
+```
+📚 LESSON CHECK - High-priority lessons to keep in mind:
+### [L014] [*****/+----] Register all XML components
+### [L010] [*****/+----] No spdlog in destructors
+### [L001] [****-/-----] Conventional commits format
+```
+
+Configure reminder frequency with environment variable:
+```bash
+export LESSON_REMIND_EVERY=12  # Default: every 12 prompts
+```
+
+Reset the reminder counter manually:
+```bash
+~/.config/coding-agent-lessons/lessons-manager.sh reset-reminder
+```
 
 ### Star Rating
 
@@ -86,8 +108,12 @@ Use the `/lessons` slash command:
 
 ```
 ~/.config/coding-agent-lessons/
-├── lessons-manager.sh      # Core CLI
-└── LESSONS.md              # System lessons (apply everywhere)
+├── lessons-manager.sh          # Core CLI
+├── lesson-reminder-hook.sh     # Periodic reminder script (for Claude Code)
+├── LESSONS.md                  # System lessons (apply everywhere)
+├── .reminder-state             # Prompt counter (auto-managed)
+└── plugins/
+    └── opencode-lesson-reminder.ts  # OpenCode plugin
 
 <project>/.coding-agent-lessons/
 └── LESSONS.md              # Project-specific lessons

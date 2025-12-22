@@ -137,11 +137,19 @@ migrate_lessons() {
 
 install_core() {
     log_info "Installing core lessons manager..."
-    mkdir -p "$LESSONS_BASE"
+    mkdir -p "$LESSONS_BASE" "$LESSONS_BASE/plugins"
     cp "$SCRIPT_DIR/core/lessons-manager.sh" "$LESSONS_BASE/"
-    chmod +x "$LESSONS_BASE/lessons-manager.sh"
+    cp "$SCRIPT_DIR/core/lesson-reminder-hook.sh" "$LESSONS_BASE/"
+    chmod +x "$LESSONS_BASE/lessons-manager.sh" "$LESSONS_BASE/lesson-reminder-hook.sh"
     log_success "Installed lessons-manager.sh to $LESSONS_BASE/"
-    
+    log_success "Installed lesson-reminder-hook.sh to $LESSONS_BASE/"
+
+    # Install OpenCode plugin to core location (adapters will symlink/copy)
+    if [[ -f "$SCRIPT_DIR/plugins/opencode-lesson-reminder.ts" ]]; then
+        cp "$SCRIPT_DIR/plugins/opencode-lesson-reminder.ts" "$LESSONS_BASE/plugins/"
+        log_success "Installed OpenCode reminder plugin"
+    fi
+
     if [[ ! -f "$LESSONS_BASE/LESSONS.md" ]]; then
         cat > "$LESSONS_BASE/LESSONS.md" << 'EOF'
 # LESSONS.md - System Level
@@ -194,13 +202,19 @@ Based on arguments, run the appropriate command:
 Format list output as a markdown table. Valid categories: pattern, correction, gotcha, preference, decision.
 EOF
     
-    # Update settings.json with hooks
+    # Update settings.json with hooks (including periodic reminder)
     local settings_file="$claude_dir/settings.json"
     local hooks_config='{
   "lessonsSystem": {"enabled": true},
   "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/inject-hook.sh", "timeout": 5000}]}],
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/capture-hook.sh", "timeout": 5000}]}],
+    "SessionStart": [{"hooks": [
+      {"type": "command", "command": "bash '"$hooks_dir"'/inject-hook.sh", "timeout": 5000},
+      {"type": "command", "command": "rm -f ~/.config/coding-agent-lessons/.reminder-state", "timeout": 1000}
+    ]}],
+    "UserPromptSubmit": [{"hooks": [
+      {"type": "command", "command": "bash '"$hooks_dir"'/capture-hook.sh", "timeout": 5000},
+      {"type": "command", "command": "~/.config/coding-agent-lessons/lesson-reminder-hook.sh", "timeout": 2000}
+    ]}],
     "Stop": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/stop-hook.sh", "timeout": 5000}]}]
   }
 }'
@@ -253,15 +267,27 @@ A tiered cache that tracks corrections/patterns across sessions.
 
 install_opencode() {
     log_info "Installing OpenCode adapter..."
-    
+
     local opencode_dir="$HOME/.config/opencode"
     local plugin_dir="$opencode_dir/plugin"
     local command_dir="$opencode_dir/command"
-    
+
     mkdir -p "$plugin_dir" "$command_dir"
-    
-    cp "$SCRIPT_DIR/adapters/opencode/plugin.ts" "$plugin_dir/lessons.ts"
-    cp "$SCRIPT_DIR/adapters/opencode/command/lessons.md" "$command_dir/"
+
+    # Install main lessons plugin
+    if [[ -f "$SCRIPT_DIR/adapters/opencode/plugin.ts" ]]; then
+        cp "$SCRIPT_DIR/adapters/opencode/plugin.ts" "$plugin_dir/lessons.ts"
+    fi
+
+    # Install periodic reminder plugin
+    if [[ -f "$SCRIPT_DIR/plugins/opencode-lesson-reminder.ts" ]]; then
+        cp "$SCRIPT_DIR/plugins/opencode-lesson-reminder.ts" "$plugin_dir/lesson-reminder.ts"
+        log_success "Installed OpenCode reminder plugin"
+    fi
+
+    if [[ -f "$SCRIPT_DIR/adapters/opencode/command/lessons.md" ]]; then
+        cp "$SCRIPT_DIR/adapters/opencode/command/lessons.md" "$command_dir/"
+    fi
     
     local agents_md="$opencode_dir/AGENTS.md"
     local lessons_section='
@@ -300,26 +326,68 @@ A tiered learning cache that tracks corrections/patterns across sessions.
 
 uninstall() {
     log_warn "Uninstalling coding-agent-lessons..."
-    
-    # Remove Claude Code adapter
+
+    # Remove Claude Code adapter files
     rm -f "$HOME/.claude/hooks/inject-hook.sh"
     rm -f "$HOME/.claude/hooks/capture-hook.sh"
     rm -f "$HOME/.claude/hooks/stop-hook.sh"
     rm -f "$HOME/.claude/commands/lessons.md"
-    
+
+    # Selectively remove only lessons-related hooks from settings.json
+    # This preserves other user hooks while removing inject-hook, capture-hook, stop-hook, and reminder hooks
     if [[ -f "$HOME/.claude/settings.json" ]]; then
-        jq 'del(.hooks.SessionStart) | del(.hooks.UserPromptSubmit) | del(.hooks.Stop) | del(.lessonsSystem)' \
-            "$HOME/.claude/settings.json" > "$HOME/.claude/settings.json.tmp" 2>/dev/null || true
-        mv "$HOME/.claude/settings.json.tmp" "$HOME/.claude/settings.json" 2>/dev/null || true
+        local backup="$HOME/.claude/settings.json.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$HOME/.claude/settings.json" "$backup"
+        log_info "Backed up settings to $backup"
+
+        # Remove hooks containing lessons-related commands, preserving others
+        jq '
+          del(.lessonsSystem) |
+          if .hooks then
+            .hooks |= (
+              if .SessionStart then
+                .SessionStart |= map(
+                  .hooks |= map(select(.command | (contains("inject-hook.sh") or contains("reminder-state") or contains("lesson-reminder")) | not))
+                ) | .SessionStart |= map(select(.hooks | length > 0))
+              else . end |
+              if .UserPromptSubmit then
+                .UserPromptSubmit |= map(
+                  .hooks |= map(select(.command | (contains("capture-hook.sh") or contains("lesson-reminder")) | not))
+                ) | .UserPromptSubmit |= map(select(.hooks | length > 0))
+              else . end |
+              if .Stop then
+                .Stop |= map(
+                  .hooks |= map(select(.command | contains("stop-hook.sh") | not))
+                ) | .Stop |= map(select(.hooks | length > 0))
+              else . end |
+              # Remove empty hook arrays
+              with_entries(select(.value | length > 0))
+            )
+          else . end |
+          # Remove hooks key if empty
+          if .hooks and (.hooks | length == 0) then del(.hooks) else . end
+        ' "$HOME/.claude/settings.json" > "$HOME/.claude/settings.json.tmp" 2>/dev/null
+
+        if [[ -s "$HOME/.claude/settings.json.tmp" ]]; then
+            mv "$HOME/.claude/settings.json.tmp" "$HOME/.claude/settings.json"
+            log_success "Removed lessons hooks from settings.json (other hooks preserved)"
+        else
+            rm -f "$HOME/.claude/settings.json.tmp"
+            log_warn "Could not update settings.json - please manually remove lessons hooks"
+        fi
     fi
-    
+
     # Remove OpenCode adapter
     rm -f "$HOME/.config/opencode/plugin/lessons.ts"
+    rm -f "$HOME/.config/opencode/plugin/lesson-reminder.ts"
     rm -f "$HOME/.config/opencode/command/lessons.md"
-    
+
     # Remove core (but NOT the lessons themselves)
     rm -f "$LESSONS_BASE/lessons-manager.sh"
-    
+    rm -f "$LESSONS_BASE/lesson-reminder-hook.sh"
+    rm -f "$LESSONS_BASE/.reminder-state"
+    rm -rf "$LESSONS_BASE/plugins"
+
     log_success "Uninstalled adapters. Lessons preserved in $LESSONS_BASE/"
     log_info "To fully remove lessons: rm -rf $LESSONS_BASE"
 }
@@ -405,10 +473,14 @@ main() {
     echo "  - System: $LESSONS_BASE/LESSONS.md"
     echo "  - Project: .coding-agent-lessons/LESSONS.md (per-project)"
     echo ""
-    echo "Usage:"
+    echo "Features:"
+    echo "  - Lessons shown at session start"
+    echo "  - Periodic reminders every 12 prompts (high-star lessons)"
     echo "  - Type 'LESSON: title - content' to add a lesson"
     echo "  - Use '/lessons' command to view all lessons"
     echo "  - Agent will cite [L###] when applying lessons"
+    echo ""
+    echo "Configure reminder frequency: export LESSON_REMIND_EVERY=12"
     echo ""
 }
 
