@@ -36,8 +36,14 @@ main() {
     
     [[ -z "$transcript_path" || ! -f "$transcript_path" ]] && exit 0
 
-    # Extract citations from last 50KB of transcript
-    local citations=$(tail -c 51200 "$transcript_path" 2>/dev/null | grep -oE '\[[LS][0-9]{3}\]' | sort -u || true)
+    # Extract lesson citations from last 50KB of transcript
+    # Strategy: find all [L###]/[S###], but EXCLUDE lesson listings
+    # Listings have format: "[L010] [*****" (ID followed by star rating bracket)
+    # Real citations: "[L010]:" or "[L010]," or "[L010] says" (no star bracket)
+    local citations=$(tail -c 51200 "$transcript_path" 2>/dev/null | \
+        grep -oE '\[[LS][0-9]{3}\] ?\[|\[[LS][0-9]{3}\][^[]' | \
+        grep -v '\] \[' | grep -v '\]\[' | \
+        grep -oE '\[[LS][0-9]{3}\]' | sort -u || true)
     
     [[ -z "$citations" ]] && exit 0
 
