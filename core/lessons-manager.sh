@@ -411,15 +411,16 @@ inject_context() {
                 uses="${BASH_REMATCH[1]}"
             elif [[ -n "$lesson_id" && "$line" =~ ^\>[[:space:]]*(.*) ]]; then
                 content="${BASH_REMATCH[1]}"
-                echo "$uses|$lesson_id|$stars|$title|$content"
+                # Use ~ as delimiter (stars now contain | which conflicts with |)
+                echo "$uses~$lesson_id~$stars~$title~$content"
                 lesson_id=""
             fi
         done < "$file"
     }
-    
+
     extract_lessons_for_inject "$SYSTEM_LESSONS_FILE" >> "$tmp_all"
     extract_lessons_for_inject "$PROJECT_LESSONS_FILE" >> "$tmp_all"
-    sort -t'|' -k1 -nr "$tmp_all" -o "$tmp_all"
+    sort -t'~' -k1 -nr "$tmp_all" -o "$tmp_all"
     
     local total=$(wc -l < "$tmp_all" | tr -d ' ')
     (( total == 0 )) && { rm -f "$tmp_all"; return; }
@@ -432,16 +433,16 @@ inject_context() {
     echo "Cite with [L###] or [S###] when applying. Type LESSON: to add new."
     echo ""
     echo "TOP LESSONS:"
-    head -n "$top_n" "$tmp_all" | while IFS='|' read -r uses id stars title content; do
+    head -n "$top_n" "$tmp_all" | while IFS='~' read -r uses id stars title content; do
         echo "  $id $stars $title"
         [[ -n "$content" ]] && echo "    -> $content"
     done
-    
+
     local remaining=$((total - top_n))
     if (( remaining > 0 )); then
         echo ""
         echo "OTHER LESSONS (cite to use):"
-        tail -n +"$((top_n + 1))" "$tmp_all" | while IFS='|' read -r uses id stars title content; do
+        tail -n +"$((top_n + 1))" "$tmp_all" | while IFS='~' read -r uses id stars title content; do
             echo "  $id $stars $title"
         done
     fi
