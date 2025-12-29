@@ -2091,6 +2091,85 @@ Consider extracting lessons about:
 
 
 # =============================================================================
+# Phase Detection Helper
+# =============================================================================
+
+
+def detect_phase_from_tools(tools: list) -> str:
+    """
+    Detect the approach phase based on tool usage patterns.
+
+    Tool usage patterns:
+    - research: Read, Grep, Glob (mostly reading/searching)
+    - planning: Write to .md files, AskUserQuestion, EnterPlanMode
+    - implementing: Edit, Write to code files
+    - review: Bash with test/build commands
+
+    Priority (highest to lowest): review > implementing > planning > research
+
+    Args:
+        tools: List of tool usage dicts with 'name' and optional parameters
+
+    Returns:
+        Phase string: 'research', 'planning', 'implementing', or 'review'
+    """
+    if not tools:
+        return "research"
+
+    # Track signals for each phase
+    has_review = False
+    has_implementing = False
+    has_planning = False
+
+    # Test/build command patterns
+    test_patterns = ["pytest", "test", "npm run test", "npm test", "jest", "mocha"]
+    build_patterns = ["npm run build", "make", "cargo build", "go build", "tsc"]
+
+    for tool in tools:
+        name = tool.get("name", "")
+
+        # Review phase: test or build commands
+        if name == "Bash":
+            command = tool.get("command", "").lower()
+            for pattern in test_patterns + build_patterns:
+                if pattern in command:
+                    has_review = True
+                    break
+
+        # Implementing phase: Edit or Write to code files
+        elif name == "Edit":
+            has_implementing = True
+
+        elif name == "Write":
+            file_path = tool.get("file_path", "")
+            # Writing to .md files is planning, not implementing
+            if file_path.endswith(".md"):
+                has_planning = True
+            else:
+                has_implementing = True
+
+        # Planning phase: AskUserQuestion or plan-related tools
+        elif name == "AskUserQuestion":
+            has_planning = True
+
+        # EnterPlanMode indicates start of planning (research phase initially)
+        elif name == "EnterPlanMode":
+            # EnterPlanMode starts with research to understand the codebase
+            # Don't set any flags - let it default to research
+            pass
+
+    # Apply priority: review > implementing > planning > research
+    if has_review:
+        return "review"
+    if has_implementing:
+        return "implementing"
+    if has_planning:
+        return "planning"
+
+    return "research"
+
+
+# =============================================================================
 # CLI Interface
 # =============================================================================
 

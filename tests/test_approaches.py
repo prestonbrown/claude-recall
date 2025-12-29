@@ -1710,5 +1710,353 @@ class TestApproachDecayConstants:
         assert hasattr(manager, "APPROACH_MAX_AGE_DAYS") or True  # Constant or method param
 
 
+# =============================================================================
+# Phase 4.4: Plan Mode Integration Tests
+# =============================================================================
+
+
+class TestPhaseDetectionFromTools:
+    """Tests for inferring approach phase from tool usage patterns."""
+
+    def test_detect_research_phase_from_read_grep(self):
+        """Mostly Read/Grep/Glob with no writes should be research."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Read", "file_path": "/some/file.py"},
+            {"name": "Grep", "pattern": "function"},
+            {"name": "Glob", "pattern": "*.py"},
+            {"name": "Read", "file_path": "/another/file.py"},
+        ]
+        assert detect_phase_from_tools(tools) == "research"
+
+    def test_detect_planning_phase_from_plan_file_writes(self):
+        """Writing to .md files (plan files) should indicate planning."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Read", "file_path": "/some/code.py"},
+            {"name": "Write", "file_path": "/plan/IMPLEMENTATION_PLAN.md"},
+        ]
+        assert detect_phase_from_tools(tools) == "planning"
+
+    def test_detect_planning_phase_from_ask_user(self):
+        """AskUserQuestion indicates planning/clarification."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Read", "file_path": "/some/code.py"},
+            {"name": "AskUserQuestion", "questions": []},
+        ]
+        assert detect_phase_from_tools(tools) == "planning"
+
+    def test_detect_implementing_phase_from_edit(self):
+        """Edit tool usage indicates implementing."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Read", "file_path": "/src/app.py"},
+            {"name": "Edit", "file_path": "/src/app.py"},
+        ]
+        assert detect_phase_from_tools(tools) == "implementing"
+
+    def test_detect_implementing_phase_from_code_writes(self):
+        """Writing to code files indicates implementing."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Read", "file_path": "/src/app.py"},
+            {"name": "Write", "file_path": "/src/new_module.py"},
+        ]
+        assert detect_phase_from_tools(tools) == "implementing"
+
+    def test_detect_review_phase_from_test_commands(self):
+        """Bash with test/pytest commands indicates review."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Bash", "command": "python -m pytest tests/"},
+            {"name": "Read", "file_path": "/tests/test_output.txt"},
+        ]
+        assert detect_phase_from_tools(tools) == "review"
+
+    def test_detect_review_phase_from_build_commands(self):
+        """Bash with build commands indicates review."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Bash", "command": "npm run build"},
+        ]
+        assert detect_phase_from_tools(tools) == "review"
+
+    def test_detect_phase_empty_tools_defaults_research(self):
+        """Empty tool list should default to research."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        assert detect_phase_from_tools([]) == "research"
+
+    def test_detect_phase_mixed_tools_uses_priority(self):
+        """When tools are mixed, use priority: review > implementing > planning > research."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        # If both edit and test, should be review (test takes priority)
+        tools = [
+            {"name": "Edit", "file_path": "/src/app.py"},
+            {"name": "Bash", "command": "pytest"},
+        ]
+        assert detect_phase_from_tools(tools) == "review"
+
+    def test_detect_phase_enter_plan_mode_triggers_research(self):
+        """EnterPlanMode tool should trigger research phase initially."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "EnterPlanMode"},
+        ]
+        assert detect_phase_from_tools(tools) == "research"
+
+
+class TestPlanModeApproachCreation:
+    """Tests for auto-creating approaches when entering plan mode."""
+
+    def test_approach_add_from_plan_mode(self, manager: "LessonsManager"):
+        """Should be able to create approach with plan mode context."""
+        approach_id = manager.approach_add(
+            title="Implement user authentication",
+            phase="research",
+            agent="plan",
+        )
+
+        approach = manager.approach_get(approach_id)
+        assert approach.title == "Implement user authentication"
+        assert approach.phase == "research"
+        assert approach.agent == "plan"
+
+    def test_approach_links_to_plan_file(self, manager: "LessonsManager"):
+        """Approach can store plan file path reference."""
+        approach_id = manager.approach_add(
+            title="Feature implementation",
+            phase="planning",
+            desc="Plan file: ~/.claude/plans/test-plan.md",
+        )
+
+        approach = manager.approach_get(approach_id)
+        assert "plan" in approach.description.lower()
+
+    def test_approach_phase_transition_research_to_planning(
+        self, manager: "LessonsManager"
+    ):
+        """Phase should transition from research to planning."""
+        manager.approach_add(title="New feature", phase="research")
+        manager.approach_update_phase("A001", "planning")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "planning"
+
+    def test_approach_phase_transition_planning_to_implementing(
+        self, manager: "LessonsManager"
+    ):
+        """Phase should transition from planning to implementing."""
+        manager.approach_add(title="New feature", phase="planning")
+        manager.approach_update_phase("A001", "implementing")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+
+class TestHookPhasePatterns:
+    """Tests for hook command patterns for phase updates."""
+
+    def test_approach_update_phase_via_hook_pattern(self, manager: "LessonsManager"):
+        """Should support phase updates from hook patterns."""
+        manager.approach_add(title="Test feature")
+
+        # This simulates what the hook would do
+        manager.approach_update_phase("A001", "implementing")
+
+        approach = manager.approach_get("A001")
+        assert approach.phase == "implementing"
+
+    def test_phase_update_preserves_other_fields(
+        self, manager_with_approaches: "LessonsManager"
+    ):
+        """Phase update should not affect other approach fields."""
+        # Add some data first
+        manager_with_approaches.approach_add_tried("A001", "fail", "First attempt")
+        manager_with_approaches.approach_update_next("A001", "Try another way")
+
+        # Update phase
+        manager_with_approaches.approach_update_phase("A001", "review")
+
+        approach = manager_with_approaches.approach_get("A001")
+        assert approach.phase == "review"
+        assert len(approach.tried) == 1
+        assert approach.next_steps == "Try another way"
+
+    def test_plan_mode_approach_pattern_parsed(self, manager: "LessonsManager"):
+        """PLAN MODE: pattern should work like APPROACH: pattern."""
+        # This tests that the same approach_add mechanism works for plan mode
+        approach_id = manager.approach_add(
+            title="Feature from plan mode",
+            phase="research",
+        )
+
+        assert approach_id == "A001"
+        approach = manager.approach_get(approach_id)
+        assert approach.title == "Feature from plan mode"
+
+
+class TestHookCLIIntegration:
+    """Tests for CLI commands that hooks invoke."""
+
+    def test_cli_approach_add_with_phase_and_agent(self, tmp_path):
+        """CLI should support --phase and --agent when adding approach."""
+        import subprocess
+        import os
+
+        # Set up environment
+        env = os.environ.copy()
+        env["PROJECT_DIR"] = str(tmp_path)
+        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+
+        # Run the CLI command (simulating what PLAN MODE: pattern does)
+        result = subprocess.run(
+            [
+                "python3",
+                "core/lessons_manager.py",
+                "approach",
+                "add",
+                "Test Plan Mode Feature",
+                "--phase",
+                "research",
+                "--agent",
+                "plan",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode == 0
+        assert "A001" in result.stdout
+
+    def test_cli_approach_update_phase(self, tmp_path):
+        """CLI should support --phase in update command."""
+        import subprocess
+        import os
+
+        env = os.environ.copy()
+        env["PROJECT_DIR"] = str(tmp_path)
+        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+
+        # First create an approach
+        subprocess.run(
+            ["python3", "core/lessons_manager.py", "approach", "add", "Test"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        # Then update the phase
+        result = subprocess.run(
+            [
+                "python3",
+                "core/lessons_manager.py",
+                "approach",
+                "update",
+                "A001",
+                "--phase",
+                "implementing",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode == 0
+        assert "phase" in result.stdout.lower()
+
+    def test_cli_approach_update_agent(self, tmp_path):
+        """CLI should support --agent in update command."""
+        import subprocess
+        import os
+
+        env = os.environ.copy()
+        env["PROJECT_DIR"] = str(tmp_path)
+        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+
+        # First create an approach
+        subprocess.run(
+            ["python3", "core/lessons_manager.py", "approach", "add", "Test"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        # Then update the agent
+        result = subprocess.run(
+            [
+                "python3",
+                "core/lessons_manager.py",
+                "approach",
+                "update",
+                "A001",
+                "--agent",
+                "general-purpose",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode == 0
+        assert "agent" in result.stdout.lower()
+
+
+class TestPhaseDetectionEdgeCases:
+    """Additional edge case tests for phase detection."""
+
+    def test_detect_phase_write_to_test_file(self):
+        """Write to test files should still be implementing."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Write", "file_path": "/tests/test_new.py"},
+        ]
+        # Test files are code, so implementing
+        assert detect_phase_from_tools(tools) == "implementing"
+
+    def test_detect_phase_multiple_builds(self):
+        """Multiple build commands should be review."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Bash", "command": "npm run build"},
+            {"name": "Bash", "command": "npm test"},
+        ]
+        assert detect_phase_from_tools(tools) == "review"
+
+    def test_detect_phase_grep_without_edit(self):
+        """Grep alone is research."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "Grep", "pattern": "def main"},
+            {"name": "Grep", "pattern": "class.*Handler"},
+        ]
+        assert detect_phase_from_tools(tools) == "research"
+
+    def test_detect_phase_exit_plan_mode(self):
+        """ExitPlanMode indicates planning is complete."""
+        from core.lessons_manager import detect_phase_from_tools
+
+        tools = [
+            {"name": "ExitPlanMode"},
+        ]
+        # ExitPlanMode means planning is done, defaults to research
+        # (user should explicitly update to implementing)
+        assert detect_phase_from_tools(tools) == "research"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

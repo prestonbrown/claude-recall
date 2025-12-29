@@ -94,7 +94,9 @@ LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
 
 APPROACH TRACKING: For multi-step tasks, track progress with:
   APPROACH: <title>                              - Start tracking new approach
+  PLAN MODE: <title>                             - Start approach for plan mode (phase=research, agent=plan)
   APPROACH UPDATE A###: status <status>          - Update status (in_progress|blocked)
+  APPROACH UPDATE A###: phase <phase>            - Update phase (research|planning|implementing|review)
   APPROACH UPDATE A###: tried <outcome> - <desc> - Record what you tried (success|fail|partial)
   APPROACH UPDATE A###: next <text>              - Set next steps
   APPROACH COMPLETE A###                         - Mark complete and review for lessons"

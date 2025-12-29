@@ -184,7 +184,10 @@ process_ai_lessons() {
 # Detect and process APPROACH patterns in assistant messages
 # Patterns:
 #   APPROACH: <title>                                -> approach add "<title>"
+#   PLAN MODE: <title>                               -> approach add "<title>" --phase research --agent plan
 #   APPROACH UPDATE A###: status <status>            -> approach update A### --status <status>
+#   APPROACH UPDATE A###: phase <phase>              -> approach update A### --phase <phase>
+#   APPROACH UPDATE A###: agent <agent>              -> approach update A### --agent <agent>
 #   APPROACH UPDATE A###: tried <outcome> - <desc>   -> approach update A### --tried <outcome> "<desc>"
 #   APPROACH UPDATE A###: next <text>                -> approach update A### --next "<text>"
 #   APPROACH COMPLETE A###                           -> approach complete A###
@@ -195,16 +198,17 @@ process_approaches() {
     local processed_count=0
 
     # Extract approach patterns from assistant messages
+    # Also match PLAN MODE: pattern for plan mode integration
     local approach_lines=""
     if [[ -z "$last_timestamp" ]]; then
         approach_lines=$(jq -r 'select(.type == "assistant") |
             .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -E '^APPROACH( UPDATE| COMPLETE)?:?' || true)
+            grep -E '^(APPROACH( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
     else
         approach_lines=$(jq -r --arg ts "$last_timestamp" '
             select(.type == "assistant" and .timestamp > $ts) |
             .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -E '^APPROACH( UPDATE| COMPLETE)?:?' || true)
+            grep -E '^(APPROACH( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
     fi
 
     [[ -z "$approach_lines" ]] && return 0
@@ -224,6 +228,17 @@ process_approaches() {
                     python3 "$PYTHON_MANAGER" approach add "$title" 2>&1 || true)
             fi
 
+        # Pattern 1b: PLAN MODE: <title> -> add approach with plan mode defaults
+        elif [[ "$line" =~ ^PLAN\ MODE:\ (.+)$ ]]; then
+            local title="${BASH_REMATCH[1]}"
+            title=$(sanitize_input "$title" 200)
+            [[ -z "$title" ]] && continue
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                    python3 "$PYTHON_MANAGER" approach add "$title" --phase research --agent plan 2>&1 || true)
+            fi
+
         # Pattern 2: APPROACH UPDATE A###: status <status>
         elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ status\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
@@ -234,6 +249,28 @@ process_approaches() {
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --status "$status" 2>&1 || true)
+            fi
+
+        # Pattern 2b: APPROACH UPDATE A###: phase <phase>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ phase\ (.+)$ ]]; then
+            local approach_id="${BASH_REMATCH[1]}"
+            local phase="${BASH_REMATCH[2]}"
+            phase=$(sanitize_input "$phase" 20)
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --phase "$phase" 2>&1 || true)
+            fi
+
+        # Pattern 2c: APPROACH UPDATE A###: agent <agent>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ agent\ (.+)$ ]]; then
+            local approach_id="${BASH_REMATCH[1]}"
+            local agent="${BASH_REMATCH[2]}"
+            agent=$(sanitize_input "$agent" 30)
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --agent "$agent" 2>&1 || true)
             fi
 
         # Pattern 3: APPROACH UPDATE A###: tried <outcome> - <description>
