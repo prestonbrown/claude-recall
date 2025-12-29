@@ -23,6 +23,24 @@ is_enabled() {
     } || return 0
 }
 
+# Sanitize input for safe shell usage
+# Removes control characters, limits length, escapes problematic patterns
+sanitize_input() {
+    local input="$1"
+    local max_length="${2:-500}"
+
+    # Remove control characters (keep printable ASCII and common unicode)
+    input=$(printf '%s' "$input" | tr -cd '[:print:][:space:]' | tr -s ' ')
+
+    # Truncate to max length
+    input="${input:0:$max_length}"
+
+    # Trim whitespace
+    input=$(echo "$input" | xargs)
+
+    printf '%s' "$input"
+}
+
 find_project_root() {
     local dir="${1:-$(pwd)}"
     while [[ "$dir" != "/" ]]; do
@@ -128,6 +146,13 @@ process_ai_lessons() {
         # Validate we have at least a title
         [[ -z "$title" ]] && continue
 
+        # Sanitize inputs to prevent injection
+        title=$(sanitize_input "$title" 200)
+        content=$(sanitize_input "$content" 1000)
+
+        # Skip if title is empty after sanitization
+        [[ -z "$title" ]] && continue
+
         # Default category if not recognized
         case "$category" in
             pattern|correction|decision|gotcha|preference) ;;
@@ -191,8 +216,7 @@ process_approaches() {
         # Pattern 1: APPROACH: <title> -> add new approach
         if [[ "$line" =~ ^APPROACH:\ (.+)$ ]]; then
             local title="${BASH_REMATCH[1]}"
-            # Trim whitespace
-            title=$(echo "$title" | xargs)
+            title=$(sanitize_input "$title" 200)
             [[ -z "$title" ]] && continue
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -204,7 +228,8 @@ process_approaches() {
         elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ status\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             local status="${BASH_REMATCH[2]}"
-            status=$(echo "$status" | xargs)
+            # Status is validated by Python, just basic sanitize
+            status=$(sanitize_input "$status" 20)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
@@ -216,7 +241,7 @@ process_approaches() {
             local approach_id="${BASH_REMATCH[1]}"
             local outcome="${BASH_REMATCH[2]}"
             local description="${BASH_REMATCH[3]}"
-            description=$(echo "$description" | xargs)
+            description=$(sanitize_input "$description" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
@@ -227,7 +252,7 @@ process_approaches() {
         elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}):\ next\ (.+)$ ]]; then
             local approach_id="${BASH_REMATCH[1]}"
             local next_text="${BASH_REMATCH[2]}"
-            next_text=$(echo "$next_text" | xargs)
+            next_text=$(sanitize_input "$next_text" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \

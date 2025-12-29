@@ -216,13 +216,6 @@ class TriedApproach:
 
 
 @dataclass
-class CodeSnippet:
-    """Represents a code snippet with optional language hint."""
-    code: str
-    language: str = ""  # Optional language hint (python, typescript, etc.)
-
-
-@dataclass
 class Approach:
     """Represents an active approach being tracked."""
     id: str
@@ -401,6 +394,11 @@ class FileLock:
         if self.lock_file:
             fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
             self.lock_file.close()
+            # Clean up lock file
+            try:
+                self.lock_path.unlink(missing_ok=True)
+            except OSError:
+                pass  # Ignore cleanup errors (e.g., another process has it)
         return False
 
 
@@ -733,34 +731,30 @@ class LessonsManager:
         # Initialize system file
         self.init_lessons_file("system")
 
+        # Step 1: Add to system file (separate lock to avoid nested locks)
         with FileLock(self.system_lessons_file):
-            with FileLock(self.project_lessons_file):
-                # Get new system ID
-                new_id = self._get_next_id(self.system_lessons_file, "S")
+            new_id = self._get_next_id(self.system_lessons_file, "S")
+            new_lesson = Lesson(
+                id=new_id,
+                title=lesson.title,
+                content=lesson.content,
+                uses=lesson.uses,
+                velocity=lesson.velocity,
+                learned=lesson.learned,
+                last_used=lesson.last_used,
+                category=lesson.category,
+                source=lesson.source,
+                level="system",
+            )
+            system_lessons = self._parse_lessons_file(self.system_lessons_file, "system")
+            system_lessons.append(new_lesson)
+            self._write_lessons_file(self.system_lessons_file, system_lessons, "system")
 
-                # Create new system lesson
-                new_lesson = Lesson(
-                    id=new_id,
-                    title=lesson.title,
-                    content=lesson.content,
-                    uses=lesson.uses,
-                    velocity=lesson.velocity,
-                    learned=lesson.learned,
-                    last_used=lesson.last_used,
-                    category=lesson.category,
-                    source=lesson.source,
-                    level="system",
-                )
-
-                # Add to system file
-                system_lessons = self._parse_lessons_file(self.system_lessons_file, "system")
-                system_lessons.append(new_lesson)
-                self._write_lessons_file(self.system_lessons_file, system_lessons, "system")
-
-                # Remove from project file
-                project_lessons = self._parse_lessons_file(self.project_lessons_file, "project")
-                project_lessons = [l for l in project_lessons if l.id != lesson_id]
-                self._write_lessons_file(self.project_lessons_file, project_lessons, "project")
+        # Step 2: Remove from project file (separate lock)
+        with FileLock(self.project_lessons_file):
+            project_lessons = self._parse_lessons_file(self.project_lessons_file, "project")
+            project_lessons = [l for l in project_lessons if l.id != lesson_id]
+            self._write_lessons_file(self.project_lessons_file, project_lessons, "project")
 
         return new_id
 
