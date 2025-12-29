@@ -1,305 +1,361 @@
 # Testing Guide
 
-This document covers the testing infrastructure, how to run tests, and how to add new tests.
+Testing infrastructure, running tests, and writing new tests for the coding-agent-lessons system.
 
 ## Test Framework
 
-The test suite uses a lightweight bash-based framework in `tests/test-stop-hook.sh`. It provides:
+The test suite uses **pytest** with Python's standard library. Tests are organized by component:
 
-- Isolated test environments (temporary directories)
-- Helper functions for common operations
-- Assertion utilities
-- Automatic cleanup
+```
+tests/
+├── test_lessons_manager.py   # Core lessons functionality (62 tests)
+└── test_approaches.py        # Approaches system (139 tests)
+```
 
 ## Running Tests
 
 ```bash
-# Run all tests
-./tests/test-stop-hook.sh
+# Run all tests (201 tests)
+python3 -m pytest tests/ -v
 
-# Output shows pass/fail for each test
-# Example:
-#   PASS: test_basic_citation
-#   PASS: test_checkpoint_created_after_first_run
-#   ...
-#   ════════════════════════════════════════
-#   Results: 18 passed, 0 failed
+# Run with coverage
+python3 -m pytest tests/ --cov=core --cov-report=term-missing
+
+# Run specific test file
+python3 -m pytest tests/test_lessons_manager.py -v
+python3 -m pytest tests/test_approaches.py -v
+
+# Run specific test class
+python3 -m pytest tests/test_approaches.py::TestPhaseDetectionFromTools -v
+
+# Run specific test
+python3 -m pytest tests/test_approaches.py::TestPhaseDetectionFromTools::test_bash_pytest_is_review -v
+
+# Run tests matching a pattern
+python3 -m pytest tests/ -v -k "phase"
 ```
 
 ## Test Categories
 
-### Basic Functionality (5 tests)
+### Lessons Tests (test_lessons_manager.py)
 
-| Test | Purpose |
-|------|---------|
-| `test_basic_citation` | Citations are tracked and manager called |
-| `test_multiple_citations` | Multiple distinct citations in one message |
-| `test_no_citations` | No errors when no citations present |
-| `test_disabled_via_settings` | Respects enabled=false setting |
-| `test_system_lesson_citation` | S### citations work like L### |
+| Category | Tests | Description |
+|----------|-------|-------------|
+| Basic CRUD | 12 | Add, edit, delete, list lessons |
+| Citation | 8 | Cite lessons, increment uses/velocity |
+| Injection | 10 | Generate context, top N, formatting |
+| Decay | 8 | Velocity decay, stale lesson handling |
+| Promotion | 6 | Project → system promotion |
+| Rating | 10 | Dual-dimension [uses\|velocity] format |
+| Tokens | 8 | Token estimation and heavy warnings |
 
-### Checkpointing (4 tests)
+### Approaches Tests (test_approaches.py)
 
-| Test | Purpose |
-|------|---------|
-| `test_checkpoint_created_after_first_run` | State file created |
-| `test_incremental_processing` | Only new messages processed |
-| `test_checkpoint_updated_even_without_citations` | Checkpoint advances regardless |
-| `test_first_run_processes_all` | Initial run sees all history |
-
-### Edge Cases (4 tests)
-
-| Test | Purpose |
-|------|---------|
-| `test_ignores_listing_format` | `[L001] [*****` not counted as citation |
-| `test_empty_transcript` | Handles empty file gracefully |
-| `test_malformed_json` | Handles invalid JSON gracefully |
-| `test_missing_transcript` | Handles missing file gracefully |
-
-### Cleanup (2 tests)
-
-| Test | Purpose |
-|------|---------|
-| `test_cleanup_removes_old_orphans` | Orphaned checkpoints >7 days deleted |
-| `test_cleanup_keeps_recent_orphans` | Recent orphans preserved |
-
-### Decay (3 tests)
-
-| Test | Purpose |
-|------|---------|
-| `test_decay_reduces_stale_lesson_uses` | Uses decremented for old lessons |
-| `test_decay_skips_without_activity` | No decay if no sessions occurred |
-| `test_decay_never_below_one` | Uses never goes below 1 |
+| Category | Tests | Description |
+|----------|-------|-------------|
+| Basic CRUD | 15 | Add, update, complete, list approaches |
+| Status | 8 | Status transitions, validation |
+| Tried/Next | 12 | Record attempts, set next steps |
+| Code Snippets | 10 | Attach/parse code blocks |
+| Phases | 18 | Phase values, transitions |
+| Agents | 12 | Agent tracking per approach |
+| Phase Detection | 14 | Infer phase from tool usage |
+| Plan Mode | 8 | PLAN MODE: integration |
+| Injection | 12 | Approach context generation |
+| Visibility | 10 | Completed approach decay rules |
+| Archive | 8 | Archive and recent completions |
+| Hook Patterns | 12 | Stop-hook pattern matching |
 
 ## Test Environment
 
-Each test runs in an isolated environment:
+Each test uses an isolated temporary directory:
 
-```bash
-# Temporary directories created per-test
-TEST_HOME=/tmp/test-lessons-XXXXX
-├── .claude/
-│   ├── settings.json
-│   └── projects/
-│       └── test-project/
-│           └── <session-id>.jsonl
-├── .config/
-│   └── coding-agent-lessons/
-│       ├── lessons-manager.sh → (symlink to real manager)
-│       ├── LESSONS.md
-│       └── .citation-state/
-└── test-project/
-    └── .coding-agent-lessons/
-        └── LESSONS.md
-```
+```python
+@pytest.fixture
+def temp_env(tmp_path):
+    """Create isolated test environment."""
+    project_dir = tmp_path / "project"
+    lessons_base = tmp_path / "system"
+    project_dir.mkdir()
+    lessons_base.mkdir()
 
-## Helper Functions
+    # Create lessons directories
+    (project_dir / ".coding-agent-lessons").mkdir()
 
-### Test Setup
-
-```bash
-setup_test_env() {
-    # Creates isolated temp directory
-    # Sets up directory structure
-    # Configures HOME override
-    # Symlinks manager script
-}
-
-teardown_test_env() {
-    # Cleans up temp directory
-    # Restores original HOME
-}
-```
-
-### Transcript Creation
-
-```bash
-create_fake_transcript() {
-    local content="$1"
-    local session_id="${2:-$(uuidgen)}"
-    # Creates JSONL transcript file
-    # Returns path to transcript
-}
-
-# Example usage:
-create_fake_transcript '{
-    "type": "assistant",
-    "timestamp": "2024-01-15T10:00:00Z",
-    "message": {
-        "content": [{"type": "text", "text": "Applying [L001]: some lesson"}]
+    return {
+        "project_dir": str(project_dir),
+        "lessons_base": str(lessons_base),
+        "project_lessons": project_dir / ".coding-agent-lessons" / "LESSONS.md",
+        "approaches_file": project_dir / ".coding-agent-lessons" / "APPROACHES.md",
+        "system_lessons": lessons_base / "LESSONS.md",
     }
-}'
 ```
 
-### Hook Execution
+## Writing Tests
 
-```bash
-run_hook() {
-    local transcript="$1"
-    # Invokes stop-hook.sh with proper input
-    # Captures stdout/stderr
-    # Returns exit code
-}
+### Basic Test Structure
 
-run_inject_hook() {
-    # Invokes inject-hook.sh
-    # Returns lesson context output
-}
+```python
+def test_add_lesson(temp_env):
+    """Test adding a project lesson."""
+    # Arrange
+    manager = LessonsManager(
+        project_dir=temp_env["project_dir"],
+        lessons_base=temp_env["lessons_base"]
+    )
+
+    # Act
+    result = manager.add("pattern", "Test Title", "Test content")
+
+    # Assert
+    assert "L001" in result
+    lessons = manager.list_lessons(scope="project")
+    assert len(lessons) == 1
+    assert lessons[0].title == "Test Title"
+    assert lessons[0].content == "Test content"
 ```
 
-### Assertions
+### Testing Approaches
 
-```bash
-assert_equals() {
-    local expected="$1"
-    local actual="$2"
-    local message="$3"
-}
+```python
+def test_approach_phase_transition(temp_env):
+    """Test updating approach phase."""
+    manager = LessonsManager(
+        project_dir=temp_env["project_dir"],
+        lessons_base=temp_env["lessons_base"]
+    )
 
-assert_contains() {
-    local haystack="$1"
-    local needle="$2"
-    local message="$3"
-}
+    # Create approach
+    result = manager.approach_add("Test task", phase="research")
+    approach_id = result.split()[0]  # Extract A001
 
-assert_file_exists() {
-    local path="$1"
-    local message="$2"
-}
+    # Update phase
+    manager.approach_update(approach_id, phase="implementing")
 
-assert_file_not_exists() {
-    local path="$1"
-    local message="$2"
-}
-
-assert_file_contains() {
-    local path="$1"
-    local pattern="$2"
-    local message="$3"
-}
+    # Verify
+    approaches = manager.approach_list()
+    assert approaches[0].phase == "implementing"
 ```
 
-## Writing New Tests
+### Testing Phase Detection
 
-### Basic Structure
+```python
+def test_bash_pytest_is_review(temp_env):
+    """Test that pytest commands are detected as review phase."""
+    tools = [
+        {"name": "Bash", "input": {"command": "pytest tests/"}},
+        {"name": "Read", "input": {"file_path": "src/main.py"}},
+    ]
 
-```bash
-test_my_new_feature() {
-    # 1. Setup - create test data
-    local transcript=$(create_fake_transcript '...')
+    phase = detect_phase_from_tools(tools)
 
-    # 2. Execute - run the code under test
-    local output=$(run_hook "$transcript" 2>&1)
-    local exit_code=$?
-
-    # 3. Assert - verify results
-    assert_equals 0 $exit_code "Hook should succeed"
-    assert_contains "$output" "expected text"
-    assert_file_exists "$STATE_DIR/session-id"
-}
+    assert phase == "review"
 ```
 
-### Testing Decay
+### Testing CLI Integration
 
-```bash
-test_decay_example() {
-    # Create lesson with old Last date
-    create_lesson "L001" "Test" "**Uses**: 5, **Last**: 2024-01-01"
+```python
+def test_cli_approach_add(temp_env):
+    """Test CLI command for adding approach."""
+    import subprocess
+    import sys
 
-    # Create checkpoint to indicate activity
-    touch "$STATE_DIR/fake-session"
+    result = subprocess.run(
+        [sys.executable, "core/lessons_manager.py", "approach", "add",
+         "--phase", "research", "--agent", "plan", "--", "Test approach"],
+        capture_output=True,
+        text=True,
+        env={
+            "PROJECT_DIR": temp_env["project_dir"],
+            "LESSONS_BASE": temp_env["lessons_base"],
+        }
+    )
 
-    # Run decay
-    local output=$("$MANAGER" decay 30 2>&1)
-
-    # Verify uses decreased
-    assert_file_contains "$LESSONS_FILE" "**Uses**: 4"
-}
+    assert result.returncode == 0
+    assert "A001" in result.stdout
 ```
 
-### Testing Cleanup
+### Testing Hook Patterns
 
-```bash
-test_cleanup_example() {
-    # Create orphaned checkpoint (no matching transcript)
-    local orphan="$STATE_DIR/orphaned-session-id"
-    echo "2024-01-01T00:00:00Z" > "$orphan"
+```python
+def test_plan_mode_pattern(temp_env):
+    """Test PLAN MODE: pattern creates approach correctly."""
+    manager = LessonsManager(
+        project_dir=temp_env["project_dir"],
+        lessons_base=temp_env["lessons_base"]
+    )
 
-    # Backdate file (macOS)
-    touch -t 202401010000 "$orphan"
+    # Simulate hook pattern: PLAN MODE: Implement feature
+    result = manager.approach_add(
+        "Implement feature",
+        phase="research",
+        agent="plan"
+    )
 
-    # Run hook (triggers cleanup)
-    run_hook "$(create_fake_transcript '{}')"
+    approach_id = result.split()[0]
+    approaches = manager.approach_list()
 
-    # Verify orphan removed
-    assert_file_not_exists "$orphan"
-}
+    assert approaches[0].phase == "research"
+    assert approaches[0].agent == "plan"
+```
+
+## Test Fixtures
+
+### Common Fixtures
+
+```python
+@pytest.fixture
+def manager(temp_env):
+    """Create a LessonsManager instance."""
+    return LessonsManager(
+        project_dir=temp_env["project_dir"],
+        lessons_base=temp_env["lessons_base"]
+    )
+
+@pytest.fixture
+def sample_lesson(manager):
+    """Create a sample lesson for testing."""
+    manager.add("pattern", "Sample Title", "Sample content")
+    return manager.list_lessons(scope="project")[0]
+
+@pytest.fixture
+def sample_approach(manager):
+    """Create a sample approach for testing."""
+    manager.approach_add("Sample task")
+    return manager.approach_list()[0]
+```
+
+### File Content Fixtures
+
+```python
+@pytest.fixture
+def lessons_with_velocity(temp_env):
+    """Create lessons file with velocity data."""
+    content = """# Project Lessons
+
+### [L001] [**---|++---] pattern: Test lesson
+- **Uses**: 5 | **Velocity**: 2.5 | **Tokens**: 30 | **Learned**: 2025-12-01 | **Last**: 2025-12-28 | **Source**: user
+- Test content
+"""
+    (temp_env["project_dir"] / ".coding-agent-lessons" / "LESSONS.md").write_text(content)
+    return temp_env
+```
+
+## Assertions
+
+### Common Patterns
+
+```python
+# Check lesson exists
+assert any(l.id == "L001" for l in manager.list_lessons())
+
+# Check approach status
+approach = manager.approach_list()[0]
+assert approach.status == "in_progress"
+
+# Check injection output
+output = manager.inject(5)
+assert "L001" in output
+assert "TOP LESSONS:" in output
+
+# Check token warning
+output = manager.inject(100)  # Many lessons
+assert "CONTEXT HEAVY" in output or total_tokens < 2000
+```
+
+### Approach-Specific
+
+```python
+# Check tried approach recorded
+approach = manager.approach_list()[0]
+assert len(approach.tried) == 1
+assert approach.tried[0].outcome == "fail"
+
+# Check code snippet attached
+assert len(approach.code_snippets) == 1
+assert "def foo" in approach.code_snippets[0]
+
+# Check phase detection
+assert detect_phase_from_tools([{"name": "Edit", "input": {"file_path": "x.py"}}]) == "implementing"
+```
+
+## Mocking
+
+### Mock File System
+
+```python
+def test_file_not_found(temp_env, monkeypatch):
+    """Test graceful handling of missing files."""
+    manager = LessonsManager(
+        project_dir="/nonexistent/path",
+        lessons_base=temp_env["lessons_base"]
+    )
+
+    # Should return empty list, not raise
+    lessons = manager.list_lessons()
+    assert lessons == []
+```
+
+### Mock Environment Variables
+
+```python
+def test_custom_lessons_base(temp_env, monkeypatch):
+    """Test custom LESSONS_BASE location."""
+    custom_base = temp_env["lessons_base"] + "/custom"
+    monkeypatch.setenv("LESSONS_BASE", custom_base)
+
+    # Manager should use custom location
+    manager = LessonsManager()
+    assert manager.lessons_base == custom_base
 ```
 
 ## Debugging Tests
 
 ### Verbose Output
 
-Add debug output to see what's happening:
+```python
+def test_debug_example(temp_env, capsys):
+    """Debug test with output capture."""
+    manager = LessonsManager(
+        project_dir=temp_env["project_dir"],
+        lessons_base=temp_env["lessons_base"]
+    )
 
-```bash
-test_debug_example() {
-    set -x  # Enable bash tracing
+    result = manager.inject(5)
+    print(f"Injection result: {result}")
 
-    local transcript=$(create_fake_transcript '...')
-    echo "Created transcript: $transcript" >&2
-
-    local output=$(run_hook "$transcript" 2>&1)
-    echo "Hook output: $output" >&2
-
-    set +x  # Disable tracing
-}
+    captured = capsys.readouterr()
+    # Inspect captured.out for debugging
 ```
 
-### Inspect Test Environment
+### Inspect Test Files
 
-```bash
-test_inspect_env() {
-    # Don't clean up at end
-    KEEP_TEST_ENV=1
+```python
+def test_inspect_state(temp_env):
+    """Test that can be paused for inspection."""
+    manager = LessonsManager(
+        project_dir=temp_env["project_dir"],
+        lessons_base=temp_env["lessons_base"]
+    )
 
-    # ... run test ...
+    manager.add("pattern", "Test", "Content")
 
-    echo "Test env at: $TEST_HOME" >&2
-    # Manually inspect files after test
-}
+    # Print paths for manual inspection
+    print(f"Project lessons: {temp_env['project_lessons']}")
+    print(f"Content: {temp_env['project_lessons'].read_text()}")
+
+    # Add breakpoint for interactive debugging
+    # import pdb; pdb.set_trace()
 ```
 
 ### Common Issues
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| "command not found: jq" | jq not in PATH during test | Ensure jq is installed |
-| Manager script not found | Symlink not created | Check `ln -sf` in setup |
-| Citations not detected | Transcript format wrong | Check JSONL structure |
-| Checkpoint not created | Missing transcript_path in input | Add to hook input JSON |
-
-## Mock Manager
-
-Tests use a mock manager that logs calls instead of modifying real files:
-
-```bash
-# Mock manager logs calls to a file
-mock_manager() {
-    echo "CALLED: $*" >> "$MOCK_LOG"
-    case "$1" in
-        cite)
-            echo "OK: Cited $2"
-            ;;
-        inject)
-            echo "[S001] Test lesson"
-            ;;
-        *)
-            echo "OK"
-            ;;
-    esac
-}
-```
+| FileNotFoundError | Missing temp directory | Check fixture creates dirs |
+| AssertionError on ID | ID format changed | Update expected pattern |
+| Empty list returned | File not created/parsed | Check file path and content |
+| Subprocess test fails | Wrong Python path | Use `sys.executable` |
 
 ## Continuous Integration
 
@@ -307,20 +363,68 @@ Tests can run in CI environments:
 
 ```yaml
 # .github/workflows/test.yml
+name: Tests
+
+on: [push, pull_request]
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
       - name: Install dependencies
-        run: sudo apt-get install -y jq
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov
+
       - name: Run tests
-        run: ./tests/test-stop-hook.sh
+        run: |
+          python -m pytest tests/ -v --cov=core --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
 ```
 
-### CI Considerations
+## Test Coverage
 
-- Tests use `/tmp` for isolation (works on Linux/macOS)
-- `stat` command differs between macOS (-f) and Linux (-c)
-- Tests handle both variants
-- UUID generation via `uuidgen` (install if missing)
+Current coverage targets:
+
+| Module | Target | Current |
+|--------|--------|---------|
+| lessons_manager.py | 90% | ~92% |
+| Overall | 85% | ~90% |
+
+Run coverage report:
+```bash
+python3 -m pytest tests/ --cov=core --cov-report=html
+open htmlcov/index.html
+```
+
+## Adding New Tests
+
+1. **Identify the component**: lessons, approaches, hooks, CLI
+2. **Choose the test file**: `test_lessons_manager.py` or `test_approaches.py`
+3. **Find related tests**: Group with similar functionality
+4. **Write the test**: Follow AAA pattern (Arrange, Act, Assert)
+5. **Run the test**: Verify it passes
+6. **Check coverage**: Ensure new code is covered
+
+### Checklist for New Features
+
+- [ ] Unit tests for core functionality
+- [ ] Edge case tests (empty input, missing files)
+- [ ] Integration tests (CLI, subprocess)
+- [ ] Tests for error handling
+- [ ] Tests for hook patterns (if applicable)

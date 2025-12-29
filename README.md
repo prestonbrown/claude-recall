@@ -1,23 +1,32 @@
 # Coding Agent Lessons
 
-A dynamic learning system for AI coding agents that tracks patterns, corrections, and gotchas across sessions. Works with **Claude Code**, **OpenCode**, and other AI coding tools.
+A dynamic learning and work tracking system for AI coding agents. Tracks patterns, corrections, and gotchas across sessions while helping manage ongoing work with approaches tracking.
 
-Think of it as **persistent memory** that helps your coding agent learn from your feedback.
+Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 
 ## Features
 
-- **Tool-agnostic**: Works with Claude Code, OpenCode, and extensible to other tools
+### Lessons System
 - **Two-tier architecture**: Project lessons (`[L###]`) and system lessons (`[S###]`)
-- **Star rating system**: Lessons gain stars with each use, promoting high-value ones
-- **Automatic injection**: Lessons shown at session start
-- **Citation tracking**: When the agent applies a lesson, it gains stars
-- **Slash command**: Type `/lessons` to view all lessons
-- **Migration support**: Easily migrate from old Claude Code-specific locations
+- **Dual-dimension rating**: `[uses|velocity]` shows both total usage and recent activity
+- **Automatic promotion**: 50+ uses promotes project lessons to system level
+- **Velocity decay**: Lessons lose momentum when not used, stay relevant
+- **AI-generated lessons**: Agent can propose lessons (marked with robot emoji)
+- **Token tracking**: Warns when context injection is heavy (>2000 tokens)
+
+### Approaches System
+- **Work tracking**: Track ongoing tasks with tried approaches and next steps
+- **Phases**: `research` → `planning` → `implementing` → `review`
+- **Agent tracking**: Know which agent type worked on what
+- **Code snippets**: Attach relevant code to approaches
+- **Completion workflow**: Extract lessons when finishing work
 
 ## Quick Install
 
 ```bash
-# Auto-detect installed tools and install for all
+# Clone and install
+git clone https://github.com/prestonbrown/coding-agent-lessons.git
+cd coding-agent-lessons
 ./install.sh
 
 # Or install for specific tools:
@@ -25,19 +34,11 @@ Think of it as **persistent memory** that helps your coding agent learn from you
 ./install.sh --opencode  # OpenCode only
 ```
 
-### Install from GitHub
-
-```bash
-git clone https://github.com/prestonbrown/coding-agent-lessons.git
-cd coding-agent-lessons
-./install.sh
-```
-
 ## Usage
 
 ### Adding Lessons
 
-Type these directly in your coding agent session:
+Type directly in your coding agent session:
 
 ```
 LESSON: Always use spdlog - Never use printf or cout for logging
@@ -49,7 +50,31 @@ Format: `LESSON: [category:] title - content`
 
 **Categories:** `pattern`, `correction`, `decision`, `gotcha`, `preference`
 
-### Viewing & Managing Lessons
+### Tracking Approaches
+
+For multi-step work, use approaches:
+
+```
+APPROACH: Implement WebSocket reconnection
+APPROACH UPDATE A001: status in_progress
+APPROACH UPDATE A001: phase implementing
+APPROACH UPDATE A001: tried fail - Simple setTimeout retry races with disconnect
+APPROACH UPDATE A001: tried success - Event-based with AbortController
+APPROACH UPDATE A001: next Write integration tests
+APPROACH COMPLETE A001
+```
+
+### Plan Mode Integration
+
+When entering plan mode, create a tracked approach:
+
+```
+PLAN MODE: Implement user authentication
+```
+
+This creates an approach with `phase=research` and `agent=plan`.
+
+### Viewing & Managing
 
 Use the `/lessons` slash command:
 
@@ -62,205 +87,193 @@ Use the `/lessons` slash command:
 /lessons delete L003            # Delete a lesson
 ```
 
-### How It Works
+## How It Works
 
-1. **Session Start**: Lessons are injected as context, reminder counter resets
-2. **Periodic Reminders**: Every 12 prompts, high-star lessons appear as `📚 LESSON CHECK`
-3. **When the agent applies a lesson**: It cites `[L001]` → star count increases
-4. **50+ uses**: Project lesson promotes to system level
-5. **Eviction**: Lowest-star lessons removed when cache fills (default: 30)
-6. **Decay**: Stale lessons lose stars over time (activity-aware)
+### Lessons Lifecycle
 
-### Periodic Reminders
+1. **Session Start**: Top lessons injected as context with token count
+2. **Citation**: Agent cites `[L001]` when applying → uses/velocity increase
+3. **Decay**: Weekly decay reduces velocity; stale lessons lose uses
+4. **Promotion**: 50+ uses → project lesson promotes to system level
 
-High-star lessons (3+ stars) are shown every 12 prompts to keep them top of mind:
+### Rating System
 
 ```
-📚 LESSON CHECK - High-priority lessons to keep in mind:
-### [L014] [*****/+----] Register all XML components
-### [L010] [*****/+----] No spdlog in destructors
-### [L001] [****-/-----] Conventional commits format
+[*----|-----]  1 use, no velocity (new)
+[**---|+----]  3 uses, some recent activity
+[****-|**---]  15 uses, moderate velocity
+[*****|*****]  31+ uses, high velocity (very active)
 ```
 
-Configure reminder frequency with environment variable:
-```bash
-export LESSON_REMIND_EVERY=12  # Default: every 12 prompts
-```
+Left side: Total uses (logarithmic scale)
+Right side: Recent velocity (decays over time)
 
-Reset the reminder counter manually:
-```bash
-~/.config/coding-agent-lessons/lessons-manager.sh reset-reminder
-```
+### Approaches Lifecycle
 
-### Star Rating
+1. **Create**: `APPROACH: title` or `PLAN MODE: title`
+2. **Track**: Update status, phase, tried approaches, next steps
+3. **Complete**: `APPROACH COMPLETE A001` triggers lesson extraction prompt
+4. **Archive**: Completed approaches move to archive, recent ones stay visible
 
-```
-[+----/-----] = 1 use (new lesson)
-[*----/-----] = 2 uses
-[***--/-----] = 6 uses
-[*****/-----] = 10 uses - Mature lesson
-[*****/****+] = 19 uses
-50+ uses → PROMOTED TO SYSTEM LEVEL
-```
+### Phase Detection
+
+The system can infer phases from tool usage:
+
+| Tools Used | Inferred Phase |
+|------------|----------------|
+| Read, Grep, Glob | research |
+| Write to .md, AskUserQuestion | planning |
+| Edit, Write to code files | implementing |
+| Bash (test/build commands) | review |
 
 ## File Locations
 
-**Tool-agnostic locations** (new):
-
 ```
 ~/.config/coding-agent-lessons/
-├── lessons-manager.sh          # Core CLI
-├── lesson-reminder-hook.sh     # Periodic reminder script (for Claude Code)
 ├── LESSONS.md                  # System lessons (apply everywhere)
-├── .reminder-state             # Prompt counter (auto-managed)
-├── .decay-last-run             # Decay timestamp (auto-managed)
-├── .citation-state/            # Per-session checkpoints (auto-managed)
-└── plugins/
-    └── opencode-lesson-reminder.ts  # OpenCode plugin
+├── lessons-manager.sh          # Bash CLI (legacy)
+├── .decay-last-run             # Decay timestamp
+└── .citation-state/            # Per-session checkpoints
 
 <project>/.coding-agent-lessons/
-└── LESSONS.md              # Project-specific lessons
+├── LESSONS.md                  # Project-specific lessons
+└── APPROACHES.md               # Active work tracking
 ```
 
-**Claude Code adapter**:
+### Core Implementation
 
 ```
-~/.claude/
-├── settings.json           # Hooks configuration
-├── CLAUDE.md               # Instructions (lessons section added)
-├── commands/
-│   └── lessons.md          # /lessons slash command
-└── hooks/
-    ├── inject-hook.sh      # SessionStart hook
-    ├── capture-hook.sh     # UserPromptSubmit hook
-    └── stop-hook.sh        # Stop hook (citation tracking)
+coding-agent-lessons/
+├── core/
+│   └── lessons_manager.py      # Python implementation (primary)
+├── adapters/
+│   ├── claude-code/
+│   │   ├── inject-hook.sh      # SessionStart - injects context
+│   │   └── stop-hook.sh        # Stop - tracks citations/patterns
+│   └── opencode/
+│       └── ...
+└── tests/
+    ├── test_lessons_manager.py # 62 lesson tests
+    └── test_approaches.py      # 139 approach tests
 ```
-
-**OpenCode adapter**:
-
-```
-~/.config/opencode/
-├── AGENTS.md               # Instructions (lessons section added)
-├── command/
-│   └── lessons.md          # /lessons slash command
-└── plugin/
-    └── lessons.ts          # OpenCode plugin
-```
-
-## Migration from Old Locations
-
-If you were using the old Claude Code-specific locations:
-
-```bash
-./install.sh --migrate
-```
-
-This migrates:
-- `~/.claude/LESSONS.md` → `~/.config/coding-agent-lessons/LESSONS.md`
-- `.claude/LESSONS.md` → `.coding-agent-lessons/LESSONS.md`
-
-Old files are backed up with `.migrated.YYYYMMDD` suffix.
 
 ## CLI Reference
 
+### Python Manager (Primary)
+
 ```bash
-# Manager commands (run directly or via /lessons)
-~/.config/coding-agent-lessons/lessons-manager.sh list              # Show all
-~/.config/coding-agent-lessons/lessons-manager.sh list --project    # Project only
-~/.config/coding-agent-lessons/lessons-manager.sh list --system     # System only
-~/.config/coding-agent-lessons/lessons-manager.sh list --search "term"
-~/.config/coding-agent-lessons/lessons-manager.sh list --category gotcha
-~/.config/coding-agent-lessons/lessons-manager.sh list --stale      # 60+ days uncited
-~/.config/coding-agent-lessons/lessons-manager.sh list --verbose
+# Set environment
+export PROJECT_DIR=/path/to/project
+export LESSONS_BASE=~/.config/coding-agent-lessons
 
-# Modify lessons
-~/.config/coding-agent-lessons/lessons-manager.sh add pattern "Title" "Content"
-~/.config/coding-agent-lessons/lessons-manager.sh add-system gotcha "Title" "Content"
-~/.config/coding-agent-lessons/lessons-manager.sh cite L001
-~/.config/coding-agent-lessons/lessons-manager.sh edit L005 "New content"
-~/.config/coding-agent-lessons/lessons-manager.sh delete L003
+# Lessons
+python3 core/lessons_manager.py add pattern "Title" "Content"
+python3 core/lessons_manager.py add-system gotcha "Title" "Content"
+python3 core/lessons_manager.py add-ai pattern "Title" "Content"  # AI-generated
+python3 core/lessons_manager.py cite L001
+python3 core/lessons_manager.py edit L005 "New content"
+python3 core/lessons_manager.py delete L003
+python3 core/lessons_manager.py list [--scope project|system] [--category X]
+python3 core/lessons_manager.py search "keyword"
+python3 core/lessons_manager.py inject 5  # Top 5 for context
+python3 core/lessons_manager.py decay 30  # Decay lessons unused 30+ days
 
-# Session injection (used by hooks)
-~/.config/coding-agent-lessons/lessons-manager.sh inject 5
+# Approaches
+python3 core/lessons_manager.py approach add "Title" [--phase X] [--agent Y]
+python3 core/lessons_manager.py approach update A001 --status in_progress
+python3 core/lessons_manager.py approach update A001 --phase implementing
+python3 core/lessons_manager.py approach update A001 --tried fail "Description"
+python3 core/lessons_manager.py approach update A001 --next "Next steps"
+python3 core/lessons_manager.py approach update A001 --code "snippet"
+python3 core/lessons_manager.py approach complete A001
+python3 core/lessons_manager.py approach archive A001
+python3 core/lessons_manager.py approach list [--status X]
+python3 core/lessons_manager.py approach inject  # For context
 ```
 
-## Installer Commands
+## Hook Patterns
+
+The stop-hook recognizes these patterns in assistant output:
+
+### Lesson Patterns
+```
+LESSON: title - content                    # Add project lesson
+LESSON: category: title - content          # Add with category
+AI LESSON: category: title - content       # AI-proposed lesson
+```
+
+### Approach Patterns
+```
+APPROACH: <title>                              # Start tracking
+PLAN MODE: <title>                             # Start with phase=research, agent=plan
+APPROACH UPDATE A###: status <status>          # in_progress|blocked|completed
+APPROACH UPDATE A###: phase <phase>            # research|planning|implementing|review
+APPROACH UPDATE A###: agent <agent>            # explore|general-purpose|plan|review|user
+APPROACH UPDATE A###: tried <outcome> - <desc> # success|fail|partial
+APPROACH UPDATE A###: next <text>              # Set next steps
+APPROACH COMPLETE A###                         # Mark complete
+```
+
+### Citation Pattern
+```
+[L001]: Applied the lesson...              # Increments uses and velocity
+[S002]: Following system lesson...         # Works for system lessons too
+```
+
+## Configuration
+
+### Environment Variables
 
 ```bash
-./install.sh                  # Auto-detect and install
-./install.sh --claude         # Install Claude Code adapter only
-./install.sh --opencode       # Install OpenCode adapter only
-./install.sh --migrate        # Migrate from old locations
-./install.sh --uninstall      # Remove adapters (keeps lessons)
-./install.sh --help           # Show help
+LESSONS_BASE=~/.config/coding-agent-lessons  # System lessons location
+PROJECT_DIR=/path/to/project                  # Project root
+LESSON_REMIND_EVERY=12                        # Reminder frequency (prompts)
+```
+
+### Claude Code Settings
+
+In `~/.claude/settings.json`:
+```json
+{
+  "hooks": {
+    "SessionStart": [{"command": "path/to/inject-hook.sh"}],
+    "Stop": [{"command": "path/to/stop-hook.sh"}]
+  },
+  "lessonsSystem": {
+    "enabled": true
+  }
+}
 ```
 
 ## Agent Behavior
 
 When working with you, the agent will:
 
-1. **CITE** lessons when applying them: *"Applying [L001]: using XML event_cb..."*
-2. **PROPOSE** new lessons when:
-   - You correct it
-   - It discovers non-obvious patterns
-   - Something fails and it learns why
-3. **NEVER** add lessons without your explicit approval
-
-## Example Lessons
-
-| ID | Stars | Title |
-|----|-------|-------|
-| [L010] | [*----/-----] | No spdlog in destructors |
-| [L013] | [**---/-----] | Callbacks before XML creation |
-| [S001] | [***--/-----] | Git commit message format |
-
-## Lesson Decay
-
-Lessons can become stale over time. The decay system addresses this:
-
-- **Weekly check**: Runs automatically at session start (once per week)
-- **Activity-aware**: Only decays if you've been coding (no penalty for vacations)
-- **Gradual decay**: Lessons uncited for 30+ days lose 1 star per week
-- **Never deleted**: Uses never drops below 1 (lessons persist until manually removed)
-
-Run decay manually:
-```bash
-~/.config/coding-agent-lessons/lessons-manager.sh decay 30
-```
+1. **CITE** lessons when applying: *"Applying [L001]: using XML event_cb..."*
+2. **PROPOSE** lessons when corrected or discovering patterns
+3. **TRACK** approaches for multi-step work
+4. **UPDATE** phase and status as work progresses
+5. **EXTRACT** lessons when completing approaches
 
 ## Testing
 
-Run the test suite:
-
 ```bash
-./tests/test-stop-hook.sh
+# Run all tests (201 tests)
+python3 -m pytest tests/ -v
+
+# Run specific test files
+python3 -m pytest tests/test_lessons_manager.py -v  # 62 tests
+python3 -m pytest tests/test_approaches.py -v       # 139 tests
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) for detailed testing guide.
 
-## Developer Documentation
+## Documentation
 
-- [DEVELOPMENT.md](DEVELOPMENT.md) - Architecture, code style, debugging
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) - Hook installation and management
-- [docs/TESTING.md](docs/TESTING.md) - Test framework and writing tests
-
-## Adding Support for New Tools
-
-1. Create an adapter in `adapters/<tool-name>/`
-2. Implement hooks/plugins that call `lessons-manager.sh`
-3. Add detection and installation logic to `install.sh`
-
-The core `lessons-manager.sh` handles all lesson operations - adapters just need to:
-- Call `inject` at session start
-- Capture `LESSON:` commands from user input
-- Call `cite` when the agent references lessons
+- [DEVELOPMENT.md](DEVELOPMENT.md) - Architecture and contributing
+- [docs/TESTING.md](docs/TESTING.md) - Test framework
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) - Installation and hooks
 
 ## License
 
 MIT License - see [LICENSE](LICENSE)
-
-## Acknowledgments
-
-Built for use with:
-- [Claude Code](https://github.com/anthropics/claude-code) by Anthropic
-- [OpenCode](https://opencode.ai) by SST

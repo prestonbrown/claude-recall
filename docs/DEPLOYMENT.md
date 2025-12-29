@@ -1,35 +1,46 @@
 # Deployment Guide
 
-This document explains how to install, update, and manage the coding-agent-lessons hooks for different AI coding assistants.
+Installation, configuration, and management of the coding-agent-lessons system.
 
-## Claude Code Deployment
-
-### Installation
-
-Claude Code hooks are installed to `~/.claude/hooks/`:
+## Quick Install
 
 ```bash
-# Create hooks directory
-mkdir -p ~/.claude/hooks
+# Clone repository
+git clone https://github.com/prestonbrown/coding-agent-lessons.git
+cd coding-agent-lessons
 
+# Run installer
+./install.sh
+
+# Or install for specific tools:
+./install.sh --claude    # Claude Code only
+./install.sh --opencode  # OpenCode only
+```
+
+## Manual Installation
+
+### Claude Code
+
+1. **Create directories:**
+```bash
+mkdir -p ~/.claude/hooks
+mkdir -p ~/.config/coding-agent-lessons
+```
+
+2. **Copy files:**
+```bash
 # Copy hook scripts
 cp adapters/claude-code/inject-hook.sh ~/.claude/hooks/
 cp adapters/claude-code/stop-hook.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/*.sh
 
-# Make executable
-chmod +x ~/.claude/hooks/inject-hook.sh
-chmod +x ~/.claude/hooks/stop-hook.sh
-
-# Install core manager (creates symlink for hooks to find)
-mkdir -p ~/.config/coding-agent-lessons
-cp core/lessons-manager.sh ~/.config/coding-agent-lessons/
-chmod +x ~/.config/coding-agent-lessons/lessons-manager.sh
+# Copy core manager
+cp core/lessons_manager.py ~/.config/coding-agent-lessons/
 ```
 
-### Claude Settings Configuration
+3. **Configure Claude Code:**
 
 Add to `~/.claude/settings.json`:
-
 ```json
 {
   "hooks": {
@@ -45,76 +56,23 @@ Add to `~/.claude/settings.json`:
         "command": "~/.claude/hooks/stop-hook.sh"
       }
     ]
+  },
+  "lessonsSystem": {
+    "enabled": true
   }
 }
 ```
 
-### Updating Hooks
+### OpenCode
 
-When the repository is updated:
-
+1. **Navigate to plugins directory:**
 ```bash
-# From repo directory
-cp adapters/claude-code/inject-hook.sh ~/.claude/hooks/
-cp adapters/claude-code/stop-hook.sh ~/.claude/hooks/
-cp core/lessons-manager.sh ~/.config/coding-agent-lessons/
-```
-
-Or create an install script:
-
-```bash
-#!/bin/bash
-# install-hooks.sh
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-CLAUDE_HOOKS="$HOME/.claude/hooks"
-LESSONS_BASE="$HOME/.config/coding-agent-lessons"
-
-mkdir -p "$CLAUDE_HOOKS" "$LESSONS_BASE"
-cp "$REPO_DIR/adapters/claude-code/inject-hook.sh" "$CLAUDE_HOOKS/"
-cp "$REPO_DIR/adapters/claude-code/stop-hook.sh" "$CLAUDE_HOOKS/"
-cp "$REPO_DIR/core/lessons-manager.sh" "$LESSONS_BASE/"
-chmod +x "$CLAUDE_HOOKS"/*.sh "$LESSONS_BASE/lessons-manager.sh"
-echo "Hooks installed successfully"
-```
-
-### File Locations Reference
-
-| Location | Purpose |
-|----------|---------|
-| `~/.claude/hooks/inject-hook.sh` | SessionStart hook (injects lessons) |
-| `~/.claude/hooks/stop-hook.sh` | Stop hook (tracks citations) |
-| `~/.claude/settings.json` | Claude Code configuration |
-| `~/.config/coding-agent-lessons/lessons-manager.sh` | Core manager script |
-| `~/.config/coding-agent-lessons/LESSONS.md` | System-wide lessons |
-| `~/.config/coding-agent-lessons/.decay-last-run` | Decay timestamp |
-| `~/.config/coding-agent-lessons/.citation-state/` | Citation checkpoints |
-
-### Relationship: Repo vs Installed
-
-```
-Repository (source of truth)          Installed (runtime)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━          ━━━━━━━━━━━━━━━━━━━━
-adapters/claude-code/              → ~/.claude/hooks/
-  inject-hook.sh                      inject-hook.sh
-  stop-hook.sh                        stop-hook.sh
-
-core/                              → ~/.config/coding-agent-lessons/
-  lessons-manager.sh                  lessons-manager.sh
-```
-
-**Important**: The repository files are NOT used at runtime. Claude Code only reads from `~/.claude/hooks/`. Always reinstall after making changes.
-
-## OpenCode Deployment
-
-### Installation
-
-OpenCode uses a TypeScript plugin system:
-
-```bash
-# Navigate to OpenCode plugins directory
 cd ~/.opencode/plugins
+```
 
-# Clone or symlink the adapter
+2. **Link or copy adapter:**
+```bash
+# Symlink (recommended for development)
 ln -s /path/to/coding-agent-lessons/adapters/opencode lessons-plugin
 
 # Or copy files
@@ -122,13 +80,98 @@ mkdir -p lessons-plugin
 cp -r /path/to/coding-agent-lessons/adapters/opencode/* lessons-plugin/
 ```
 
-### Plugin Registration
+3. **Register plugin** (method depends on OpenCode version)
 
-Register in OpenCode's configuration (method depends on OpenCode version).
+## File Locations
 
-## Verifying Installation
+### System Files
 
-### Check Hooks Are Installed
+| Location | Purpose |
+|----------|---------|
+| `~/.config/coding-agent-lessons/` | System lessons base directory |
+| `~/.config/coding-agent-lessons/LESSONS.md` | System-wide lessons |
+| `~/.config/coding-agent-lessons/.decay-last-run` | Decay timestamp |
+| `~/.config/coding-agent-lessons/.citation-state/` | Citation checkpoints |
+
+### Claude Code Files
+
+| Location | Purpose |
+|----------|---------|
+| `~/.claude/hooks/inject-hook.sh` | SessionStart hook |
+| `~/.claude/hooks/stop-hook.sh` | Stop hook |
+| `~/.claude/settings.json` | Claude Code configuration |
+
+### Project Files
+
+| Location | Purpose |
+|----------|---------|
+| `$PROJECT/.coding-agent-lessons/` | Project lessons directory |
+| `$PROJECT/.coding-agent-lessons/LESSONS.md` | Project-specific lessons |
+| `$PROJECT/.coding-agent-lessons/APPROACHES.md` | Active work tracking |
+
+### Repository vs Installed
+
+```
+Repository (source)                  Installed (runtime)
+━━━━━━━━━━━━━━━━━━━━                ━━━━━━━━━━━━━━━━━━━━
+adapters/claude-code/            → ~/.claude/hooks/
+  inject-hook.sh                     inject-hook.sh
+  stop-hook.sh                       stop-hook.sh
+
+core/                            → ~/.config/coding-agent-lessons/
+  lessons_manager.py                 lessons_manager.py
+```
+
+**Note:** Repository files are NOT used at runtime. Always reinstall after updates.
+
+## Updating
+
+### From Repository
+
+```bash
+cd /path/to/coding-agent-lessons
+git pull
+./install.sh
+```
+
+### Manual Update
+
+```bash
+# Update hooks
+cp adapters/claude-code/inject-hook.sh ~/.claude/hooks/
+cp adapters/claude-code/stop-hook.sh ~/.claude/hooks/
+
+# Update manager
+cp core/lessons_manager.py ~/.config/coding-agent-lessons/
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LESSONS_BASE` | `~/.config/coding-agent-lessons` | System lessons location |
+| `PROJECT_DIR` | Current directory | Project root |
+| `LESSON_REMIND_EVERY` | `12` | Reminder frequency (prompts) |
+
+### Claude Code Settings
+
+In `~/.claude/settings.json`:
+
+```json
+{
+  "lessonsSystem": {
+    "enabled": true
+  }
+}
+```
+
+Set `enabled: false` to temporarily disable the system.
+
+## Verification
+
+### Check Installation
 
 ```bash
 # Verify files exist
@@ -137,80 +180,97 @@ ls -la ~/.config/coding-agent-lessons/
 
 # Check permissions
 file ~/.claude/hooks/*.sh
-file ~/.config/coding-agent-lessons/lessons-manager.sh
+file ~/.config/coding-agent-lessons/lessons_manager.py
 ```
 
-### Test Hook Execution
+### Test Hooks
 
 ```bash
-# Test inject hook (simulates SessionStart)
+# Test inject hook
 echo '{"cwd":"/tmp"}' | ~/.claude/hooks/inject-hook.sh
 
-# Should output JSON with lessons context if lessons exist
-
 # Test manager directly
-~/.config/coding-agent-lessons/lessons-manager.sh list
+python3 ~/.config/coding-agent-lessons/lessons_manager.py list
+python3 ~/.config/coding-agent-lessons/lessons_manager.py approach list
 ```
 
-### Verify in Claude Session
+### Verify in Session
 
-Start a new Claude Code session. You should see in the context:
+Start a new Claude Code session. You should see:
 - "LESSONS ACTIVE: X system (S###), Y project (L###)"
-- Top lessons listed with star ratings
+- Top lessons with star ratings
 - "LESSON DUTY" reminder
-
-## Disabling Temporarily
-
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "lessonsSystem": {
-    "enabled": false
-  }
-}
-```
-
-Both hooks check this setting and exit early if disabled.
+- "APPROACH TRACKING" instructions
 
 ## Troubleshooting
 
 ### Hooks Not Running
 
-1. **Check settings.json syntax**: Invalid JSON prevents hook registration
-2. **Verify file permissions**: `chmod +x ~/.claude/hooks/*.sh`
-3. **Check Claude Code version**: Hooks require Claude Code with hook support
+1. **Check settings.json syntax:**
+   ```bash
+   jq . ~/.claude/settings.json
+   ```
+   Invalid JSON prevents hook registration.
+
+2. **Verify permissions:**
+   ```bash
+   chmod +x ~/.claude/hooks/*.sh
+   ```
+
+3. **Check Claude Code version:**
+   Hooks require Claude Code with hook support.
 
 ### No Lessons Appearing
 
-1. **Check lessons files exist**:
+1. **Check lessons files exist:**
    ```bash
    ls ~/.config/coding-agent-lessons/LESSONS.md
    ls $PROJECT/.coding-agent-lessons/LESSONS.md
    ```
-2. **Test manager directly**:
+
+2. **Test manager directly:**
    ```bash
-   ~/.config/coding-agent-lessons/lessons-manager.sh inject 5
+   PROJECT_DIR=$PWD python3 ~/.config/coding-agent-lessons/lessons_manager.py inject 5
    ```
 
-### Citations Not Being Tracked
+### Citations Not Tracked
 
-1. **Check checkpoint directory**:
+1. **Check checkpoint directory:**
    ```bash
    ls ~/.config/coding-agent-lessons/.citation-state/
    ```
-2. **Verify transcript access**: Hook needs read access to Claude transcripts
-3. **Check for jq errors**: `which jq` - jq must be installed
+
+2. **Verify transcript access:**
+   Hook needs read access to Claude transcripts.
+
+3. **Check Python available:**
+   ```bash
+   which python3
+   python3 --version
+   ```
+
+### Approaches Not Showing
+
+1. **Check approaches file:**
+   ```bash
+   cat $PROJECT/.coding-agent-lessons/APPROACHES.md
+   ```
+
+2. **Test approach injection:**
+   ```bash
+   PROJECT_DIR=$PWD python3 ~/.config/coding-agent-lessons/lessons_manager.py approach inject
+   ```
 
 ### Decay Not Running
 
-1. **Check decay state file**:
+1. **Check decay state:**
    ```bash
    cat ~/.config/coding-agent-lessons/.decay-last-run
    ```
-2. **Force decay manually**:
+
+2. **Force decay manually:**
    ```bash
-   ~/.config/coding-agent-lessons/lessons-manager.sh decay 30
+   PROJECT_DIR=$PWD python3 ~/.config/coding-agent-lessons/lessons_manager.py decay 30
    ```
 
 ## Backup and Migration
@@ -221,27 +281,91 @@ Both hooks check this setting and exit early if disabled.
 # Backup system lessons
 cp ~/.config/coding-agent-lessons/LESSONS.md ~/lessons-backup-$(date +%Y%m%d).md
 
-# Backup project lessons (run from project root)
-cp .coding-agent-lessons/LESSONS.md ~/project-lessons-backup-$(date +%Y%m%d).md
+# Backup project lessons and approaches
+cp .coding-agent-lessons/LESSONS.md ~/project-lessons-$(date +%Y%m%d).md
+cp .coding-agent-lessons/APPROACHES.md ~/approaches-$(date +%Y%m%d).md
 ```
 
 ### Migrate to New Machine
 
-1. Copy lesson files:
+1. **Copy lesson files:**
    ```bash
    scp old-machine:~/.config/coding-agent-lessons/LESSONS.md ~/.config/coding-agent-lessons/
    ```
 
-2. Install hooks (see Installation above)
+2. **Install hooks** (see installation above)
 
-3. Decay state and checkpoints don't need migration (will regenerate)
+3. **Decay state and checkpoints regenerate automatically**
+
+### Export/Import Between Projects
+
+```bash
+# Export project lessons
+cp $OLD_PROJECT/.coding-agent-lessons/LESSONS.md $NEW_PROJECT/.coding-agent-lessons/
+
+# Merge lessons manually or use edit command to adjust IDs
+```
+
+## Disabling
+
+### Temporarily Disable
+
+In `~/.claude/settings.json`:
+```json
+{
+  "lessonsSystem": {
+    "enabled": false
+  }
+}
+```
+
+Both hooks check this setting and exit early.
+
+### Completely Uninstall
+
+```bash
+# Remove hooks
+rm ~/.claude/hooks/inject-hook.sh
+rm ~/.claude/hooks/stop-hook.sh
+
+# Remove system files
+rm -rf ~/.config/coding-agent-lessons/
+
+# Remove from settings.json (manually edit)
+```
 
 ## Version Compatibility
 
 | Component | Requirement |
 |-----------|-------------|
-| Bash | 4.0+ (for associative arrays) |
-| jq | 1.5+ |
-| Claude Code | Hook support (check docs) |
-| macOS | 10.15+ (for stat -f) |
-| Linux | Any recent (for stat -c) |
+| Python | 3.8+ |
+| Bash | 4.0+ |
+| jq | 1.5+ (for hooks) |
+| Claude Code | Hook support required |
+| macOS | 10.15+ |
+| Linux | Any recent distribution |
+
+## Security Considerations
+
+### Hook Security
+
+- Hooks run with your user permissions
+- Input is sanitized before passing to Python
+- Command injection protection: `--` before user input
+- ReDoS protection: Long lines skipped
+
+### File Permissions
+
+```bash
+# Recommended permissions
+chmod 755 ~/.claude/hooks/*.sh
+chmod 644 ~/.config/coding-agent-lessons/lessons_manager.py
+chmod 644 ~/.config/coding-agent-lessons/LESSONS.md
+chmod 700 ~/.config/coding-agent-lessons/.citation-state/
+```
+
+### Sensitive Data
+
+- Don't store secrets in lessons
+- Project lessons are in `.coding-agent-lessons/` (add to `.gitignore` if needed)
+- System lessons contain cross-project patterns (review before sharing)

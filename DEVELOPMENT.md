@@ -1,10 +1,8 @@
 # Development Guide
 
-This document covers the architecture, testing, and development workflow for the coding-agent-lessons system.
+Architecture, internals, and contributing guide for the coding-agent-lessons system.
 
 ## Architecture Overview
-
-The system consists of three main layers:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -18,21 +16,18 @@ The system consists of three main layers:
 │  ┌─────────────────────┐    ┌─────────────────────┐         │
 │  │   claude-code/      │    │    opencode/        │         │
 │  │   - inject-hook.sh  │    │    - plugin.ts      │         │
-│  │   - stop-hook.sh    │    │    - command/       │         │
+│  │   - stop-hook.sh    │    │    - ...            │         │
 │  └─────────────────────┘    └─────────────────────┘         │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      Core Layer                              │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │              lessons-manager.sh                          │ │
-│  │  - add/remove/list lessons                               │ │
-│  │  - cite (increment uses)                                 │ │
-│  │  - inject (generate context)                             │ │
-│  │  - decay (reduce stale lesson uses)                      │ │
-│  │  - promote (project → system)                            │ │
-│  └─────────────────────────────────────────────────────────┘ │
+│                Python Core (lessons_manager.py)              │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐ │
+│  │    Lessons     │  │   Approaches   │  │   Injection    │ │
+│  │  add/cite/edit │  │ phases/agents  │  │ token tracking │ │
+│  │  decay/promote │  │ tried/next     │  │ context budget │ │
+│  └────────────────┘  └────────────────┘  └────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -44,84 +39,233 @@ The system consists of three main layers:
 │  └── .citation-state/     # Per-session checkpoints          │
 │                                                              │
 │  $PROJECT/.coding-agent-lessons/                             │
-│  └── LESSONS.md           # Project-specific lessons         │
+│  ├── LESSONS.md           # Project-specific lessons         │
+│  └── APPROACHES.md        # Active work tracking             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Core Components
 
-### lessons-manager.sh
+### lessons_manager.py
 
-The central script that manages all lesson operations. Located at `core/lessons-manager.sh`.
+The primary implementation in Python. Located at `core/lessons_manager.py`.
 
-**Key Commands:**
+#### Data Structures
 
-| Command | Description |
-|---------|-------------|
-| `add <category> <title> <content>` | Add project lesson |
-| `add-system <category> <title> <content>` | Add system lesson |
-| `cite <id>` | Increment uses for a lesson |
-| `inject <count>` | Generate context for AI injection |
-| `list` | List all lessons |
-| `decay <days>` | Reduce uses for stale lessons |
-| `promote <id>` | Promote project lesson to system |
+```python
+@dataclass
+class Lesson:
+    id: str           # L001, S001, etc.
+    title: str
+    content: str
+    category: str     # pattern, correction, gotcha, preference, decision
+    uses: int         # Total citation count
+    velocity: float   # Recent activity (decays over time)
+    tokens: int       # Estimated token count for budgeting
+    learned: date
+    last: date
+    source: str       # user, ai
+    scope: str        # project, system
 
-**Environment Variables:**
+@dataclass
+class Approach:
+    id: str           # A001, A002, etc.
+    title: str
+    status: str       # pending, in_progress, blocked, completed
+    phase: str        # research, planning, implementing, review
+    agent: str        # explore, general-purpose, plan, review, user
+    created: date
+    updated: date
+    description: str
+    next_steps: str
+    files: List[str]
+    tried: List[TriedApproach]
+    code_snippets: List[str]
+```
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LESSONS_BASE` | `~/.config/coding-agent-lessons` | Base directory for system lessons |
-| `PROJECT_DIR` | Current directory | Project root for project lessons |
+#### Key Functions
 
-### Citation Checkpointing
+| Function | Description |
+|----------|-------------|
+| `add(category, title, content)` | Add project lesson |
+| `add_system(category, title, content)` | Add system lesson |
+| `add_ai(category, title, content)` | Add AI-proposed lesson (🤖 marker) |
+| `cite(lesson_id)` | Increment uses and velocity |
+| `edit(lesson_id, new_content)` | Update lesson content |
+| `delete(lesson_id)` | Remove a lesson |
+| `inject(count)` | Generate top N lessons for context |
+| `decay(days)` | Reduce velocity for stale lessons |
+| `promote(lesson_id)` | Move project lesson to system |
+| `approach_add(title, phase, agent)` | Create new approach |
+| `approach_update(id, **kwargs)` | Update approach fields |
+| `approach_complete(id)` | Mark complete, prompt for lessons |
+| `approach_inject()` | Generate approach context |
+| `detect_phase_from_tools(tools)` | Infer phase from tool usage |
 
-The stop hook uses timestamp-based checkpointing to process citations incrementally:
+#### Rating System
 
-1. **First run**: Process all assistant messages, save latest timestamp
-2. **Subsequent runs**: Only process messages newer than checkpoint
-3. **Storage**: `~/.config/coding-agent-lessons/.citation-state/<session-id>`
+The dual-dimension rating shows both total usage and recent activity:
 
-This avoids the 50KB stdin limit and scales to arbitrary conversation lengths.
+```
+[*----|-----]  1 use, no velocity (new lesson)
+[**---|+----]  3 uses, some recent activity
+[****-|**---]  15 uses, moderate velocity
+[*****|*****]  31+ uses, high velocity (very active)
+```
+
+**Left side (uses)**: Logarithmic scale of total citations
+- 1 star: 1 use
+- 2 stars: 2-3 uses
+- 3 stars: 4-7 uses
+- 4 stars: 8-15 uses
+- 5 stars: 16+ uses
+
+**Right side (velocity)**: Recent activity that decays over time
+- Increases by 1.0 on each citation
+- Decays by `VELOCITY_DECAY_FACTOR` (0.7) weekly
+- Values below `VELOCITY_EPSILON` (0.1) round to zero
+
+#### Token Tracking
+
+Each lesson estimates its token count:
+
+```python
+tokens = len(title + content) // 4  # Rough estimate
+```
+
+During injection, total tokens are summed and warnings shown:
+
+| Level | Tokens | Action |
+|-------|--------|--------|
+| Light | <1000 | Normal injection |
+| Medium | 1000-2000 | Show token count |
+| Heavy | >2000 | Warning + suggestions |
+
+### File Locking
+
+The `FileLock` class provides safe concurrent access:
+
+```python
+class FileLock:
+    def __init__(self, path: str):
+        self.path = path
+        self.lock_file = None
+
+    def __enter__(self):
+        self.lock_file = open(f"{self.path}.lock", 'w')
+        fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.lock_file:
+            fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+            self.lock_file.close()
+            # Note: Lock file NOT deleted to avoid race conditions
+        return False
+```
+
+Usage:
+```python
+with FileLock(lessons_file):
+    lessons = parse_lessons(lessons_file)
+    lessons.append(new_lesson)
+    write_lessons(lessons_file, lessons)
+```
 
 ### Decay System
 
-Lessons accumulate stars through citations but can become stale. The decay system addresses this:
+Lessons can become stale. The decay system addresses this:
 
-**Activity-Aware Decay:**
+**How it works:**
 - Runs automatically once per week (triggered by inject-hook)
 - Only decays if coding sessions occurred since last decay
-- If no sessions (vacation mode), lessons are preserved
-- Reduces uses by 1 per decay run for lessons not cited in 30+ days
-- Never reduces below 1 (lessons aren't auto-deleted)
+- Vacation mode: If no sessions, lessons are preserved
+- Reduces velocity by `VELOCITY_DECAY_FACTOR` (0.7)
+- Lessons not cited in 30+ days lose 1 use (min 1)
 
 **Files:**
-- `.decay-last-run`: Unix timestamp of last decay execution
+- `.decay-last-run`: Unix timestamp of last decay
 - Checkpoint file modification times indicate session activity
 
-### Orphaned Checkpoint Cleanup
+### Approaches System
 
-Checkpoint files can become orphaned when Claude deletes old transcripts:
+Approaches track multi-step work with rich metadata:
 
-- Runs opportunistically on each stop-hook invocation
-- Cleans up to 10 orphaned checkpoints per run
-- Only deletes checkpoints older than 7 days with no matching transcript
-- Safe defaults: if stat fails, treats file as new (won't delete)
+**Phases:**
+| Phase | Description |
+|-------|-------------|
+| `research` | Reading, searching, understanding codebase |
+| `planning` | Creating plan, designing solution |
+| `implementing` | Writing code |
+| `review` | Checking work, running tests |
+
+**Agents:**
+| Agent | Description |
+|-------|-------------|
+| `explore` | Codebase exploration |
+| `general-purpose` | Implementation work |
+| `plan` | Design/planning |
+| `review` | Code review |
+| `user` | Direct user work (default) |
+
+**Visibility Rules:**
+```python
+APPROACH_MAX_COMPLETED = 3   # Keep last N completed
+APPROACH_MAX_AGE_DAYS = 7    # Or within N days
+```
+
+Completed approaches remain visible if they match EITHER criterion.
+
+### Phase Detection
+
+The `detect_phase_from_tools()` function infers phase from tool usage:
+
+```python
+def detect_phase_from_tools(tools: list) -> str:
+    """Detect approach phase from tool usage patterns.
+    Priority: review > implementing > planning > research"""
+
+    # Bash with test/build commands → review
+    # Edit or Write to code files → implementing
+    # Write to .md or AskUserQuestion → planning
+    # Read, Grep, Glob → research (default)
+```
+
+| Tools Used | Inferred Phase |
+|------------|----------------|
+| Bash (pytest, npm test, make) | review |
+| Edit, Write to .py/.ts/.js | implementing |
+| Write to .md, AskUserQuestion | planning |
+| Read, Grep, Glob | research |
 
 ## Adapters
 
 ### Claude Code Adapter
 
-Two shell scripts that hook into Claude Code's event system:
+Two shell scripts hook into Claude Code's event system:
 
-**inject-hook.sh** (SessionStart event):
-- Injects lesson context at conversation start
+**inject-hook.sh** (SessionStart):
+- Calls `lessons_manager.py inject` for top lessons
+- Calls `lessons_manager.py approach inject` for active approaches
+- Adds "LESSON DUTY" and "APPROACH TRACKING" reminders
 - Triggers weekly decay check in background
-- Adds "LESSON DUTY" reminder
 
-**stop-hook.sh** (Stop event):
-- Tracks lesson citations from AI responses
+**stop-hook.sh** (Stop):
+- Parses assistant output for patterns:
+  - `LESSON: category: title - content`
+  - `AI LESSON: category: title - content`
+  - `APPROACH: title`
+  - `PLAN MODE: title`
+  - `APPROACH UPDATE A###: field value`
+  - `APPROACH COMPLETE A###`
+  - `[L###]: Applied...` (citations)
 - Uses incremental checkpointing
 - Cleans orphaned checkpoints opportunistically
+
+**Security measures:**
+- Command injection protection: `--` before user input
+- ReDoS protection: Lines >1000 chars skipped
+- Input sanitization: Length limits, character filtering
 
 ### OpenCode Adapter
 
@@ -129,151 +273,179 @@ A TypeScript plugin that hooks into OpenCode events:
 
 **plugin.ts**:
 - `session.created`: Injects lessons context
-- `session.idle`: Tracks citations (with in-memory checkpointing)
-- `message.updated`: Captures `LESSON:` commands from user
+- `session.idle`: Tracks citations
+- `message.updated`: Captures `LESSON:` commands
 
-## Testing
+## Environment Variables
 
-### Running Tests
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LESSONS_BASE` | `~/.config/coding-agent-lessons` | System lessons location |
+| `PROJECT_DIR` | Current directory | Project root |
+| `LESSON_REMIND_EVERY` | `12` | Reminder frequency (prompts) |
 
-```bash
-# Run all tests
-./tests/test-stop-hook.sh
+## Markdown Format
 
-# Run specific test
-./tests/test-stop-hook.sh test_basic_citation
+### Lessons File (LESSONS.md)
+
+```markdown
+# Project Lessons
+
+### [L001] [**---|+----] pattern: Always validate JSON
+- **Uses**: 5 | **Velocity**: 1.2 | **Tokens**: 45 | **Learned**: 2025-12-28 | **Last**: 2025-12-29 | **Source**: user
+- Parse JSON in try/except block, never assume valid input
+
+### [L002] [*----|-----] gotcha: Race condition in async handlers
+- **Uses**: 1 | **Velocity**: 0.0 | **Tokens**: 62 | **Learned**: 2025-12-29 | **Last**: 2025-12-29 | **Source**: ai 🤖
+- Use locks or queues when multiple handlers modify shared state
 ```
 
-### Test Structure
+### Approaches File (APPROACHES.md)
 
-Tests use a simple framework in `test-stop-hook.sh`:
+```markdown
+# Active Approaches
 
-```bash
-test_example() {
-    # Setup
-    create_fake_transcript "..."
+### [A001] Implementing WebSocket reconnection
+- **Status**: in_progress | **Phase**: implementing | **Agent**: general-purpose
+- **Created**: 2025-12-28 | **Updated**: 2025-12-29
+- **Files**: src/websocket.ts, src/connection-manager.ts
+- **Description**: Add automatic reconnection with exponential backoff
 
-    # Execute
-    run_hook
-
-    # Assert
-    assert_contains "$output" "expected"
-    assert_file_exists "$file"
+**Code**:
+```typescript
+export async function reconnect(delay: number = 1000): Promise<void> {
+  await sleep(delay);
+  return connect({ retry: true });
 }
 ```
 
-### Current Test Coverage (18 tests)
+**Tried**:
+1. [fail] Simple setTimeout retry - races with manual disconnect
+2. [success] Event-based with AbortController
 
-| Category | Tests |
-|----------|-------|
-| Basic functionality | 5 |
-| Checkpointing | 4 |
-| Edge cases | 4 |
-| Cleanup | 2 |
-| Decay | 3 |
+**Next**: Write integration tests
 
-### Adding New Tests
+---
 
-1. Add test function in `tests/test-stop-hook.sh`
-2. Follow naming convention: `test_<description>`
-3. Use helper functions: `create_fake_transcript`, `run_hook`, `assert_*`
-4. Run full suite to verify
+# Completed Approaches
+
+### [A000] Initial setup
+- **Status**: completed | **Phase**: review | **Agent**: user
+- **Created**: 2025-12-27 | **Updated**: 2025-12-27
+- ...
+```
 
 ## Development Workflow
 
 ### Making Changes
 
-1. **Edit core logic**: Modify `core/lessons-manager.sh`
+1. **Edit core logic**: Modify `core/lessons_manager.py`
 2. **Edit hooks**: Modify files in `adapters/claude-code/`
-3. **Run tests**: `./tests/test-stop-hook.sh`
-4. **Install hooks**: See [Deployment Guide](docs/DEPLOYMENT.md)
+3. **Run tests**: `python3 -m pytest tests/ -v`
+4. **Install hooks**: `./install.sh`
 
 ### Code Style
 
-- Shell scripts use `set -euo pipefail` (or `-uo pipefail` for hooks that need graceful failure)
-- Use `local` for all function variables
-- Quote all variable expansions: `"$var"` not `$var`
-- Use `[[ ]]` for conditionals (bash-specific)
-- Add comments for non-obvious logic
+**Python:**
+- Type hints for all function signatures
+- Docstrings for public functions
+- Use dataclasses for structured data
+- `black` for formatting (if available)
 
-### Common Patterns
+**Shell:**
+- `set -euo pipefail` for safety
+- `local` for all function variables
+- Quote all variable expansions: `"$var"`
+- Use `[[ ]]` for conditionals
+- `--` before user input to prevent option injection
 
-**Safe file operations:**
+### Testing
+
 ```bash
-# Check file exists before reading
-[[ -f "$file" ]] || return 0
+# Run all tests (201 tests)
+python3 -m pytest tests/ -v
 
-# Create directory if needed
-mkdir -p "$dir"
+# Run specific test file
+python3 -m pytest tests/test_lessons_manager.py -v  # 62 tests
+python3 -m pytest tests/test_approaches.py -v       # 139 tests
 
-# Safe stat with fallback
-mtime=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null || echo "")
+# Run specific test
+python3 -m pytest tests/test_approaches.py::TestPhaseDetectionFromTools -v
 ```
 
-**Two-phase updates (avoid stale reads):**
-```bash
-# PHASE 1: Collect items to modify
-local items_to_update=()
-while read -r item; do
-    items_to_update+=("$item")
-done < "$file"
-
-# PHASE 2: Apply updates with fresh reads
-for item in "${items_to_update[@]}"; do
-    # Re-read current state before modifying
-    current_value=$(grep ... "$file")
-    update_value "$item" "$new_value" "$file"
-done
-```
-
-**Numeric validation:**
-```bash
-# Strip non-numeric characters
-value=$(head -1 "$file" 2>/dev/null | tr -dc '0-9')
-[[ -z "$value" ]] && value=0
-```
+See [docs/TESTING.md](docs/TESTING.md) for detailed testing guide.
 
 ## Debugging
 
 ### Enable Debug Output
 
-For inject-hook and stop-hook, temporarily add:
+For hooks, temporarily add:
 ```bash
 exec 2>/tmp/lessons-debug.log
 set -x
+```
+
+### Inspect State
+
+```bash
+# View lessons
+python3 core/lessons_manager.py list
+
+# View approaches
+python3 core/lessons_manager.py approach list
+
+# Test injection
+python3 core/lessons_manager.py inject 5
+
+# Check decay state
+cat ~/.config/coding-agent-lessons/.decay-last-run
 ```
 
 ### Common Issues
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Citations not tracked | Checkpoint too new | Delete session checkpoint file |
-| Decay not running | No sessions detected | Create a checkpoint file |
-| Hook not triggering | Not installed | Run install command |
-| jq parse error | Invalid JSON | Check transcript file format |
+| Citations not tracked | Checkpoint too new | Delete session checkpoint |
+| Decay not running | No sessions detected | Check checkpoint files |
+| Hook not triggering | Not installed | Run `./install.sh` |
+| Import error | Missing dependency | `pip install` required packages |
 
-### Inspecting State
+## Contributing
 
-```bash
-# View system lessons
-cat ~/.config/coding-agent-lessons/LESSONS.md
+### Adding a New Feature
 
-# View decay state
-cat ~/.config/coding-agent-lessons/.decay-last-run
+1. Update dataclass if new fields needed
+2. Add parsing/formatting in markdown functions
+3. Add CLI command if user-facing
+4. Write tests (aim for 90%+ coverage)
+5. Update hook patterns if new commands
+6. Update documentation
 
-# List checkpoints
-ls -la ~/.config/coding-agent-lessons/.citation-state/
+### Adding a New Adapter
 
-# Check a specific checkpoint
-cat ~/.config/coding-agent-lessons/.citation-state/<session-id>
+1. Create `adapters/<tool-name>/` directory
+2. Implement hook scripts or plugins
+3. Call Python manager via subprocess
+4. Handle patterns from assistant output
+5. Add tests
+6. Document in DEPLOYMENT.md
+
+## Constants Reference
+
+```python
+# Velocity decay
+VELOCITY_DECAY_FACTOR = 0.7   # Multiply velocity by this on decay
+VELOCITY_EPSILON = 0.1        # Values below round to zero
+
+# Approach visibility
+APPROACH_MAX_COMPLETED = 3    # Keep last N completed approaches
+APPROACH_MAX_AGE_DAYS = 7     # Or within N days
+
+# Token thresholds
+TOKEN_HEAVY_THRESHOLD = 2000  # Warn when injection exceeds this
+
+# Input limits (security)
+MAX_LINE_LENGTH = 1000        # Skip lines longer than this (ReDoS protection)
+MAX_TITLE_LENGTH = 200        # Truncate titles
+MAX_CONTENT_LENGTH = 1000     # Truncate content
 ```
-
-## Future Improvements
-
-Potential areas for enhancement:
-
-1. **Decay granularity**: Per-lesson decay rates based on category
-2. **Citation analytics**: Track which lessons are most useful
-3. **Lesson dependencies**: Link related lessons
-4. **Export/import**: Share lessons between systems
-5. **Web UI**: Visual lesson management interface
