@@ -231,13 +231,13 @@ class Approach:
     status: str  # not_started|in_progress|blocked|completed
     created: date
     updated: date
-    files: List[str]
-    description: str
-    tried: List[TriedApproach]
-    next_steps: str
+    description: str = ""
+    next_steps: str = ""
     phase: str = "research"  # research|planning|implementing|review
     agent: str = "user"  # explore|general-purpose|plan|review|user
-    code_snippets: List[str] = field(default_factory=list)  # Fenced code blocks
+    files: List[str] = field(default_factory=list)
+    tried: List[TriedApproach] = field(default_factory=list)
+    code_snippets: List[str] = field(default_factory=list)
 
 
 @dataclass

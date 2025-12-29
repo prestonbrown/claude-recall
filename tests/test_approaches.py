@@ -32,6 +32,10 @@ File format:
     ---
 """
 
+import os
+import subprocess
+import sys
+
 import pytest
 from datetime import date, timedelta
 from pathlib import Path
@@ -1911,18 +1915,16 @@ class TestHookCLIIntegration:
 
     def test_cli_approach_add_with_phase_and_agent(self, tmp_path):
         """CLI should support --phase and --agent when adding approach."""
-        import subprocess
-        import os
-
         # Set up environment
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
         env["LESSONS_BASE"] = str(tmp_path / ".lessons")
 
         # Run the CLI command (simulating what PLAN MODE: pattern does)
+        # Use sys.executable for portability across Python installations
         result = subprocess.run(
             [
-                "python3",
+                sys.executable,
                 "core/lessons_manager.py",
                 "approach",
                 "add",
@@ -1942,16 +1944,13 @@ class TestHookCLIIntegration:
 
     def test_cli_approach_update_phase(self, tmp_path):
         """CLI should support --phase in update command."""
-        import subprocess
-        import os
-
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
         env["LESSONS_BASE"] = str(tmp_path / ".lessons")
 
         # First create an approach
         subprocess.run(
-            ["python3", "core/lessons_manager.py", "approach", "add", "Test"],
+            [sys.executable, "core/lessons_manager.py", "approach", "add", "Test"],
             capture_output=True,
             text=True,
             env=env,
@@ -1960,7 +1959,7 @@ class TestHookCLIIntegration:
         # Then update the phase
         result = subprocess.run(
             [
-                "python3",
+                sys.executable,
                 "core/lessons_manager.py",
                 "approach",
                 "update",
@@ -1978,16 +1977,13 @@ class TestHookCLIIntegration:
 
     def test_cli_approach_update_agent(self, tmp_path):
         """CLI should support --agent in update command."""
-        import subprocess
-        import os
-
         env = os.environ.copy()
         env["PROJECT_DIR"] = str(tmp_path)
         env["LESSONS_BASE"] = str(tmp_path / ".lessons")
 
         # First create an approach
         subprocess.run(
-            ["python3", "core/lessons_manager.py", "approach", "add", "Test"],
+            [sys.executable, "core/lessons_manager.py", "approach", "add", "Test"],
             capture_output=True,
             text=True,
             env=env,
@@ -1996,7 +1992,7 @@ class TestHookCLIIntegration:
         # Then update the agent
         result = subprocess.run(
             [
-                "python3",
+                sys.executable,
                 "core/lessons_manager.py",
                 "approach",
                 "update",
