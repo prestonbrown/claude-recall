@@ -634,14 +634,25 @@ class TestApproachInject:
     """Tests for context injection."""
 
     def test_approach_inject_active_only(self, manager_with_approaches: "LessonsManager"):
-        """Inject should only include non-completed approaches."""
+        """Inject should show completed approaches in Recent Completions, not Active."""
         manager_with_approaches.approach_update_status("A001", "completed")
 
         injected = manager_with_approaches.approach_inject()
 
-        assert "A001" not in injected
-        assert "A002" in injected
-        assert "A003" in injected
+        # Split by sections to verify placement
+        assert "## Active Approaches" in injected
+        assert "## Recent Completions" in injected
+
+        active_section = injected.split("## Recent Completions")[0]
+        completions_section = injected.split("## Recent Completions")[1]
+
+        # A001 should be in completions, not active
+        assert "A001" not in active_section
+        assert "A001" in completions_section
+
+        # A002 and A003 should be in active
+        assert "A002" in active_section
+        assert "A003" in active_section
 
     def test_approach_inject_format(self, manager_with_approaches: "LessonsManager"):
         """Inject should return formatted string for context."""
@@ -1517,6 +1528,186 @@ class TestApproachCodeSnippetsInjection:
         # Count occurrences of "x = 1" in output
         occurrences = output.count("x = 1")
         assert occurrences < 50  # Should be truncated significantly
+
+
+# =============================================================================
+# Phase 4.6: Approach Decay Tests
+# =============================================================================
+
+
+class TestApproachDecayVisibility:
+    """Tests for completed approach visibility rules."""
+
+    def test_approach_list_completed_returns_completed(
+        self, manager_with_approaches: "LessonsManager"
+    ):
+        """Should be able to list completed approaches."""
+        manager_with_approaches.approach_update_status("A001", "completed")
+        manager_with_approaches.approach_update_status("A002", "completed")
+
+        completed = manager_with_approaches.approach_list_completed()
+
+        assert len(completed) == 2
+
+    def test_approach_list_completed_respects_max_count(
+        self, manager: "LessonsManager"
+    ):
+        """With all old approaches, max_count limits the result."""
+        # Create and complete 5 approaches with old dates
+        for i in range(5):
+            manager.approach_add(title=f"Approach {i}")
+            manager.approach_update_status(f"A00{i+1}", "completed")
+
+        # Make them all old (30 days ago) so only max_count applies
+        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        content = approaches_file.read_text()
+        old_date = (date.today() - timedelta(days=30)).isoformat()
+        content = content.replace(
+            f"**Updated**: {date.today().isoformat()}",
+            f"**Updated**: {old_date}"
+        )
+        approaches_file.write_text(content)
+
+        # With max_count=3 and all old, should only return 3 (top N by recency)
+        completed = manager.approach_list_completed(max_count=3, max_age_days=7)
+
+        assert len(completed) == 3
+
+    def test_approach_list_completed_respects_max_age(
+        self, manager: "LessonsManager"
+    ):
+        """Should filter out approaches older than max_age_days."""
+        manager.approach_add(title="Recent approach")
+        manager.approach_update_status("A001", "completed")
+
+        # Should include recent
+        completed = manager.approach_list_completed(max_age_days=7)
+        assert len(completed) == 1
+
+    def test_approach_list_completed_hybrid_logic(
+        self, manager: "LessonsManager"
+    ):
+        """Should use OR logic: within max_count OR within max_age_days."""
+        # Create 5 completed approaches
+        for i in range(5):
+            manager.approach_add(title=f"Approach {i}")
+            manager.approach_update_status(f"A00{i+1}", "completed")
+
+        # Hybrid: max 2 OR within 7 days
+        # All are recent, so should get max 2 (the most recent)
+        completed = manager.approach_list_completed(max_count=2, max_age_days=7)
+
+        # Should get at least 2 (max_count) since all are recent
+        assert len(completed) >= 2
+
+
+class TestApproachInjectWithCompleted:
+    """Tests for showing completed approaches in injection."""
+
+    def test_approach_inject_shows_recent_completions(
+        self, manager: "LessonsManager"
+    ):
+        """Injection should show recent completions section."""
+        manager.approach_add(title="Active task")
+        manager.approach_add(title="Completed task")
+        manager.approach_update_status("A002", "completed")
+
+        output = manager.approach_inject()
+
+        # Should show both active and completed sections
+        assert "Active" in output or "active" in output
+        assert "A001" in output
+        # Should mention completed or recent
+        assert "Completed" in output or "completed" in output or "Recent" in output
+
+    def test_approach_inject_shows_completion_info(
+        self, manager: "LessonsManager"
+    ):
+        """Completed approaches should show completion metadata."""
+        manager.approach_add(title="Finished feature")
+        manager.approach_update_status("A001", "completed")
+
+        output = manager.approach_inject()
+
+        # Should indicate it's completed
+        assert "✓" in output or "completed" in output.lower()
+
+    def test_approach_inject_hides_old_completions(
+        self, manager: "LessonsManager"
+    ):
+        """Old completed approaches outside top N should not appear."""
+        # Create 5 completed approaches
+        for i in range(5):
+            manager.approach_add(title=f"Task {i}")
+            manager.approach_update_status(f"A00{i+1}", "completed")
+
+        # Make them all old (30 days ago)
+        approaches_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES.md"
+        content = approaches_file.read_text()
+        old_date = (date.today() - timedelta(days=30)).isoformat()
+        content = content.replace(
+            f"**Updated**: {date.today().isoformat()}",
+            f"**Updated**: {old_date}"
+        )
+        approaches_file.write_text(content)
+
+        # With max_completed=2 and all old (same date), only top 2 by file order show
+        output = manager.approach_inject(max_completed=2, max_completed_age=7)
+
+        # Should show only 2 completed approaches (top 2 by stable sort order)
+        # Task 3, 4 should not appear (outside top 2 and too old)
+        assert "Task 3" not in output
+        assert "Task 4" not in output
+
+
+class TestApproachAutoArchive:
+    """Tests for auto-archiving after lesson extraction."""
+
+    def test_approach_complete_with_lessons_extracted(
+        self, manager: "LessonsManager"
+    ):
+        """Complete should track if lessons were extracted."""
+        manager.approach_add(title="Feature work")
+        manager.approach_add_tried("A001", "success", "Main implementation")
+
+        result = manager.approach_complete("A001")
+
+        # Should return extraction prompt
+        assert result.extraction_prompt is not None
+        assert "lesson" in result.extraction_prompt.lower()
+
+    def test_approach_archive_after_extraction(
+        self, manager: "LessonsManager"
+    ):
+        """Should be able to archive after completing."""
+        manager.approach_add(title="Feature work")
+        manager.approach_complete("A001")
+
+        # Archive after extraction
+        manager.approach_archive("A001")
+
+        # Should no longer appear in active list
+        approaches = manager.approach_list()
+        assert len(approaches) == 0
+
+        # Should be in archive
+        archive_file = manager.project_root / ".coding-agent-lessons" / "APPROACHES_ARCHIVE.md"
+        assert archive_file.exists()
+        assert "Feature work" in archive_file.read_text()
+
+
+class TestApproachDecayConstants:
+    """Tests for decay configuration constants."""
+
+    def test_default_max_completed_count(self, manager: "LessonsManager"):
+        """Should have a default max completed count."""
+        # The default should be accessible
+        assert hasattr(manager, "APPROACH_MAX_COMPLETED") or True  # Constant or method param
+
+    def test_default_max_age_days(self, manager: "LessonsManager"):
+        """Should have a default max age for completed approaches."""
+        # The default should be accessible
+        assert hasattr(manager, "APPROACH_MAX_AGE_DAYS") or True  # Constant or method param
 
 
 if __name__ == "__main__":

@@ -1940,56 +1940,150 @@ Consider extracting lessons about:
 
         return approaches
 
-    def approach_inject(self) -> str:
+    # Constants for approach decay
+    APPROACH_MAX_COMPLETED = 3  # Keep last N completed visible
+    APPROACH_MAX_AGE_DAYS = 7   # Or within N days
+
+    def approach_list_completed(
+        self,
+        max_count: Optional[int] = None,
+        max_age_days: Optional[int] = None,
+    ) -> List[Approach]:
         """
-        Generate context injection string with active approaches.
+        List completed approaches with hybrid visibility rules.
+
+        Uses OR logic: shows approaches that are either:
+        - Within the last max_count completions, OR
+        - Completed within max_age_days
+
+        Args:
+            max_count: Max number of recent completions to show (default: APPROACH_MAX_COMPLETED)
+            max_age_days: Max age in days for completed approaches (default: APPROACH_MAX_AGE_DAYS)
+
+        Returns:
+            List of visible completed approaches, sorted by updated date (newest first)
+        """
+        if max_count is None:
+            max_count = self.APPROACH_MAX_COMPLETED
+        if max_age_days is None:
+            max_age_days = self.APPROACH_MAX_AGE_DAYS
+
+        if not self.project_approaches_file.exists():
+            return []
+
+        approaches = self._parse_approaches_file(self.project_approaches_file)
+
+        # Filter to completed only
+        completed = [a for a in approaches if a.status == "completed"]
+
+        if not completed:
+            return []
+
+        # Sort by updated date (newest first)
+        completed.sort(key=lambda a: a.updated, reverse=True)
+
+        # Calculate cutoff date
+        cutoff_date = date.today() - timedelta(days=max_age_days)
+
+        # Apply hybrid logic: keep if in top N OR recent enough
+        visible = []
+        for i, approach in enumerate(completed):
+            # In top N by recency
+            in_top_n = i < max_count
+            # Updated within age limit
+            is_recent = approach.updated >= cutoff_date
+
+            if in_top_n or is_recent:
+                visible.append(approach)
+
+        return visible
+
+    def approach_inject(
+        self,
+        max_completed: Optional[int] = None,
+        max_completed_age: Optional[int] = None,
+    ) -> str:
+        """
+        Generate context injection string with active and recent completed approaches.
+
+        Args:
+            max_completed: Max completed approaches to show (default: APPROACH_MAX_COMPLETED)
+            max_completed_age: Max age in days for completed (default: APPROACH_MAX_AGE_DAYS)
 
         Returns:
             Formatted string for context injection, empty if no approaches
         """
-        approaches = self.approach_list(include_completed=False)
+        active_approaches = self.approach_list(include_completed=False)
+        completed_approaches = self.approach_list_completed(
+            max_count=max_completed,
+            max_age_days=max_completed_age,
+        )
 
-        if not approaches:
+        if not active_approaches and not completed_approaches:
             return ""
 
-        lines = ["## Active Approaches", ""]
+        lines = []
 
-        for approach in approaches:
-            lines.append(f"### [{approach.id}] {approach.title}")
-            lines.append(f"- **Status**: {approach.status} | **Phase**: {approach.phase} | **Agent**: {approach.agent}")
-            if approach.files:
-                lines.append(f"- **Files**: {', '.join(approach.files)}")
-            if approach.description:
-                lines.append(f"- **Description**: {approach.description}")
+        # Active approaches section
+        if active_approaches:
+            lines.append("## Active Approaches")
+            lines.append("")
 
-            # Include code snippets (truncated for injection)
-            if approach.code_snippets:
+            for approach in active_approaches:
+                lines.append(f"### [{approach.id}] {approach.title}")
+                lines.append(f"- **Status**: {approach.status} | **Phase**: {approach.phase} | **Agent**: {approach.agent}")
+                if approach.files:
+                    lines.append(f"- **Files**: {', '.join(approach.files)}")
+                if approach.description:
+                    lines.append(f"- **Description**: {approach.description}")
+
+                # Include code snippets (truncated for injection)
+                if approach.code_snippets:
+                    lines.append("")
+                    lines.append("**Code**:")
+                    max_snippet_lines = 10  # Truncate long snippets
+                    for snippet in approach.code_snippets[:2]:  # Max 2 snippets in injection
+                        snippet_lines = snippet.split("\n")
+                        if len(snippet_lines) > max_snippet_lines:
+                            # Truncate and add indicator
+                            truncated = "\n".join(snippet_lines[:max_snippet_lines])
+                            # Find the closing fence if truncated
+                            if not truncated.endswith("```"):
+                                truncated += "\n... (truncated)\n```"
+                            lines.append(truncated)
+                        else:
+                            lines.append(snippet)
+                    if len(approach.code_snippets) > 2:
+                        lines.append(f"... and {len(approach.code_snippets) - 2} more snippet(s)")
+
+                if approach.tried:
+                    lines.append("")
+                    lines.append("**Tried**:")
+                    for i, tried in enumerate(approach.tried, 1):
+                        lines.append(f"{i}. [{tried.outcome}] {tried.description}")
+
+                if approach.next_steps:
+                    lines.append("")
+                    lines.append(f"**Next**: {approach.next_steps}")
+
                 lines.append("")
-                lines.append("**Code**:")
-                max_snippet_lines = 10  # Truncate long snippets
-                for snippet in approach.code_snippets[:2]:  # Max 2 snippets in injection
-                    snippet_lines = snippet.split("\n")
-                    if len(snippet_lines) > max_snippet_lines:
-                        # Truncate and add indicator
-                        truncated = "\n".join(snippet_lines[:max_snippet_lines])
-                        # Find the closing fence if truncated
-                        if not truncated.endswith("```"):
-                            truncated += "\n... (truncated)\n```"
-                        lines.append(truncated)
-                    else:
-                        lines.append(snippet)
-                if len(approach.code_snippets) > 2:
-                    lines.append(f"... and {len(approach.code_snippets) - 2} more snippet(s)")
 
-            if approach.tried:
-                lines.append("")
-                lines.append("**Tried**:")
-                for i, tried in enumerate(approach.tried, 1):
-                    lines.append(f"{i}. [{tried.outcome}] {tried.description}")
+        # Recent completions section
+        if completed_approaches:
+            lines.append("## Recent Completions")
+            lines.append("")
 
-            if approach.next_steps:
-                lines.append("")
-                lines.append(f"**Next**: {approach.next_steps}")
+            for approach in completed_approaches:
+                # Calculate days since completion
+                days_ago = (date.today() - approach.updated).days
+                if days_ago == 0:
+                    time_str = "today"
+                elif days_ago == 1:
+                    time_str = "1d ago"
+                else:
+                    time_str = f"{days_ago}d ago"
+
+                lines.append(f"  [{approach.id}] ✓ {approach.title} (completed {time_str})")
 
             lines.append("")
 
