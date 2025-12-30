@@ -897,7 +897,9 @@ class LessonsManager:
             search_lower = search.lower()
             lessons = [
                 l for l in lessons
-                if search_lower in l.title.lower() or search_lower in l.content.lower()
+                if search_lower in l.id.lower()
+                or search_lower in l.title.lower()
+                or search_lower in l.content.lower()
             ]
 
         if category:

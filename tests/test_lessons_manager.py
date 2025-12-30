@@ -818,6 +818,13 @@ class TestListAndSearch:
         assert len(results) == 1
         assert "gotcha" in results[0].title.lower() or "gotcha" in results[0].content.lower()
 
+    def test_search_by_lesson_id(self, manager_with_lessons: "LessonsManager"):
+        """Should search by lesson ID (e.g., L001, S001)."""
+        results = manager_with_lessons.list_lessons(search="L001")
+
+        assert len(results) == 1
+        assert results[0].id == "L001"
+
     def test_filter_by_category(self, manager_with_lessons: "LessonsManager"):
         """Should filter by category."""
         results = manager_with_lessons.list_lessons(category="pattern")
