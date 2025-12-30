@@ -1109,6 +1109,186 @@ class TestCLI:
         assert lesson.promotable is False
         assert lesson.source == "ai"
 
+    def test_cli_list_basic(self, temp_lessons_base: Path, temp_project_root: Path):
+        """CLI list command should work without flags."""
+        import subprocess
+        from core.lessons_manager import LessonsManager
+
+        # Add some lessons first
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(
+            level="project", category="pattern",
+            title="Test Lesson", content="Test content"
+        )
+
+        result = subprocess.run(
+            ["python3", "core/lessons_manager.py", "list"],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "L001" in result.stdout
+        assert "Test Lesson" in result.stdout
+
+    def test_cli_list_project_flag(self, temp_lessons_base: Path, temp_project_root: Path):
+        """CLI list --project should only show project lessons."""
+        import subprocess
+        from core.lessons_manager import LessonsManager
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(
+            level="project", category="pattern",
+            title="Project Lesson", content="Project content"
+        )
+        manager.add_lesson(
+            level="system", category="pattern",
+            title="System Lesson", content="System content"
+        )
+
+        result = subprocess.run(
+            ["python3", "core/lessons_manager.py", "list", "--project"],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "L001" in result.stdout
+        assert "S001" not in result.stdout
+
+    def test_cli_list_system_flag(self, temp_lessons_base: Path, temp_project_root: Path):
+        """CLI list --system should only show system lessons."""
+        import subprocess
+        from core.lessons_manager import LessonsManager
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(
+            level="project", category="pattern",
+            title="Project Lesson", content="Project content"
+        )
+        manager.add_lesson(
+            level="system", category="pattern",
+            title="System Lesson", content="System content"
+        )
+
+        result = subprocess.run(
+            ["python3", "core/lessons_manager.py", "list", "--system"],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "S001" in result.stdout
+        assert "L001" not in result.stdout
+
+    def test_cli_list_search_flag(self, temp_lessons_base: Path, temp_project_root: Path):
+        """CLI list --search should filter by keyword."""
+        import subprocess
+        from core.lessons_manager import LessonsManager
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(
+            level="project", category="pattern",
+            title="Git Commits", content="Use conventional commits"
+        )
+        manager.add_lesson(
+            level="project", category="pattern",
+            title="Python Style", content="Use black formatter"
+        )
+
+        result = subprocess.run(
+            ["python3", "core/lessons_manager.py", "list", "--search", "git"],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "Git Commits" in result.stdout
+        assert "Python Style" not in result.stdout
+
+    def test_cli_list_category_flag(self, temp_lessons_base: Path, temp_project_root: Path):
+        """CLI list --category should filter by category."""
+        import subprocess
+        from core.lessons_manager import LessonsManager
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(
+            level="project", category="pattern",
+            title="Pattern Lesson", content="Pattern content"
+        )
+        manager.add_lesson(
+            level="project", category="gotcha",
+            title="Gotcha Lesson", content="Gotcha content"
+        )
+
+        result = subprocess.run(
+            ["python3", "core/lessons_manager.py", "list", "--category", "gotcha"],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "Gotcha Lesson" in result.stdout
+        assert "Pattern Lesson" not in result.stdout
+
+    def test_cli_list_stale_flag(self, temp_lessons_base: Path, temp_project_root: Path):
+        """CLI list --stale should show only stale lessons."""
+        import subprocess
+        from core.lessons_manager import LessonsManager
+        from datetime import datetime, timedelta
+
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(
+            level="project", category="pattern",
+            title="Fresh Lesson", content="Fresh content"
+        )
+
+        # Manually make a lesson stale by editing the file
+        lessons_file = temp_project_root / ".coding-agent-lessons" / "LESSONS.md"
+        content = lessons_file.read_text()
+        old_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        content = content.replace(datetime.now().strftime("%Y-%m-%d"), old_date)
+        lessons_file.write_text(content)
+
+        result = subprocess.run(
+            ["python3", "core/lessons_manager.py", "list", "--stale"],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+        assert "Fresh Lesson" in result.stdout  # Now stale due to date change
+
 
 # =============================================================================
 # Shell Hook Tests
