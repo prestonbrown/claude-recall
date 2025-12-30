@@ -288,9 +288,50 @@ class DebugLogger:
             }
         )
 
+    def error(self, operation: str, error: str, context: Optional[Dict] = None) -> None:
+        """Log errors - level 1 (always shown when debug enabled)."""
+        if self._level < 1:
+            return
+        event = {"event": "error", "level": "error", "op": operation, "err": error}
+        if context:
+            event["ctx"] = context
+        self._write(event)
+
+    def mutation(self, op: str, target: str, details: Optional[Dict] = None) -> None:
+        """Log mutations (edit/delete/promote/sync) - level 1."""
+        if self._level < 1:
+            return
+        event = {"event": "mutation", "level": "info", "op": op, "target": target}
+        if details:
+            event.update(details)
+        self._write(event)
+
     # =========================================================================
     # Level 2: Debug events
     # =========================================================================
+
+    def relevance_score(
+        self,
+        query_len: int,
+        lesson_count: int,
+        duration_ms: int,
+        top_scores: List[tuple],
+        error: Optional[str] = None,
+    ) -> None:
+        """Log Haiku relevance scoring - level 2."""
+        if self._level < 2:
+            return
+        event = {
+            "event": "relevance",
+            "level": "debug",
+            "q_len": query_len,
+            "lessons": lesson_count,
+            "ms": duration_ms,
+            "top": top_scores[:3],  # Just top 3 as tuples: [["L001", 8], ["S002", 7]]
+        }
+        if error:
+            event["err"] = error
+        self._write(event)
 
     def injection_generated(
         self,

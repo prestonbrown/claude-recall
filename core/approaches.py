@@ -815,6 +815,9 @@ Consider extracting lessons about:
 
             self._write_approaches_file(approaches)
 
+        logger = get_logger()
+        logger.mutation("delete_approach", approach_id)
+
     def approach_get(self, approach_id: str) -> Optional[Approach]:
         """
         Get an approach by ID.
@@ -1070,6 +1073,13 @@ Consider extracting lessons about:
             self.approach_update_status(approach_id, "in_progress")
         elif pending and not completed:
             self.approach_update_status(approach_id, "not_started")
+
+        logger = get_logger()
+        logger.mutation("sync_todos", approach_id, {
+            "completed": len(completed),
+            "in_progress": len(in_progress),
+            "pending": len(pending),
+        })
 
         return approach_id
 

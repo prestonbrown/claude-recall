@@ -9,6 +9,7 @@ This module contains all lesson-related methods as a mixin class.
 import os
 import re
 import subprocess
+import time
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
@@ -332,12 +333,14 @@ class LessonsMixin:
         if not file_path.exists():
             raise ValueError(f"Lesson {lesson_id} not found")
 
+        old_len = 0
         with FileLock(file_path):
             lessons = self._parse_lessons_file(file_path, level)
 
             found = False
             for lesson in lessons:
                 if lesson.id == lesson_id:
+                    old_len = len(lesson.content)
                     lesson.content = new_content
                     found = True
                     break
@@ -346,6 +349,9 @@ class LessonsMixin:
                 raise ValueError(f"Lesson {lesson_id} not found")
 
             self._write_lessons_file(file_path, lessons, level)
+
+        logger = get_logger()
+        logger.mutation("edit", lesson_id, {"old_len": old_len, "new_len": len(new_content)})
 
     def delete_lesson(self, lesson_id: str) -> None:
         """
@@ -373,6 +379,9 @@ class LessonsMixin:
                 raise ValueError(f"Lesson {lesson_id} not found")
 
             self._write_lessons_file(file_path, lessons, level)
+
+        logger = get_logger()
+        logger.mutation("delete", lesson_id)
 
     def promote_lesson(self, lesson_id: str) -> str:
         """
@@ -425,6 +434,9 @@ class LessonsMixin:
             project_lessons = self._parse_lessons_file(self.project_lessons_file, "project")
             project_lessons = [l for l in project_lessons if l.id != lesson_id]
             self._write_lessons_file(self.project_lessons_file, project_lessons, "project")
+
+        logger = get_logger()
+        logger.mutation("promote", lesson_id, {"new_id": new_id})
 
         return new_id
 
@@ -539,11 +551,16 @@ class LessonsMixin:
         Returns:
             RelevanceResult with lessons sorted by relevance score (descending)
         """
+        start_time = time.time()
+        logger = get_logger()
+
         # Truncate query to prevent huge prompts
-        if len(query_text) > SCORE_RELEVANCE_MAX_QUERY_LEN:
+        query_len = len(query_text)
+        if query_len > SCORE_RELEVANCE_MAX_QUERY_LEN:
             query_text = query_text[:SCORE_RELEVANCE_MAX_QUERY_LEN] + "..."
 
         all_lessons = self.list_lessons(scope="all")
+        lesson_count = len(all_lessons)
 
         if not all_lessons:
             return RelevanceResult(
@@ -587,18 +604,24 @@ No explanations, just ID: SCORE lines."""
             )
 
             if result.returncode != 0:
+                duration_ms = int((time.time() - start_time) * 1000)
+                error_msg = f"claude command failed: {result.stderr.strip()}"
+                logger.relevance_score(query_len, lesson_count, duration_ms, [], error=error_msg)
                 return RelevanceResult(
                     scored_lessons=[],
                     query_text=query_text,
-                    error=f"claude command failed: {result.stderr.strip()}",
+                    error=error_msg,
                 )
 
             output = result.stdout.strip()
             if not output:
+                duration_ms = int((time.time() - start_time) * 1000)
+                error_msg = "empty response from Haiku"
+                logger.relevance_score(query_len, lesson_count, duration_ms, [], error=error_msg)
                 return RelevanceResult(
                     scored_lessons=[],
                     query_text=query_text,
-                    error="empty response from Haiku",
+                    error=error_msg,
                 )
 
             # Parse the output: ID: SCORE
@@ -619,28 +642,41 @@ No explanations, just ID: SCORE lines."""
             # Sort by score descending, then by uses descending
             scored_lessons.sort(key=lambda sl: (-sl.score, -sl.lesson.uses))
 
+            duration_ms = int((time.time() - start_time) * 1000)
+            top_scores = [(sl.lesson.id, sl.score) for sl in scored_lessons[:3]]
+            logger.relevance_score(query_len, lesson_count, duration_ms, top_scores)
+
             return RelevanceResult(
                 scored_lessons=scored_lessons,
                 query_text=query_text,
             )
 
         except subprocess.TimeoutExpired:
+            duration_ms = int((time.time() - start_time) * 1000)
+            error_msg = f"Haiku call timed out after {timeout_seconds}s"
+            logger.relevance_score(query_len, lesson_count, duration_ms, [], error=error_msg)
             return RelevanceResult(
                 scored_lessons=[],
                 query_text=query_text,
-                error=f"Haiku call timed out after {timeout_seconds}s",
+                error=error_msg,
             )
         except FileNotFoundError:
+            duration_ms = int((time.time() - start_time) * 1000)
+            error_msg = "claude CLI not found"
+            logger.relevance_score(query_len, lesson_count, duration_ms, [], error=error_msg)
             return RelevanceResult(
                 scored_lessons=[],
                 query_text=query_text,
-                error="claude CLI not found",
+                error=error_msg,
             )
         except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            error_msg = str(e)
+            logger.relevance_score(query_len, lesson_count, duration_ms, [], error=error_msg)
             return RelevanceResult(
                 scored_lessons=[],
                 query_text=query_text,
-                error=str(e),
+                error=error_msg,
             )
 
     def get_total_tokens(self, scope: str = "all") -> int:
