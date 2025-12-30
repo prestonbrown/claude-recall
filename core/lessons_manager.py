@@ -245,6 +245,8 @@ class Approach:
     files: List[str] = field(default_factory=list)
     tried: List[TriedApproach] = field(default_factory=list)
     code_snippets: List[str] = field(default_factory=list)
+    checkpoint: str = ""  # Progress summary from PreCompact hook
+    last_session: Optional[date] = None  # When checkpoint was last updated
 
 
 @dataclass
@@ -1411,6 +1413,27 @@ class LessonsManager:
                     description = desc_match.group(1).strip()
                     idx += 1
 
+            # Parse checkpoint line (optional)
+            checkpoint = ""
+            checkpoint_pattern = re.compile(r"^\s*-\s*\*\*Checkpoint\*\*:\s*(.*)$")
+            if idx < len(lines):
+                checkpoint_match = checkpoint_pattern.match(lines[idx])
+                if checkpoint_match:
+                    checkpoint = checkpoint_match.group(1).strip()
+                    idx += 1
+
+            # Parse last session line (optional)
+            last_session = None
+            last_session_pattern = re.compile(r"^\s*-\s*\*\*Last Session\*\*:\s*(\d{4}-\d{2}-\d{2})$")
+            if idx < len(lines):
+                last_session_match = last_session_pattern.match(lines[idx])
+                if last_session_match:
+                    try:
+                        last_session = date.fromisoformat(last_session_match.group(1))
+                    except ValueError:
+                        pass
+                    idx += 1
+
             # Parse code snippets (between description and **Tried**)
             code_snippets = []
             # Look for **Code**: section
@@ -1493,6 +1516,8 @@ class LessonsManager:
                 phase=phase,
                 agent=agent,
                 code_snippets=code_snippets,
+                checkpoint=checkpoint,
+                last_session=last_session,
             ))
 
         return approaches
@@ -1505,8 +1530,16 @@ class LessonsManager:
             f"- **Created**: {approach.created.isoformat()} | **Updated**: {approach.updated.isoformat()}",
             f"- **Files**: {', '.join(approach.files)}",
             f"- **Description**: {approach.description}",
-            "",
         ]
+
+        # Add checkpoint if present
+        if approach.checkpoint:
+            session_str = approach.last_session.isoformat() if approach.last_session else ""
+            lines.append(f"- **Checkpoint**: {approach.checkpoint}")
+            if session_str:
+                lines.append(f"- **Last Session**: {session_str}")
+
+        lines.append("")
 
         # Add code snippets section if present
         if approach.code_snippets:
@@ -1913,6 +1946,34 @@ class LessonsManager:
 
             self._write_approaches_file(approaches)
 
+    def approach_update_checkpoint(self, approach_id: str, checkpoint: str) -> None:
+        """
+        Update an approach's checkpoint (progress summary from PreCompact hook).
+
+        Args:
+            approach_id: The approach ID
+            checkpoint: Progress summary text
+
+        Raises:
+            ValueError: If approach not found
+        """
+        with FileLock(self.project_approaches_file):
+            approaches = self._parse_approaches_file(self.project_approaches_file)
+
+            found = False
+            for approach in approaches:
+                if approach.id == approach_id:
+                    approach.checkpoint = checkpoint
+                    approach.last_session = date.today()
+                    approach.updated = date.today()
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Approach {approach_id} not found")
+
+            self._write_approaches_file(approaches)
+
     def approach_complete(self, approach_id: str) -> ApproachCompleteResult:
         """
         Mark an approach as completed and return extraction prompt.
@@ -2185,6 +2246,19 @@ Consider extracting lessons about:
                 if approach.description:
                     lines.append(f"- **Description**: {approach.description}")
 
+                # Show checkpoint prominently if present (key for session handoff)
+                if approach.checkpoint:
+                    session_ago = ""
+                    if approach.last_session:
+                        days = (date.today() - approach.last_session).days
+                        if days == 0:
+                            session_ago = " (today)"
+                        elif days == 1:
+                            session_ago = " (yesterday)"
+                        else:
+                            session_ago = f" ({days}d ago)"
+                    lines.append(f"- **Checkpoint{session_ago}**: {approach.checkpoint}")
+
                 # Include code snippets (truncated for injection)
                 if approach.code_snippets:
                     lines.append("")
@@ -2418,6 +2492,7 @@ def main():
     approach_update_parser.add_argument("--agent", help="Update agent (explore, general-purpose, plan, review, user)")
     approach_update_parser.add_argument("--code", help="Add a code snippet")
     approach_update_parser.add_argument("--language", help="Language hint for code snippet (e.g., python, typescript)")
+    approach_update_parser.add_argument("--checkpoint", help="Update checkpoint (progress summary for session handoff)")
 
     # approach complete
     approach_complete_parser = approach_subparsers.add_parser("complete", help="Mark approach as completed")
@@ -2616,6 +2691,10 @@ def main():
                     manager.approach_add_code(args.id, args.code, language)
                     print(f"Added code snippet to {args.id}")
                     updated = True
+                if args.checkpoint:
+                    manager.approach_update_checkpoint(args.id, args.checkpoint)
+                    print(f"Updated {args.id} checkpoint")
+                    updated = True
                 if not updated:
                     print("No update options provided", file=sys.stderr)
                     sys.exit(1)
@@ -2661,6 +2740,9 @@ def main():
                 print(f"- **Updated**: {approach.updated}")
                 print(f"- **Files**: {', '.join(approach.files) if approach.files else '(none)'}")
                 print(f"- **Description**: {approach.description if approach.description else '(none)'}")
+                if approach.checkpoint:
+                    session_info = f" ({approach.last_session})" if approach.last_session else ""
+                    print(f"- **Checkpoint{session_info}**: {approach.checkpoint}")
                 print()
                 print("**Tried**:")
                 if approach.tried:

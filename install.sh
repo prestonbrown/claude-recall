@@ -180,6 +180,7 @@ install_claude() {
     cp "$SCRIPT_DIR/adapters/claude-code/inject-hook.sh" "$hooks_dir/"
     cp "$SCRIPT_DIR/adapters/claude-code/capture-hook.sh" "$hooks_dir/"
     cp "$SCRIPT_DIR/adapters/claude-code/stop-hook.sh" "$hooks_dir/"
+    cp "$SCRIPT_DIR/adapters/claude-code/precompact-hook.sh" "$hooks_dir/"
     chmod +x "$hooks_dir"/*.sh
     
     # Create /lessons command
@@ -202,7 +203,7 @@ Based on arguments, run the appropriate command:
 Format list output as a markdown table. Valid categories: pattern, correction, gotcha, preference, decision.
 EOF
     
-    # Update settings.json with hooks (including periodic reminder)
+    # Update settings.json with hooks (including periodic reminder and PreCompact)
     local settings_file="$claude_dir/settings.json"
     local hooks_config='{
   "lessonsSystem": {"enabled": true},
@@ -215,7 +216,8 @@ EOF
       {"type": "command", "command": "bash '"$hooks_dir"'/capture-hook.sh", "timeout": 5000},
       {"type": "command", "command": "~/.config/coding-agent-lessons/lesson-reminder-hook.sh", "timeout": 2000}
     ]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/stop-hook.sh", "timeout": 5000}]}]
+    "Stop": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/stop-hook.sh", "timeout": 5000}]}],
+    "PreCompact": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/precompact-hook.sh", "timeout": 45000}]}]
   }
 }'
     
@@ -331,6 +333,7 @@ uninstall() {
     rm -f "$HOME/.claude/hooks/inject-hook.sh"
     rm -f "$HOME/.claude/hooks/capture-hook.sh"
     rm -f "$HOME/.claude/hooks/stop-hook.sh"
+    rm -f "$HOME/.claude/hooks/precompact-hook.sh"
     rm -f "$HOME/.claude/commands/lessons.md"
 
     # Selectively remove only lessons-related hooks from settings.json
@@ -359,6 +362,11 @@ uninstall() {
                 .Stop |= map(
                   .hooks |= map(select(.command | contains("stop-hook.sh") | not))
                 ) | .Stop |= map(select(.hooks | length > 0))
+              else . end |
+              if .PreCompact then
+                .PreCompact |= map(
+                  .hooks |= map(select(.command | contains("precompact-hook.sh") | not))
+                ) | .PreCompact |= map(select(.hooks | length > 0))
               else . end |
               # Remove empty hook arrays
               with_entries(select(.value | length > 0))

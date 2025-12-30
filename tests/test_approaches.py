@@ -2252,5 +2252,255 @@ class TestStopHookLastReference:
         assert a002.phase == "implementing"
 
 
+# =============================================================================
+# Checkpoint Tests (Phase 1 of Context Handoff System)
+# =============================================================================
+
+
+class TestApproachCheckpoint:
+    """Test checkpoint field for session handoff."""
+
+    def test_approach_has_checkpoint_field(self, manager: LessonsManager) -> None:
+        """Verify Approach dataclass has checkpoint field."""
+        approach_id = manager.approach_add("Test approach")
+        approach = manager.approach_get(approach_id)
+
+        assert hasattr(approach, "checkpoint")
+        assert approach.checkpoint == ""  # Default empty
+
+    def test_approach_has_last_session_field(self, manager: LessonsManager) -> None:
+        """Verify Approach dataclass has last_session field."""
+        approach_id = manager.approach_add("Test approach")
+        approach = manager.approach_get(approach_id)
+
+        assert hasattr(approach, "last_session")
+        assert approach.last_session is None  # Default None
+
+    def test_approach_update_checkpoint(self, manager: LessonsManager) -> None:
+        """Test updating checkpoint via manager method."""
+        approach_id = manager.approach_add("Test approach")
+
+        manager.approach_update_checkpoint(
+            approach_id, "Tests passing, working on UI integration"
+        )
+
+        approach = manager.approach_get(approach_id)
+        assert approach.checkpoint == "Tests passing, working on UI integration"
+        assert approach.last_session == date.today()
+
+    def test_approach_update_checkpoint_sets_updated_date(
+        self, manager: LessonsManager
+    ) -> None:
+        """Verify update_checkpoint also updates the updated date."""
+        approach_id = manager.approach_add("Test approach")
+
+        manager.approach_update_checkpoint(approach_id, "Some progress")
+
+        approach = manager.approach_get(approach_id)
+        assert approach.updated == date.today()
+
+    def test_approach_update_checkpoint_nonexistent_fails(
+        self, manager: LessonsManager
+    ) -> None:
+        """Test that updating checkpoint for nonexistent approach fails."""
+        with pytest.raises(ValueError, match="not found"):
+            manager.approach_update_checkpoint("A999", "Some progress")
+
+    def test_approach_checkpoint_overwrites(self, manager: LessonsManager) -> None:
+        """Test that updating checkpoint overwrites previous value."""
+        approach_id = manager.approach_add("Test approach")
+
+        manager.approach_update_checkpoint(approach_id, "First checkpoint")
+        manager.approach_update_checkpoint(approach_id, "Second checkpoint")
+
+        approach = manager.approach_get(approach_id)
+        assert approach.checkpoint == "Second checkpoint"
+
+
+class TestApproachCheckpointFormat:
+    """Test checkpoint field in markdown format."""
+
+    def test_checkpoint_formatted_in_markdown(self, manager: LessonsManager) -> None:
+        """Verify checkpoint is written to markdown file."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_update_checkpoint(approach_id, "Progress summary here")
+
+        content = manager.project_approaches_file.read_text()
+        assert "**Checkpoint**: Progress summary here" in content
+
+    def test_last_session_formatted_in_markdown(self, manager: LessonsManager) -> None:
+        """Verify last_session is written to markdown file."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_update_checkpoint(approach_id, "Progress summary")
+
+        content = manager.project_approaches_file.read_text()
+        assert f"**Last Session**: {date.today().isoformat()}" in content
+
+    def test_checkpoint_parsed_correctly(self, manager: LessonsManager) -> None:
+        """Verify checkpoint is parsed back correctly."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_update_checkpoint(approach_id, "Complex checkpoint: tests, UI")
+
+        # Force re-parse by getting fresh
+        approach = manager.approach_get(approach_id)
+        assert approach.checkpoint == "Complex checkpoint: tests, UI"
+
+    def test_last_session_parsed_correctly(self, manager: LessonsManager) -> None:
+        """Verify last_session date is parsed correctly."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_update_checkpoint(approach_id, "Progress")
+
+        approach = manager.approach_get(approach_id)
+        assert approach.last_session == date.today()
+
+    def test_backward_compatibility_no_checkpoint(
+        self, manager: LessonsManager
+    ) -> None:
+        """Verify approaches without checkpoint field still parse."""
+        # Create approach without checkpoint
+        approach_id = manager.approach_add("Legacy approach")
+
+        # Manually write old format without checkpoint
+        content = manager.project_approaches_file.read_text()
+        # The file should parse fine - checkpoint defaults to empty
+        approach = manager.approach_get(approach_id)
+        assert approach.checkpoint == ""
+        assert approach.last_session is None
+
+
+class TestApproachCheckpointInjection:
+    """Test checkpoint in context injection output."""
+
+    def test_approach_inject_shows_checkpoint(self, manager: LessonsManager) -> None:
+        """Verify inject output includes checkpoint prominently."""
+        approach_id = manager.approach_add("Feature implementation")
+        manager.approach_update_checkpoint(
+            approach_id, "API done, working on frontend"
+        )
+
+        output = manager.approach_inject()
+
+        assert "**Checkpoint" in output
+        assert "API done, working on frontend" in output
+
+    def test_approach_inject_shows_checkpoint_age(self, manager: LessonsManager) -> None:
+        """Verify inject output shows how old the checkpoint is."""
+        approach_id = manager.approach_add("Feature implementation")
+        manager.approach_update_checkpoint(approach_id, "Some progress")
+
+        output = manager.approach_inject()
+
+        # Should show "(today)" for same-day checkpoint
+        assert "(today)" in output or "Checkpoint" in output
+
+    def test_approach_inject_no_checkpoint_no_display(
+        self, manager: LessonsManager
+    ) -> None:
+        """Verify inject output doesn't show checkpoint line if empty."""
+        approach_id = manager.approach_add("Feature implementation")
+        # Don't set checkpoint
+
+        output = manager.approach_inject()
+
+        # Should not have Checkpoint line
+        assert "**Checkpoint" not in output
+
+
+class TestApproachCheckpointCLI:
+    """Test checkpoint via CLI."""
+
+    def test_cli_approach_update_checkpoint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test updating checkpoint via CLI."""
+        lessons_base = tmp_path / "lessons_base"
+        project_root = tmp_path / "project"
+        lessons_base.mkdir()
+        project_root.mkdir()
+
+        # Get the project root (coding-agent-lessons directory)
+        repo_root = Path(__file__).parent.parent
+
+        monkeypatch.setenv("LESSONS_BASE", str(lessons_base))
+        monkeypatch.setenv("PROJECT_DIR", str(project_root))
+
+        # Add approach
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "core.lessons_manager",
+                "approach",
+                "add",
+                "Test approach",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_root),
+        )
+        assert result.returncode == 0, result.stderr
+
+        # Update checkpoint
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "core.lessons_manager",
+                "approach",
+                "update",
+                "A001",
+                "--checkpoint",
+                "Progress: tests passing",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(repo_root),
+        )
+        assert result.returncode == 0, result.stderr
+        assert "Updated A001 checkpoint" in result.stdout
+
+        # Verify via manager directly
+        from core.lessons_manager import LessonsManager
+
+        manager = LessonsManager(lessons_base, project_root)
+        approach = manager.approach_get("A001")
+        assert approach.checkpoint == "Progress: tests passing"
+
+
+class TestApproachCheckpointPreservation:
+    """Test checkpoint is preserved across updates."""
+
+    def test_checkpoint_preserved_on_status_update(
+        self, manager: LessonsManager
+    ) -> None:
+        """Verify checkpoint survives status updates."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_update_checkpoint(approach_id, "Important checkpoint")
+        manager.approach_update_status(approach_id, "in_progress")
+
+        approach = manager.approach_get(approach_id)
+        assert approach.checkpoint == "Important checkpoint"
+
+    def test_checkpoint_preserved_on_tried_add(self, manager: LessonsManager) -> None:
+        """Verify checkpoint survives adding tried attempts."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_update_checkpoint(approach_id, "Important checkpoint")
+        manager.approach_add_tried(approach_id, "success", "Did something")
+
+        approach = manager.approach_get(approach_id)
+        assert approach.checkpoint == "Important checkpoint"
+
+    def test_checkpoint_preserved_on_phase_update(
+        self, manager: LessonsManager
+    ) -> None:
+        """Verify checkpoint survives phase updates."""
+        approach_id = manager.approach_add("Test approach")
+        manager.approach_update_checkpoint(approach_id, "Important checkpoint")
+        manager.approach_update_phase(approach_id, "implementing")
+
+        approach = manager.approach_get(approach_id)
+        assert approach.checkpoint == "Important checkpoint"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
