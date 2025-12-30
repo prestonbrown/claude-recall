@@ -1942,6 +1942,31 @@ class TestHookCLIIntegration:
         assert result.returncode == 0
         assert "A001" in result.stdout
 
+    def test_cli_approach_start_alias(self, tmp_path):
+        """CLI should support 'start' as alias for 'add'."""
+        env = os.environ.copy()
+        env["PROJECT_DIR"] = str(tmp_path)
+        env["LESSONS_BASE"] = str(tmp_path / ".lessons")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "core/lessons_manager.py",
+                "approach",
+                "start",
+                "Test Start Alias",
+                "--desc",
+                "Description via start",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode == 0
+        assert "A001" in result.stdout
+        assert "Test Start Alias" in result.stdout
+
     def test_cli_approach_update_phase(self, tmp_path):
         """CLI should support --phase in update command."""
         env = os.environ.copy()

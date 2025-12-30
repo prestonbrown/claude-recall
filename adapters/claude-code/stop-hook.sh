@@ -189,10 +189,12 @@ process_ai_lessons() {
 # ID can be explicit (A###) or LAST (most recently created in this processing run)
 # Patterns:
 #   APPROACH: <title>                                     -> approach add "<title>"
+#   APPROACH: <title> - <description>                     -> approach add "<title>" --desc "<description>"
 #   PLAN MODE: <title>                                    -> approach add "<title>" --phase research --agent plan
 #   APPROACH UPDATE A###|LAST: status <status>            -> approach update ID --status <status>
 #   APPROACH UPDATE A###|LAST: phase <phase>              -> approach update ID --phase <phase>
 #   APPROACH UPDATE A###|LAST: agent <agent>              -> approach update ID --agent <agent>
+#   APPROACH UPDATE A###|LAST: desc <text>                -> approach update ID --desc "<text>"
 #   APPROACH UPDATE A###|LAST: tried <outcome> - <desc>   -> approach update ID --tried <outcome> "<desc>"
 #   APPROACH UPDATE A###|LAST: next <text>                -> approach update ID --next "<text>"
 #   APPROACH COMPLETE A###|LAST                           -> approach complete ID
@@ -225,16 +227,33 @@ process_approaches() {
         [[ ${#line} -gt 1000 ]] && continue
         local result=""
 
-        # Pattern 1: APPROACH: <title> -> add new approach
+        # Pattern 1: APPROACH: <title> [- <description>] -> add new approach
         # Use -- to terminate options and prevent injection via crafted titles
         if [[ "$line" =~ ^APPROACH:\ (.+)$ ]]; then
-            local title="${BASH_REMATCH[1]}"
+            local full_match="${BASH_REMATCH[1]}"
+            local title=""
+            local desc=""
+
+            # Check for " - " separator (description follows)
+            if [[ "$full_match" =~ ^(.+)\ -\ (.+)$ ]]; then
+                title="${BASH_REMATCH[1]}"
+                desc="${BASH_REMATCH[2]}"
+            else
+                title="$full_match"
+            fi
+
             title=$(sanitize_input "$title" 200)
             [[ -z "$title" ]] && continue
+            desc=$(sanitize_input "$desc" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
-                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach add -- "$title" 2>&1 || true)
+                if [[ -n "$desc" ]]; then
+                    result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+                        python3 "$PYTHON_MANAGER" approach add --desc "$desc" -- "$title" 2>&1 || true)
+                else
+                    result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+                        python3 "$PYTHON_MANAGER" approach add -- "$title" 2>&1 || true)
+                fi
                 # Extract created ID for LAST reference (e.g., "Added approach A001: ...")
                 if [[ "$result" =~ Added\ approach\ ([A-Z][0-9]{3}) ]]; then
                     last_approach_id="${BASH_REMATCH[1]}"
@@ -293,6 +312,19 @@ process_approaches() {
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --agent "$agent" 2>&1 || true)
+            fi
+
+        # Pattern 2d: APPROACH UPDATE A###|LAST: desc <text>
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ ([A-Z][0-9]{3}|LAST):\ desc\ (.+)$ ]]; then
+            local approach_id="${BASH_REMATCH[1]}"
+            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
+            [[ -z "$approach_id" ]] && continue
+            local desc_text="${BASH_REMATCH[2]}"
+            desc_text=$(sanitize_input "$desc_text" 500)
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --desc "$desc_text" 2>&1 || true)
             fi
 
         # Pattern 3: APPROACH UPDATE A###|LAST: tried <outcome> - <description>

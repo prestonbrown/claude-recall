@@ -2647,8 +2647,8 @@ def main():
     approach_parser = subparsers.add_parser("approach", help="Manage approaches")
     approach_subparsers = approach_parser.add_subparsers(dest="approach_command", help="Approach commands")
 
-    # approach add
-    approach_add_parser = approach_subparsers.add_parser("add", help="Add a new approach")
+    # approach add (alias: start)
+    approach_add_parser = approach_subparsers.add_parser("add", aliases=["start"], help="Add a new approach")
     approach_add_parser.add_argument("title", help="Approach title")
     approach_add_parser.add_argument("--desc", help="Description")
     approach_add_parser.add_argument("--files", help="Comma-separated list of files")
@@ -2820,7 +2820,7 @@ def main():
                 approach_parser.print_help()
                 sys.exit(1)
 
-            if args.approach_command == "add":
+            if args.approach_command in ("add", "start"):
                 files = None
                 if args.files:
                     files = [f.strip() for f in args.files.split(",") if f.strip()]
