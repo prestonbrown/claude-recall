@@ -17,7 +17,10 @@ AI-added lessons include a robot emoji and Source metadata:
     > AI-learned content.
 """
 
+import json
 import os
+import subprocess
+
 import pytest
 from datetime import date, timedelta
 from pathlib import Path
@@ -1053,7 +1056,6 @@ class TestCLI:
 
     def test_cli_add_with_no_promote(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI --no-promote flag should create non-promotable lesson."""
-        import subprocess
 
         result = subprocess.run(
             [
@@ -1082,7 +1084,6 @@ class TestCLI:
 
     def test_cli_add_ai_with_no_promote(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI add-ai --no-promote should create non-promotable AI lesson."""
-        import subprocess
 
         result = subprocess.run(
             [
@@ -1111,7 +1112,6 @@ class TestCLI:
 
     def test_cli_list_basic(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list command should work without flags."""
-        import subprocess
         from core.lessons_manager import LessonsManager
 
         # Add some lessons first
@@ -1138,7 +1138,6 @@ class TestCLI:
 
     def test_cli_list_project_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --project should only show project lessons."""
-        import subprocess
         from core.lessons_manager import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
@@ -1168,7 +1167,6 @@ class TestCLI:
 
     def test_cli_list_system_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --system should only show system lessons."""
-        import subprocess
         from core.lessons_manager import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
@@ -1198,7 +1196,6 @@ class TestCLI:
 
     def test_cli_list_search_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --search should filter by keyword."""
-        import subprocess
         from core.lessons_manager import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
@@ -1228,7 +1225,6 @@ class TestCLI:
 
     def test_cli_list_category_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --category should filter by category."""
-        import subprocess
         from core.lessons_manager import LessonsManager
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
@@ -1258,7 +1254,6 @@ class TestCLI:
 
     def test_cli_list_stale_flag(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI list --stale should show only stale lessons."""
-        import subprocess
         from core.lessons_manager import LessonsManager
         from datetime import datetime, timedelta
 
@@ -1300,8 +1295,6 @@ class TestCaptureHook:
 
     def test_capture_hook_parses_no_promote(self, temp_lessons_base: Path, temp_project_root: Path):
         """capture-hook.sh should parse LESSON (no-promote): syntax."""
-        import subprocess
-        import json
 
         hook_path = Path("adapters/claude-code/capture-hook.sh")
         if not hook_path.exists():
@@ -1339,8 +1332,6 @@ class TestCaptureHook:
 
     def test_capture_hook_normal_lesson_is_promotable(self, temp_lessons_base: Path, temp_project_root: Path):
         """capture-hook.sh without (no-promote) should create promotable lesson."""
-        import subprocess
-        import json
 
         hook_path = Path("adapters/claude-code/capture-hook.sh")
         if not hook_path.exists():
@@ -1385,8 +1376,6 @@ class TestReminderHook:
 
     def test_reminder_reads_config_file(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
         """Reminder hook reads remindEvery from config file."""
-        import subprocess
-        import json
 
         # Create config with custom remindEvery
         config_dir = tmp_path / ".claude"
@@ -1426,8 +1415,6 @@ class TestReminderHook:
 
     def test_reminder_env_var_overrides_config(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
         """LESSON_REMIND_EVERY env var takes precedence over config."""
-        import subprocess
-        import json
 
         # Config says remind every 100
         config_dir = tmp_path / ".claude"
@@ -1465,7 +1452,6 @@ class TestReminderHook:
 
     def test_reminder_default_when_no_config(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
         """Default remindEvery=12 when no config file exists."""
-        import subprocess
 
         # No config file, state at 11
         state_dir = tmp_path / ".config" / "coding-agent-lessons"
@@ -1495,8 +1481,6 @@ class TestReminderHook:
 
     def test_reminder_logs_when_debug_enabled(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
         """Reminder logs to debug.log when LESSONS_DEBUG>=1."""
-        import subprocess
-        import json
 
         state_dir = tmp_path / ".config" / "coding-agent-lessons"
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -1537,7 +1521,6 @@ class TestReminderHook:
 
     def test_reminder_no_log_when_debug_disabled(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
         """No debug log when LESSONS_DEBUG is not set."""
-        import subprocess
 
         state_dir = tmp_path / ".config" / "coding-agent-lessons"
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -1578,7 +1561,6 @@ class TestScoreRelevance:
     def test_score_relevance_returns_result(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """score_relevance returns a RelevanceResult."""
         from core.lessons_manager import LessonsManager, RelevanceResult
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Git Safety", "Never force push")
@@ -1602,7 +1584,6 @@ class TestScoreRelevance:
     def test_score_relevance_sorts_by_score(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Results are sorted by score descending."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "A lesson", "Content A")
@@ -1634,7 +1615,6 @@ class TestScoreRelevance:
     def test_score_relevance_handles_timeout(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """score_relevance handles timeout gracefully."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Test content")
@@ -1651,7 +1631,6 @@ class TestScoreRelevance:
     def test_score_relevance_handles_missing_claude(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """score_relevance handles missing claude CLI."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Test content")
@@ -1668,7 +1647,6 @@ class TestScoreRelevance:
     def test_score_relevance_handles_command_failure(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """score_relevance handles non-zero return code."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Test content")
@@ -1689,7 +1667,6 @@ class TestScoreRelevance:
     def test_score_relevance_clamps_scores(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Scores are clamped to 0-10 range."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Test content")
@@ -1710,7 +1687,6 @@ class TestScoreRelevance:
     def test_score_relevance_format_output(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """RelevanceResult.format() produces readable output."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Git Safety", "Never force push")
@@ -1733,7 +1709,6 @@ class TestScoreRelevance:
     def test_score_relevance_handles_brackets_in_output(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Parser handles optional brackets in Haiku output."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Content")
@@ -1754,7 +1729,6 @@ class TestScoreRelevance:
     def test_score_relevance_partial_results(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Handles when Haiku returns fewer lessons than expected."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Lesson A", "Content A")
@@ -1782,7 +1756,6 @@ class TestScoreRelevance:
     def test_score_relevance_secondary_sort_by_uses(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """When scores are equal, sorts by uses descending."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Low uses", "Content A")
@@ -1810,7 +1783,6 @@ class TestScoreRelevance:
     def test_score_relevance_system_lessons(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Both project (L###) and system (S###) lessons are scored."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Project lesson", "Project content")
@@ -1836,7 +1808,6 @@ class TestScoreRelevance:
     def test_score_relevance_min_score_filter(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """format() with min_score filters out low-relevance lessons."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "High relevance", "Content A")
@@ -1860,7 +1831,6 @@ class TestScoreRelevance:
     def test_score_relevance_min_score_no_matches(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """format() with high min_score and no matches returns message."""
         from core.lessons_manager import LessonsManager
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Low relevance", "Content")
@@ -1881,7 +1851,6 @@ class TestScoreRelevance:
     def test_score_relevance_query_truncation(self, temp_lessons_base: Path, temp_project_root: Path, monkeypatch):
         """Long queries are truncated to prevent huge prompts."""
         from core.lessons_manager import LessonsManager, SCORE_RELEVANCE_MAX_QUERY_LEN
-        import subprocess
 
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson("project", "pattern", "Test", "Content")
