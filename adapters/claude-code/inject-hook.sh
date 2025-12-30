@@ -97,6 +97,47 @@ $approaches"
         fi
     fi
 
+    # Generate user-visible feedback (stderr)
+    local sys_count=0 proj_count=0
+    if [[ "$summary" =~ LESSONS\ \(([0-9]+)S,\ ([0-9]+)L ]]; then
+        sys_count="${BASH_REMATCH[1]}"
+        proj_count="${BASH_REMATCH[2]}"
+    fi
+
+    local approach_count=0
+    if [[ -n "$approaches" && "$approaches" != "(no active approaches)" ]]; then
+        approach_count=$(echo "$approaches" | grep -c "^### \[A" || true)
+    fi
+
+    # Build feedback message (only non-zero parts)
+    local feedback=""
+    if [[ $sys_count -gt 0 || $proj_count -gt 0 ]]; then
+        local lessons_str=""
+        if [[ $sys_count -gt 0 ]]; then
+            lessons_str="${sys_count} system"
+        fi
+        if [[ $proj_count -gt 0 ]]; then
+            if [[ -n "$lessons_str" ]]; then
+                lessons_str="$lessons_str + ${proj_count} project"
+            else
+                lessons_str="${proj_count} project"
+            fi
+        fi
+        feedback="$lessons_str lessons"
+    fi
+    if [[ $approach_count -gt 0 ]]; then
+        if [[ -n "$feedback" ]]; then
+            feedback="$feedback, $approach_count active approaches"
+        else
+            feedback="$approach_count active approaches"
+        fi
+    fi
+
+    # Output to stderr if anything to report
+    if [[ -n "$feedback" ]]; then
+        echo "Injected: $feedback" >&2
+    fi
+
     if [[ -n "$summary" ]]; then
         # Add lesson duty reminder
         summary="$summary
