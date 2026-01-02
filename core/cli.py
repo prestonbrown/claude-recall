@@ -88,8 +88,8 @@ def main():
     edit_parser.add_argument("lesson_id", help="Lesson ID")
     edit_parser.add_argument("content", help="New content")
 
-    # delete command
-    delete_parser = subparsers.add_parser("delete", help="Delete a lesson")
+    # delete command (alias: remove)
+    delete_parser = subparsers.add_parser("delete", aliases=["remove"], help="Delete a lesson")
     delete_parser.add_argument("lesson_id", help="Lesson ID")
 
     # promote command
@@ -143,8 +143,8 @@ def main():
     approach_archive_parser = approach_subparsers.add_parser("archive", help="Archive an approach")
     approach_archive_parser.add_argument("id", help="Approach ID")
 
-    # approach delete
-    approach_delete_parser = approach_subparsers.add_parser("delete", help="Delete an approach")
+    # approach delete (alias: remove)
+    approach_delete_parser = approach_subparsers.add_parser("delete", aliases=["remove"], help="Delete an approach")
     approach_delete_parser.add_argument("id", help="Approach ID")
 
     # approach list

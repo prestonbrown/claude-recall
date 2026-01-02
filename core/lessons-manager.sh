@@ -11,7 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_MANAGER="$SCRIPT_DIR/lessons_manager.py"
+PYTHON_MANAGER="$SCRIPT_DIR/cli.py"
 
 # Verify Python manager exists
 if [[ ! -f "$PYTHON_MANAGER" ]]; then

@@ -6,7 +6,7 @@ A learning system for AI coding agents that captures lessons across sessions and
 
 | Component | Location |
 |-----------|----------|
-| Core Python | `core/lessons_manager.py` (main), `core/debug_logger.py` |
+| Core Python | `core/cli.py` (entry), `core/lessons.py`, `core/approaches.py`, `core/debug_logger.py` |
 | Claude hooks | `adapters/claude-code/inject-hook.sh`, `smart-inject-hook.sh`, `stop-hook.sh` |
 | Tests | `tests/test_lessons_manager.py`, `tests/test_approaches.py` |
 | Project lessons | `.coding-agent-lessons/LESSONS.md` |
@@ -33,11 +33,11 @@ Stop hook → parses output, updates lessons/approaches, tracks citations
 python3 -m pytest tests/ -v
 
 # CLI usage
-python3 core/lessons_manager.py inject 5                          # Top 5 by stars
-python3 core/lessons_manager.py score-relevance "query" --top 5   # Top 5 by relevance
-python3 core/lessons_manager.py add pattern "Title" "Content"
-python3 core/lessons_manager.py cite L001
-python3 core/lessons_manager.py approach list
+python3 core/cli.py inject 5                          # Top 5 by stars
+python3 core/cli.py score-relevance "query" --top 5   # Top 5 by relevance
+python3 core/cli.py add pattern "Title" "Content"
+python3 core/cli.py cite L001
+python3 core/cli.py approach list
 ```
 
 ## Writing Tests

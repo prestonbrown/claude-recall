@@ -472,6 +472,154 @@ EOF
 }
 
 # =============================================================================
+# TodoWrite Capture Tests
+# =============================================================================
+
+# Helper: create a TodoWrite tool_use transcript entry
+create_todowrite_entry() {
+    local timestamp="$1"
+    local todos_json="$2"
+
+    cat <<EOF
+{"timestamp":"$timestamp","uuid":"$(uuidgen 2>/dev/null || echo "test-uuid-$RANDOM")","type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_test","name":"TodoWrite","input":{"todos":$todos_json}}]}}
+EOF
+}
+
+# Setup for TodoWrite tests - needs Python manager
+setup_todowrite() {
+    setup
+    # Create project-level lessons/approaches files
+    mkdir -p "$PROJECT_DIR/.coding-agent-lessons"
+    cat > "$PROJECT_DIR/.coding-agent-lessons/LESSONS.md" << 'EOF'
+# LESSONS.md - Project Level
+
+## Active Lessons
+
+EOF
+    cat > "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" << 'EOF'
+# APPROACHES.md - Active Work Tracking
+
+## Active Approaches
+
+EOF
+}
+
+test_todowrite_capture_creates_approach() {
+    setup_todowrite
+    local transcript="$TEST_DIR/test.jsonl"
+
+    # Create TodoWrite with pending todos
+    local todos='[{"content":"First task","status":"pending","activeForm":"Working on first task"}]'
+    create_transcript "$transcript" \
+        "$(create_todowrite_entry "2025-01-01T00:00:00.000Z" "$todos")"
+
+    local output=$(run_hook "$transcript")
+
+    # Should have synced
+    assert_contains "$output" "[approaches] Synced TodoWrite" "Should sync TodoWrite"
+
+    # Approach file should have content
+    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "First task" \
+        "Approach should contain todo content"
+}
+
+test_todowrite_capture_with_completed_todos() {
+    setup_todowrite
+    local transcript="$TEST_DIR/test.jsonl"
+
+    # Create TodoWrite with completed todos
+    local todos='[{"content":"Completed task","status":"completed","activeForm":"Done with task"},{"content":"Pending task","status":"pending","activeForm":"Working"}]'
+    create_transcript "$transcript" \
+        "$(create_todowrite_entry "2025-01-01T00:00:00.000Z" "$todos")"
+
+    run_hook "$transcript"
+
+    # Approach should have tried entry for completed (format: "1. [success] Completed task")
+    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "success.*Completed task" \
+        "Completed todos should become tried entries"
+}
+
+test_todowrite_capture_uses_last_call() {
+    setup_todowrite
+    local transcript="$TEST_DIR/test.jsonl"
+
+    # Create multiple TodoWrite calls - should use the LAST one
+    local todos1='[{"content":"First call task","status":"pending","activeForm":"First"}]'
+    local todos2='[{"content":"Second call task","status":"pending","activeForm":"Second"}]'
+
+    create_transcript "$transcript" \
+        "$(create_todowrite_entry "2025-01-01T00:00:00.000Z" "$todos1")" \
+        "$(create_todowrite_entry "2025-01-01T00:01:00.000Z" "$todos2")"
+
+    run_hook "$transcript"
+
+    # Should have the second task, not the first
+    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "Second call task" \
+        "Should use last TodoWrite call"
+}
+
+test_todowrite_capture_handles_multiline_json() {
+    # This is the key regression test for the jq -c vs -r bug
+    setup_todowrite
+    local transcript="$TEST_DIR/test.jsonl"
+
+    # Create TodoWrite with multiple todos (will be multi-line with jq -r)
+    local todos='[{"content":"Task one","status":"completed","activeForm":"One"},{"content":"Task two","status":"completed","activeForm":"Two"},{"content":"Task three","status":"pending","activeForm":"Three"}]'
+    create_transcript "$transcript" \
+        "$(create_todowrite_entry "2025-01-01T00:00:00.000Z" "$todos")"
+
+    local output=$(run_hook "$transcript")
+
+    # Should sync successfully (the bug would cause this to fail silently)
+    assert_contains "$output" "[approaches] Synced TodoWrite" \
+        "Multi-todo arrays should sync (jq -c fix)"
+
+    # All completed todos should be recorded
+    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "success.*Task one" \
+        "First completed task should be recorded"
+    assert_file_contains "$PROJECT_DIR/.coding-agent-lessons/APPROACHES.md" "success.*Task two" \
+        "Second completed task should be recorded"
+}
+
+test_todowrite_capture_incremental() {
+    setup_todowrite
+    local transcript="$TEST_DIR/test-session.jsonl"
+
+    # First run
+    local todos1='[{"content":"Initial task","status":"pending","activeForm":"Working"}]'
+    create_transcript "$transcript" \
+        "$(create_todowrite_entry "2025-01-01T00:00:00.000Z" "$todos1")"
+    run_hook "$transcript"
+
+    # Second run with new TodoWrite (later timestamp)
+    local todos2='[{"content":"New task","status":"pending","activeForm":"Working"}]'
+    echo "$(create_todowrite_entry "2025-01-01T01:00:00.000Z" "$todos2")" >> "$transcript"
+
+    local output=$(run_hook "$transcript")
+
+    # Should sync the new one
+    assert_contains "$output" "[approaches] Synced TodoWrite" "Should sync new TodoWrite"
+}
+
+test_todowrite_capture_skips_empty() {
+    setup_todowrite
+    local transcript="$TEST_DIR/test.jsonl"
+
+    # Create TodoWrite with empty array
+    local todos='[]'
+    create_transcript "$transcript" \
+        "$(create_todowrite_entry "2025-01-01T00:00:00.000Z" "$todos")"
+
+    local output=$(run_hook "$transcript")
+
+    # Should not sync empty todos
+    [[ "$output" != *"[approaches]"* ]] || {
+        echo "Should not sync empty TodoWrite"
+        return 1
+    }
+}
+
+# =============================================================================
 # Run Tests
 # =============================================================================
 
@@ -513,6 +661,19 @@ echo ""
 run_test test_decay_reduces_stale_lesson_uses
 run_test test_decay_skips_without_activity
 run_test test_decay_never_below_one
+
+echo ""
+echo "========================================"
+echo "  TodoWrite Capture Tests"
+echo "========================================"
+echo ""
+
+run_test test_todowrite_capture_creates_approach
+run_test test_todowrite_capture_with_completed_todos
+run_test test_todowrite_capture_uses_last_call
+run_test test_todowrite_capture_handles_multiline_json
+run_test test_todowrite_capture_incremental
+run_test test_todowrite_capture_skips_empty
 
 echo ""
 echo "========================================"

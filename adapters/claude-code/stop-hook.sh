@@ -389,15 +389,17 @@ capture_todowrite() {
 
     # Extract the LAST TodoWrite tool_use block from assistant messages
     # We want the final state, not intermediate states
+    # NOTE: Must use jq -c (compact) not -r (raw) because -r pretty-prints arrays
+    # across multiple lines, and tail -1 would only get the closing "]"
     local todo_json=""
     if [[ -z "$last_timestamp" ]]; then
-        todo_json=$(jq -r '
+        todo_json=$(jq -c '
             select(.type == "assistant") |
             .message.content[]? |
             select(.type == "tool_use" and .name == "TodoWrite") |
             .input.todos' "$transcript_path" 2>/dev/null | tail -1 || true)
     else
-        todo_json=$(jq -r --arg ts "$last_timestamp" '
+        todo_json=$(jq -c --arg ts "$last_timestamp" '
             select(.type == "assistant" and .timestamp > $ts) |
             .message.content[]? |
             select(.type == "tool_use" and .name == "TodoWrite") |
