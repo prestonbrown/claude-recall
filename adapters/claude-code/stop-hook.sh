@@ -56,6 +56,54 @@ find_project_root() {
     echo "$1"
 }
 
+# Infer blocked_by dependencies from natural language patterns in text.
+# Patterns detected:
+#   - "waiting for X" -> blocked_by X
+#   - "blocked by Y" -> blocked_by Y
+#   - "depends on Z" -> blocked_by Z
+#   - "after A completes" -> blocked_by A
+# Where X/Y/Z/A are handoff IDs (A### or hf-XXXXXXX format)
+# Returns comma-separated list of blocker IDs, or empty if none found.
+infer_blocked_by() {
+    local text="$1"
+    local blockers=""
+
+    # Pattern: "waiting for <ID>"
+    local waiting_matches
+    waiting_matches=$(echo "$text" | grep -oE 'waiting for (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \
+        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
+    [[ -n "$waiting_matches" ]] && blockers="$waiting_matches"
+
+    # Pattern: "blocked by <ID>"
+    local blocked_matches
+    blocked_matches=$(echo "$text" | grep -oE 'blocked by (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \
+        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
+    if [[ -n "$blocked_matches" ]]; then
+        [[ -n "$blockers" ]] && blockers="$blockers"$'\n'"$blocked_matches" || blockers="$blocked_matches"
+    fi
+
+    # Pattern: "depends on <ID>"
+    local depends_matches
+    depends_matches=$(echo "$text" | grep -oE 'depends on (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \
+        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
+    if [[ -n "$depends_matches" ]]; then
+        [[ -n "$blockers" ]] && blockers="$blockers"$'\n'"$depends_matches" || blockers="$depends_matches"
+    fi
+
+    # Pattern: "after <ID> completes"
+    local after_matches
+    after_matches=$(echo "$text" | grep -oE 'after (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) completes' | \
+        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
+    if [[ -n "$after_matches" ]]; then
+        [[ -n "$blockers" ]] && blockers="$blockers"$'\n'"$after_matches" || blockers="$after_matches"
+    fi
+
+    # Deduplicate and format as comma-separated list
+    if [[ -n "$blockers" ]]; then
+        echo "$blockers" | sort -u | tr '\n' ',' | sed 's/,$//'
+    fi
+}
+
 # Clean up orphaned checkpoint files (transcripts deleted but checkpoints remain)
 # Runs opportunistically: max 10 files per invocation, only files >7 days old
 cleanup_orphaned_checkpoints() {
@@ -356,6 +404,27 @@ process_approaches() {
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach update "$approach_id" --next -- "$next_text" 2>&1 || true)
+
+                # Infer blocked_by from next_steps text patterns
+                local inferred_blockers
+                inferred_blockers=$(infer_blocked_by "$next_text")
+                if [[ -n "$inferred_blockers" ]]; then
+                    PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+                        python3 "$PYTHON_MANAGER" approach update "$approach_id" --blocked-by "$inferred_blockers" 2>&1 || true
+                fi
+            fi
+
+        # Pattern 4b: APPROACH UPDATE A###|hf-XXXXXXX|LAST: blocked_by <id>,<id>,...
+        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ blocked_by\ (.+)$ ]]; then
+            local approach_id="${BASH_REMATCH[1]}"
+            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
+            [[ -z "$approach_id" ]] && continue
+            local blocked_ids="${BASH_REMATCH[2]}"
+            blocked_ids=$(sanitize_input "$blocked_ids" 200)
+
+            if [[ -f "$PYTHON_MANAGER" ]]; then
+                result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --blocked-by "$blocked_ids" 2>&1 || true)
             fi
 
         # Pattern 5: APPROACH COMPLETE A###|hf-XXXXXXX|LAST

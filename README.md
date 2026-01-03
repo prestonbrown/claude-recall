@@ -170,7 +170,9 @@ coding-agent-lessons/
 │   ├── claude-code/
 │   │   ├── inject-hook.sh      # SessionStart - injects top lessons + approaches
 │   │   ├── smart-inject-hook.sh # UserPromptSubmit - relevance-scored lessons
-│   │   └── stop-hook.sh        # Stop - tracks citations/patterns
+│   │   ├── stop-hook.sh        # Stop - tracks citations/patterns
+│   │   ├── session-end-hook.sh # Stop - captures handoff context on session end
+│   │   └── precompact-hook.sh  # PreCompact - captures handoff context before compaction
 │   └── opencode/
 │       └── ...
 └── tests/

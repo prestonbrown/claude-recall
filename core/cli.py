@@ -131,6 +131,7 @@ def main():
     approach_add_parser.add_argument("--files", help="Comma-separated list of files")
     approach_add_parser.add_argument("--phase", default="research", help="Initial phase (research, planning, implementing, review)")
     approach_add_parser.add_argument("--agent", default="user", help="Agent working on this (explore, general-purpose, plan, review, user)")
+    approach_add_parser.add_argument("--stealth", action="store_true", help="Store in local file (not committed to git)")
 
     # approach update
     approach_update_parser = approach_subparsers.add_parser("update", help="Update an approach")
@@ -143,6 +144,7 @@ def main():
     approach_update_parser.add_argument("--phase", help="Update phase (research, planning, implementing, review)")
     approach_update_parser.add_argument("--agent", help="Update agent (explore, general-purpose, plan, review, user)")
     approach_update_parser.add_argument("--checkpoint", help="Update checkpoint (progress summary for session handoff)")
+    approach_update_parser.add_argument("--blocked-by", help="Set blocked_by dependencies (comma-separated handoff IDs)")
 
     # approach complete
     approach_complete_parser = approach_subparsers.add_parser("complete", help="Mark approach as completed")
@@ -334,14 +336,17 @@ def main():
                 files = None
                 if args.files:
                     files = [f.strip() for f in args.files.split(",") if f.strip()]
+                stealth = getattr(args, 'stealth', False)
                 approach_id = manager.approach_add(
                     title=args.title,
                     desc=args.desc,
                     files=files,
                     phase=args.phase,
                     agent=args.agent,
+                    stealth=stealth,
                 )
-                print(f"Added approach {approach_id}: {args.title}")
+                mode = " (stealth)" if stealth else ""
+                print(f"Added approach {approach_id}: {args.title}{mode}")
 
             elif args.approach_command == "update":
                 updated = False
@@ -378,6 +383,12 @@ def main():
                 if args.checkpoint:
                     manager.approach_update_checkpoint(args.id, args.checkpoint)
                     print(f"Updated {args.id} checkpoint")
+                    updated = True
+                blocked_by_arg = getattr(args, 'blocked_by', None)
+                if blocked_by_arg:
+                    blocked_by_list = [b.strip() for b in blocked_by_arg.split(",") if b.strip()]
+                    manager.approach_update_blocked_by(args.id, blocked_by_list)
+                    print(f"Updated {args.id} blocked_by to {', '.join(blocked_by_list)}")
                     updated = True
                 if not updated:
                     print("No update options provided", file=sys.stderr)

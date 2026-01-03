@@ -158,6 +158,18 @@ class HandoffsMixin:
             # Default to new name for new files
             return self.project_root / _get_recall_dir() / "HANDOFFS_ARCHIVE.md"
 
+    @property
+    def project_stealth_handoffs_file(self) -> Path:
+        """Path to the stealth/local handoffs file (not committed to git)."""
+        data_dir = self._get_project_data_dir()
+        return data_dir / "HANDOFFS_LOCAL.md"
+
+    @property
+    def project_stealth_handoffs_archive(self) -> Path:
+        """Path to the stealth/local handoffs archive file (not committed to git)."""
+        data_dir = self._get_project_data_dir()
+        return data_dir / "HANDOFFS_LOCAL_ARCHIVE.md"
+
     # Backward compatibility aliases
     @property
     def project_approaches_file(self) -> Path:
@@ -192,8 +204,31 @@ class HandoffsMixin:
         """Backward compatibility alias for _init_handoffs_file."""
         return self._init_handoffs_file()
 
-    def _parse_handoffs_file(self, file_path: Path) -> List[Handoff]:
-        """Parse all handoffs from a file."""
+    def _init_stealth_handoffs_file(self) -> None:
+        """Initialize stealth handoffs file with header if it doesn't exist."""
+        file_path = self.project_stealth_handoffs_file
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if file_path.exists():
+            return
+
+        header = """# HANDOFFS_LOCAL.md - Local/Stealth Work Tracking
+
+> Local-only handoffs not committed to git.
+> For personal work on shared repos.
+
+## Active Handoffs
+
+"""
+        file_path.write_text(header)
+
+    def _parse_handoffs_file(self, file_path: Path, stealth: bool = False) -> List[Handoff]:
+        """Parse all handoffs from a file.
+
+        Args:
+            file_path: Path to the handoffs markdown file
+            stealth: If True, mark all parsed handoffs as stealth=True
+        """
         if not file_path.exists():
             return []
 
@@ -453,6 +488,7 @@ class HandoffsMixin:
                 last_session=last_session,
                 handoff=handoff_context,
                 blocked_by=blocked_by,
+                stealth=stealth,
             ))
 
         return handoffs
@@ -539,6 +575,25 @@ class HandoffsMixin:
         """Backward compatibility alias for _write_handoffs_file."""
         return self._write_handoffs_file(handoffs)
 
+    def _write_stealth_handoffs_file(self, handoffs: List[Handoff]) -> None:
+        """Write stealth handoffs back to local file."""
+        self._init_stealth_handoffs_file()
+
+        header = """# HANDOFFS_LOCAL.md - Local/Stealth Work Tracking
+
+> Local-only handoffs not committed to git.
+> For personal work on shared repos.
+
+## Active Handoffs
+
+"""
+        parts = [header]
+        for handoff in handoffs:
+            parts.append(self._format_handoff(handoff))
+            parts.append("")
+
+        self.project_stealth_handoffs_file.write_text("\n".join(parts))
+
     def _generate_handoff_id(self, title: str) -> str:
         """Generate hash-based ID like hf-a1b2c3d for multi-agent safety."""
         import hashlib
@@ -586,6 +641,7 @@ class HandoffsMixin:
         refs: Optional[List[str]] = None,
         phase: str = "research",
         agent: str = "user",
+        stealth: bool = False,
     ) -> str:
         """
         Add a new handoff.
@@ -597,6 +653,7 @@ class HandoffsMixin:
             refs: Optional list of file:line refs (e.g., ["core/main.py:50"])
             phase: Initial phase (research, planning, implementing, review)
             agent: Agent working on this (explore, general-purpose, plan, review, user)
+            stealth: If True, store in HANDOFFS_LOCAL.md (not committed to git)
 
         Returns:
             The assigned handoff ID (e.g., 'hf-a1b2c3d')
@@ -612,29 +669,36 @@ class HandoffsMixin:
         # refs takes precedence, files is for backward compat
         ref_list = refs if refs is not None else (files or [])
 
-        self._init_handoffs_file()
+        handoff_id = self._generate_handoff_id(title)
+        today = date.today()
 
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
-            handoff_id = self._generate_handoff_id(title)
-            today = date.today()
+        handoff = Handoff(
+            id=handoff_id,
+            title=title,
+            status="not_started",
+            created=today,
+            updated=today,
+            refs=ref_list,
+            description=desc or "",
+            tried=[],
+            next_steps="",
+            phase=phase,
+            agent=agent,
+            stealth=stealth,
+        )
 
-            handoff = Handoff(
-                id=handoff_id,
-                title=title,
-                status="not_started",
-                created=today,
-                updated=today,
-                refs=ref_list,
-                description=desc or "",
-                tried=[],
-                next_steps="",
-                phase=phase,
-                agent=agent,
-            )
-
-            handoffs.append(handoff)
-            self._write_handoffs_file(handoffs)
+        if stealth:
+            self._init_stealth_handoffs_file()
+            with FileLock(self.project_stealth_handoffs_file):
+                handoffs = self._parse_handoffs_file(self.project_stealth_handoffs_file, stealth=True)
+                handoffs.append(handoff)
+                self._write_stealth_handoffs_file(handoffs)
+        else:
+            self._init_handoffs_file()
+            with FileLock(self.project_handoffs_file):
+                handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+                handoffs.append(handoff)
+                self._write_handoffs_file(handoffs)
 
         # Log handoff created
         logger = get_logger()
@@ -647,6 +711,88 @@ class HandoffsMixin:
 
         return handoff_id
 
+    def _load_all_handoffs(self) -> List[Handoff]:
+        """Load all handoffs from both regular and stealth files."""
+        handoffs = []
+        if self.project_handoffs_file.exists():
+            handoffs.extend(self._parse_handoffs_file(self.project_handoffs_file, stealth=False))
+        if self.project_stealth_handoffs_file.exists():
+            handoffs.extend(self._parse_handoffs_file(self.project_stealth_handoffs_file, stealth=True))
+        return handoffs
+
+    def _find_handoff_file(self, handoff_id: str) -> Optional[Path]:
+        """
+        Find which file contains a handoff by ID.
+
+        Args:
+            handoff_id: The handoff ID to search for
+
+        Returns:
+            Path to the file containing the handoff, or None if not found
+        """
+        # Check regular file first
+        if self.project_handoffs_file.exists():
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+            for h in handoffs:
+                if h.id == handoff_id:
+                    return self.project_handoffs_file
+
+        # Check stealth file
+        if self.project_stealth_handoffs_file.exists():
+            handoffs = self._parse_handoffs_file(self.project_stealth_handoffs_file, stealth=True)
+            for h in handoffs:
+                if h.id == handoff_id:
+                    return self.project_stealth_handoffs_file
+
+        return None
+
+    def _is_stealth_handoff(self, handoff_id: str) -> bool:
+        """Check if a handoff ID belongs to a stealth handoff."""
+        file_path = self._find_handoff_file(handoff_id)
+        return file_path == self.project_stealth_handoffs_file if file_path else False
+
+    def _update_handoff_in_file(
+        self,
+        handoff_id: str,
+        update_fn,
+    ) -> Optional[Handoff]:
+        """
+        Generic helper to update a handoff in whichever file it's stored.
+
+        Args:
+            handoff_id: The handoff ID to update
+            update_fn: Callable that takes a Handoff and modifies it in place
+
+        Returns:
+            The updated Handoff, or None if not found
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        # Try regular file first
+        if self.project_handoffs_file.exists():
+            with FileLock(self.project_handoffs_file):
+                handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+                for handoff in handoffs:
+                    if handoff.id == handoff_id:
+                        update_fn(handoff)
+                        handoff.updated = date.today()
+                        self._write_handoffs_file(handoffs)
+                        return handoff
+
+        # Try stealth file
+        if self.project_stealth_handoffs_file.exists():
+            with FileLock(self.project_stealth_handoffs_file):
+                handoffs = self._parse_handoffs_file(self.project_stealth_handoffs_file, stealth=True)
+                for handoff in handoffs:
+                    if handoff.id == handoff_id:
+                        update_fn(handoff)
+                        handoff.updated = date.today()
+                        self._write_stealth_handoffs_file(handoffs)
+                        return handoff
+
+        raise ValueError(f"Handoff {handoff_id} not found")
+
     # Backward compatibility alias
     def approach_add(
         self,
@@ -656,9 +802,10 @@ class HandoffsMixin:
         refs: Optional[List[str]] = None,
         phase: str = "research",
         agent: str = "user",
+        stealth: bool = False,
     ) -> str:
         """Backward compatibility alias for handoff_add."""
-        return self.handoff_add(title=title, desc=desc, files=files, refs=refs, phase=phase, agent=agent)
+        return self.handoff_add(title=title, desc=desc, files=files, refs=refs, phase=phase, agent=agent, stealth=stealth)
 
     def handoff_update_status(self, handoff_id: str, status: str) -> None:
         """
@@ -674,30 +821,20 @@ class HandoffsMixin:
         if status not in self.VALID_STATUSES:
             raise ValueError(f"Invalid status: {status}")
 
-        old_status = None
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        old_status = [None]  # Use list to allow modification in closure
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    old_status = handoff.status
-                    handoff.status = status
-                    handoff.updated = date.today()
-                    found = True
-                    break
+        def update_fn(h: Handoff) -> None:
+            old_status[0] = h.status
+            h.status = status
 
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
         # Log status change
         logger = get_logger()
         logger.handoff_change(
             handoff_id=handoff_id,
             action="status_change",
-            old_value=old_status,
+            old_value=old_status[0],
             new_value=status,
         )
 
@@ -720,30 +857,20 @@ class HandoffsMixin:
         if phase not in self.VALID_PHASES:
             raise ValueError(f"Invalid phase: {phase}")
 
-        old_phase = None
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        old_phase = [None]
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    old_phase = handoff.phase
-                    handoff.phase = phase
-                    handoff.updated = date.today()
-                    found = True
-                    break
+        def update_fn(h: Handoff) -> None:
+            old_phase[0] = h.phase
+            h.phase = phase
 
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
         # Log phase change
         logger = get_logger()
         logger.handoff_change(
             handoff_id=handoff_id,
             action="phase_change",
-            old_value=old_phase,
+            old_value=old_phase[0],
             new_value=phase,
         )
 
@@ -766,30 +893,20 @@ class HandoffsMixin:
         if agent not in self.VALID_AGENTS:
             raise ValueError(f"Invalid agent: {agent}")
 
-        old_agent = None
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        old_agent = [None]
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    old_agent = handoff.agent
-                    handoff.agent = agent
-                    handoff.updated = date.today()
-                    found = True
-                    break
+        def update_fn(h: Handoff) -> None:
+            old_agent[0] = h.agent
+            h.agent = agent
 
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
         # Log agent change
         logger = get_logger()
         logger.handoff_change(
             handoff_id=handoff_id,
             action="agent_change",
-            old_value=old_agent,
+            old_value=old_agent[0],
             new_value=agent,
         )
 
@@ -921,52 +1038,40 @@ class HandoffsMixin:
         if outcome not in self.VALID_OUTCOMES:
             raise ValueError(f"Invalid outcome: {outcome}")
 
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        def update_fn(h: Handoff) -> None:
+            h.tried.append(TriedStep(
+                outcome=outcome,
+                description=description,
+            ))
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    handoff.tried.append(TriedStep(
-                        outcome=outcome,
-                        description=description,
-                    ))
-                    handoff.updated = date.today()
+            # Auto-complete on final pattern with success outcome
+            if outcome == "success":
+                desc_lower = description.lower().strip()
+                if any(desc_lower.startswith(p) for p in self.COMPLETION_PATTERNS):
+                    h.status = "completed"
+                    h.phase = "review"
 
-                    # Auto-complete on final pattern with success outcome
-                    if outcome == "success":
-                        desc_lower = description.lower().strip()
-                        if any(desc_lower.startswith(p) for p in self.COMPLETION_PATTERNS):
-                            handoff.status = "completed"
-                            handoff.phase = "review"
+            # Auto-update phase to implementing (if not already in a later phase)
+            if h.phase not in self.PROTECTED_PHASES:
+                should_bump = False
 
-                    # Auto-update phase to implementing (if not already in a later phase)
-                    if handoff.phase not in self.PROTECTED_PHASES:
-                        should_bump = False
+                # Check for implementing keywords in description
+                desc_lower = description.lower()
+                if any(kw in desc_lower for kw in self.IMPLEMENTING_KEYWORDS):
+                    should_bump = True
 
-                        # Check for implementing keywords in description
-                        desc_lower = description.lower()
-                        if any(kw in desc_lower for kw in self.IMPLEMENTING_KEYWORDS):
-                            should_bump = True
+                # Check for 10+ successful steps
+                if not should_bump:
+                    success_count = sum(
+                        1 for t in h.tried if t.outcome == "success"
+                    )
+                    if success_count >= self.IMPLEMENTING_STEP_THRESHOLD:
+                        should_bump = True
 
-                        # Check for 10+ successful steps
-                        if not should_bump:
-                            success_count = sum(
-                                1 for t in handoff.tried if t.outcome == "success"
-                            )
-                            if success_count >= self.IMPLEMENTING_STEP_THRESHOLD:
-                                should_bump = True
+                if should_bump:
+                    h.phase = "implementing"
 
-                        if should_bump:
-                            handoff.phase = "implementing"
-
-                    found = True
-                    break
-
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
     # Backward compatibility alias
     def approach_add_tried(self, approach_id: str, outcome: str, description: str) -> None:
@@ -984,21 +1089,10 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        def update_fn(h: Handoff) -> None:
+            h.next_steps = text
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    handoff.next_steps = text
-                    handoff.updated = date.today()
-                    found = True
-                    break
-
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
     # Backward compatibility alias
     def approach_update_next(self, approach_id: str, text: str) -> None:
@@ -1016,21 +1110,10 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        def update_fn(h: Handoff) -> None:
+            h.refs = refs_list
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    handoff.refs = refs_list
-                    handoff.updated = date.today()
-                    found = True
-                    break
-
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
     def handoff_update_files(self, handoff_id: str, files_list: List[str]) -> None:
         """
@@ -1061,21 +1144,10 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        def update_fn(h: Handoff) -> None:
+            h.description = description
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    handoff.description = description
-                    handoff.updated = date.today()
-                    found = True
-                    break
-
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
     # Backward compatibility alias
     def approach_update_desc(self, approach_id: str, description: str) -> None:
@@ -1093,22 +1165,11 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        def update_fn(h: Handoff) -> None:
+            h.checkpoint = checkpoint
+            h.last_session = date.today()
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    handoff.checkpoint = checkpoint
-                    handoff.last_session = date.today()
-                    handoff.updated = date.today()
-                    found = True
-                    break
-
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
     # Backward compatibility alias
     def approach_update_checkpoint(self, approach_id: str, checkpoint: str) -> None:
@@ -1126,22 +1187,11 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        def update_fn(h: Handoff) -> None:
+            h.handoff = context
+            h.last_session = date.today()
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    handoff.handoff = context
-                    handoff.last_session = date.today()
-                    handoff.updated = date.today()
-                    found = True
-                    break
-
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
     # Backward compatibility alias
     def approach_update_context(self, approach_id: str, context: HandoffContext) -> None:
@@ -1159,21 +1209,10 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        def update_fn(h: Handoff) -> None:
+            h.blocked_by = blocked_by
 
-            found = False
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    handoff.blocked_by = blocked_by
-                    handoff.updated = date.today()
-                    found = True
-                    break
-
-            if not found:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
 
     # Backward compatibility alias
     def approach_update_blocked_by(self, approach_id: str, blocked_by: List[str]) -> None:
@@ -1193,21 +1232,14 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        target = [None]
 
-            target = None
-            for handoff in handoffs:
-                if handoff.id == handoff_id:
-                    target = handoff
-                    break
+        def update_fn(h: Handoff) -> None:
+            h.status = "completed"
+            target[0] = h
 
-            if target is None:
-                raise ValueError(f"Handoff {handoff_id} not found")
-
-            target.status = "completed"
-            target.updated = date.today()
-            self._write_handoffs_file(handoffs)
+        self._update_handoff_in_file(handoff_id, update_fn)
+        target = target[0]
 
         # Generate extraction prompt
         tried_summary = ""
@@ -1255,7 +1287,7 @@ Consider extracting lessons about:
 
     def handoff_archive(self, handoff_id: str) -> None:
         """
-        Archive a handoff to HANDOFFS_ARCHIVE.md.
+        Archive a handoff to HANDOFFS_ARCHIVE.md (or HANDOFFS_LOCAL_ARCHIVE.md for stealth).
 
         Args:
             handoff_id: The handoff ID
@@ -1263,8 +1295,28 @@ Consider extracting lessons about:
         Raises:
             ValueError: If handoff not found
         """
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        # Determine if stealth
+        is_stealth = self._is_stealth_handoff(handoff_id)
+
+        if is_stealth:
+            file_path = self.project_stealth_handoffs_file
+            archive_file = self.project_stealth_handoffs_archive
+            archive_header = """# HANDOFFS_LOCAL_ARCHIVE.md - Archived Local Handoffs
+
+> Previously completed or archived local/stealth handoffs.
+
+"""
+        else:
+            file_path = self.project_handoffs_file
+            archive_file = self.project_handoffs_archive
+            archive_header = """# HANDOFFS_ARCHIVE.md - Archived Handoffs
+
+> Previously completed or archived handoffs.
+
+"""
+
+        with FileLock(file_path):
+            handoffs = self._parse_handoffs_file(file_path, stealth=is_stealth)
 
             target = None
             remaining = []
@@ -1278,23 +1330,21 @@ Consider extracting lessons about:
                 raise ValueError(f"Handoff {handoff_id} not found")
 
             # Append to archive file
-            archive_file = self.project_handoffs_archive
             archive_file.parent.mkdir(parents=True, exist_ok=True)
 
             if archive_file.exists():
                 archive_content = archive_file.read_text()
             else:
-                archive_content = """# HANDOFFS_ARCHIVE.md - Archived Handoffs
-
-> Previously completed or archived handoffs.
-
-"""
+                archive_content = archive_header
 
             archive_content += "\n" + self._format_handoff(target) + "\n"
             archive_file.write_text(archive_content)
 
             # Remove from main file
-            self._write_handoffs_file(remaining)
+            if is_stealth:
+                self._write_stealth_handoffs_file(remaining)
+            else:
+                self._write_handoffs_file(remaining)
 
     # Backward compatibility alias
     def approach_archive(self, approach_id: str) -> None:
@@ -1311,8 +1361,19 @@ Consider extracting lessons about:
         Raises:
             ValueError: If handoff not found
         """
-        with FileLock(self.project_handoffs_file):
-            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        # Determine if stealth
+        is_stealth = self._is_stealth_handoff(handoff_id)
+
+        if is_stealth:
+            file_path = self.project_stealth_handoffs_file
+        else:
+            file_path = self.project_handoffs_file
+
+        if not file_path.exists():
+            raise ValueError(f"Handoff {handoff_id} not found")
+
+        with FileLock(file_path):
+            handoffs = self._parse_handoffs_file(file_path, stealth=is_stealth)
 
             original_count = len(handoffs)
             handoffs = [h for h in handoffs if h.id != handoff_id]
@@ -1320,7 +1381,10 @@ Consider extracting lessons about:
             if len(handoffs) == original_count:
                 raise ValueError(f"Handoff {handoff_id} not found")
 
-            self._write_handoffs_file(handoffs)
+            if is_stealth:
+                self._write_stealth_handoffs_file(handoffs)
+            else:
+                self._write_handoffs_file(handoffs)
 
     # Backward compatibility alias
     def approach_delete(self, approach_id: str) -> None:
@@ -1446,7 +1510,7 @@ Consider extracting lessons about:
 
     def handoff_get(self, handoff_id: str) -> Optional[Handoff]:
         """
-        Get a handoff by ID.
+        Get a handoff by ID (searches both regular and stealth files).
 
         Args:
             handoff_id: The handoff ID
@@ -1454,11 +1518,9 @@ Consider extracting lessons about:
         Returns:
             The Handoff object, or None if not found
         """
-        if not self.project_handoffs_file.exists():
-            return None
-
-        handoffs = self._parse_handoffs_file(self.project_handoffs_file)
-        for handoff in handoffs:
+        # Search all handoffs from both files
+        all_handoffs = self._load_all_handoffs()
+        for handoff in all_handoffs:
             if handoff.id == handoff_id:
                 return handoff
 
@@ -1475,7 +1537,7 @@ Consider extracting lessons about:
         include_completed: bool = False,
     ) -> List[Handoff]:
         """
-        List handoffs with optional filtering.
+        List handoffs with optional filtering (includes both regular and stealth).
 
         Args:
             status_filter: Filter by specific status
@@ -1484,10 +1546,8 @@ Consider extracting lessons about:
         Returns:
             List of matching handoffs
         """
-        if not self.project_handoffs_file.exists():
-            return []
-
-        handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        # Load all handoffs from both files
+        handoffs = self._load_all_handoffs()
 
         if status_filter:
             handoffs = [h for h in handoffs if h.status == status_filter]
@@ -1511,7 +1571,7 @@ Consider extracting lessons about:
         max_age_days: Optional[int] = None,
     ) -> List[Handoff]:
         """
-        List completed handoffs with hybrid visibility rules.
+        List completed handoffs with hybrid visibility rules (includes stealth).
 
         Uses OR logic: shows handoffs that are either:
         - Within the last max_count completions, OR
@@ -1529,10 +1589,8 @@ Consider extracting lessons about:
         if max_age_days is None:
             max_age_days = HANDOFF_MAX_AGE_DAYS
 
-        if not self.project_handoffs_file.exists():
-            return []
-
-        handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        # Load all handoffs from both files
+        handoffs = self._load_all_handoffs()
 
         # Filter to completed only
         completed = [h for h in handoffs if h.status == "completed"]
@@ -1599,7 +1657,7 @@ Consider extracting lessons about:
         lines = []
 
         # Calculate ready count for header
-        all_handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        all_handoffs = self._load_all_handoffs()
         ready_count = sum(
             1 for h in active_handoffs
             if self._is_handoff_ready(h, all_handoffs)
@@ -1927,7 +1985,7 @@ Consider extracting lessons about:
 
     def handoff_ready(self) -> List[Handoff]:
         """
-        Get list of handoffs that are ready to work on.
+        Get list of handoffs that are ready to work on (includes stealth).
 
         A handoff is ready if:
         - Its status is not 'completed', AND
@@ -1938,10 +1996,8 @@ Consider extracting lessons about:
             1. in_progress first (active work takes priority)
             2. Then by updated date (most recent first)
         """
-        if not self.project_handoffs_file.exists():
-            return []
-
-        all_handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+        # Load all handoffs from both files
+        all_handoffs = self._load_all_handoffs()
 
         ready = []
         for handoff in all_handoffs:

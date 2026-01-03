@@ -98,7 +98,9 @@ cp -r /path/to/coding-agent-lessons/adapters/opencode/* lessons-plugin/
 | Location | Purpose |
 |----------|---------|
 | `~/.claude/hooks/inject-hook.sh` | SessionStart hook |
-| `~/.claude/hooks/stop-hook.sh` | Stop hook |
+| `~/.claude/hooks/stop-hook.sh` | Stop hook - citation tracking |
+| `~/.claude/hooks/session-end-hook.sh` | Stop hook - handoff context capture |
+| `~/.claude/hooks/precompact-hook.sh` | PreCompact hook - handoff context before compaction |
 | `~/.claude/settings.json` | Claude Code configuration |
 
 ### Project Files
@@ -117,6 +119,8 @@ Repository (source)                  Installed (runtime)
 adapters/claude-code/            → ~/.claude/hooks/
   inject-hook.sh                     inject-hook.sh
   stop-hook.sh                       stop-hook.sh
+  session-end-hook.sh                session-end-hook.sh
+  precompact-hook.sh                 precompact-hook.sh
 
 core/                            → ~/.config/coding-agent-lessons/
   lessons_manager.py                 lessons_manager.py

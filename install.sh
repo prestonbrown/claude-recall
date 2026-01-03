@@ -193,6 +193,7 @@ install_claude() {
     cp "$SCRIPT_DIR/adapters/claude-code/smart-inject-hook.sh" "$hooks_dir/"
     cp "$SCRIPT_DIR/adapters/claude-code/stop-hook.sh" "$hooks_dir/"
     cp "$SCRIPT_DIR/adapters/claude-code/precompact-hook.sh" "$hooks_dir/"
+    cp "$SCRIPT_DIR/adapters/claude-code/session-end-hook.sh" "$hooks_dir/"
     chmod +x "$hooks_dir"/*.sh
     
     # Create /lessons command
@@ -229,7 +230,10 @@ EOF
       {"type": "command", "command": "bash '"$hooks_dir"'/smart-inject-hook.sh", "timeout": 15000},
       {"type": "command", "command": "~/.config/coding-agent-lessons/lesson-reminder-hook.sh", "timeout": 2000}
     ]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/stop-hook.sh", "timeout": 5000}]}],
+    "Stop": [{"hooks": [
+      {"type": "command", "command": "bash '"$hooks_dir"'/stop-hook.sh", "timeout": 5000},
+      {"type": "command", "command": "bash '"$hooks_dir"'/session-end-hook.sh", "timeout": 30000}
+    ]}],
     "PreCompact": [{"hooks": [{"type": "command", "command": "bash '"$hooks_dir"'/precompact-hook.sh", "timeout": 45000}]}]
   }
 }'
@@ -348,6 +352,7 @@ uninstall() {
     rm -f "$HOME/.claude/hooks/smart-inject-hook.sh"
     rm -f "$HOME/.claude/hooks/stop-hook.sh"
     rm -f "$HOME/.claude/hooks/precompact-hook.sh"
+    rm -f "$HOME/.claude/hooks/session-end-hook.sh"
     rm -f "$HOME/.claude/commands/lessons.md"
 
     # Selectively remove only lessons-related hooks from settings.json
@@ -374,7 +379,7 @@ uninstall() {
               else . end |
               if .Stop then
                 .Stop |= map(
-                  .hooks |= map(select(.command | contains("stop-hook.sh") | not))
+                  .hooks |= map(select(.command | (contains("stop-hook.sh") or contains("session-end-hook.sh")) | not))
                 ) | .Stop |= map(select(.hooks | length > 0))
               else . end |
               if .PreCompact then

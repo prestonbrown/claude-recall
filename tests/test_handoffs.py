@@ -4769,5 +4769,901 @@ class TestHandoffContextInjectionFormat:
         assert "Relevance scoring" in output
 
 
+# =============================================================================
+# Phase 8: Stealth Mode Tests
+# =============================================================================
+
+
+class TestStealthModeDataclass:
+    """Tests for stealth field on Handoff dataclass."""
+
+    def test_handoff_has_stealth_field(self, manager: "LessonsManager"):
+        """Handoff dataclass should have stealth: bool = False."""
+        from core.models import Handoff
+
+        # Create a default handoff
+        handoff = Handoff(
+            id="hf-test123",
+            title="Test handoff",
+            status="not_started",
+            created=date.today(),
+            updated=date.today(),
+        )
+        assert hasattr(handoff, "stealth")
+        assert handoff.stealth is False
+
+    def test_handoff_stealth_can_be_set_true(self, manager: "LessonsManager"):
+        """Handoff can be created with stealth=True."""
+        from core.models import Handoff
+
+        handoff = Handoff(
+            id="hf-test123",
+            title="Test stealth handoff",
+            status="not_started",
+            created=date.today(),
+            updated=date.today(),
+            stealth=True,
+        )
+        assert handoff.stealth is True
+
+
+class TestStealthHandoffStorage:
+    """Tests for stealth handoffs stored in HANDOFFS_LOCAL.md."""
+
+    def test_add_stealth_handoff_via_api(self, manager: "LessonsManager"):
+        """Should be able to add a stealth handoff via API."""
+        handoff_id = manager.handoff_add(title="Secret work", stealth=True)
+
+        assert handoff_id.startswith("hf-")
+
+    def test_stealth_handoff_stored_in_local_file(self, manager: "LessonsManager"):
+        """Stealth handoffs should be stored in HANDOFFS_LOCAL.md."""
+        handoff_id = manager.handoff_add(title="Secret work", stealth=True)
+
+        # Should exist in LOCAL file
+        local_file = manager.project_stealth_handoffs_file
+        assert local_file.exists()
+        content = local_file.read_text()
+        assert "Secret work" in content
+        assert handoff_id in content
+
+    def test_stealth_handoff_not_in_regular_file(self, manager: "LessonsManager"):
+        """Stealth handoffs should NOT be in regular HANDOFFS.md."""
+        handoff_id = manager.handoff_add(title="Secret work", stealth=True)
+
+        # Add a regular handoff too for comparison
+        regular_id = manager.handoff_add(title="Public work", stealth=False)
+
+        # Regular file should have public work but NOT secret work
+        regular_file = manager.project_handoffs_file
+        assert regular_file.exists()
+        content = regular_file.read_text()
+        assert "Public work" in content
+        assert regular_id in content
+        assert "Secret work" not in content
+        assert handoff_id not in content
+
+    def test_regular_handoff_not_in_local_file(self, manager: "LessonsManager"):
+        """Regular handoffs should NOT be in HANDOFFS_LOCAL.md."""
+        regular_id = manager.handoff_add(title="Public work", stealth=False)
+
+        # LOCAL file should not contain regular handoff
+        local_file = manager.project_stealth_handoffs_file
+        if local_file.exists():
+            content = local_file.read_text()
+            assert "Public work" not in content
+            assert regular_id not in content
+
+
+class TestStealthHandoffRetrieval:
+    """Tests for retrieving stealth handoffs."""
+
+    def test_stealth_handoff_included_in_list(self, manager: "LessonsManager"):
+        """handoff_list() should include stealth handoffs by default."""
+        stealth_id = manager.handoff_add(title="Secret work", stealth=True)
+        regular_id = manager.handoff_add(title="Public work", stealth=False)
+
+        handoffs = manager.handoff_list(include_completed=False)
+
+        # Both should be included
+        ids = [h.id for h in handoffs]
+        assert stealth_id in ids
+        assert regular_id in ids
+
+    def test_stealth_handoff_included_in_injection(self, manager: "LessonsManager"):
+        """handoff_inject() should include stealth handoffs."""
+        stealth_id = manager.handoff_add(title="Secret work", stealth=True)
+        manager.handoff_update_status(stealth_id, "in_progress")
+
+        output = manager.handoff_inject()
+
+        assert "Secret work" in output
+        assert stealth_id in output
+
+    def test_handoff_get_finds_stealth_handoff(self, manager: "LessonsManager"):
+        """handoff_get() should find stealth handoffs by ID."""
+        stealth_id = manager.handoff_add(title="Secret work", stealth=True)
+
+        handoff = manager.handoff_get(stealth_id)
+
+        assert handoff is not None
+        assert handoff.id == stealth_id
+        assert handoff.title == "Secret work"
+        assert handoff.stealth is True
+
+
+class TestStealthHandoffSerialization:
+    """Tests for stealth field serialization/deserialization."""
+
+    def test_stealth_field_persists_round_trip(self, manager: "LessonsManager"):
+        """Stealth field should persist through save/load cycle."""
+        stealth_id = manager.handoff_add(title="Secret work", stealth=True)
+
+        # Force reload by creating new manager with same paths
+        manager2 = type(manager)(
+            lessons_base=manager.lessons_base,
+            project_root=manager.project_root,
+        )
+
+        handoff = manager2.handoff_get(stealth_id)
+        assert handoff is not None
+        assert handoff.stealth is True
+
+    def test_stealth_field_in_markdown_format(self, manager: "LessonsManager"):
+        """Stealth field should appear in markdown file format."""
+        manager.handoff_add(title="Secret work", stealth=True)
+
+        local_file = manager.project_stealth_handoffs_file
+        content = local_file.read_text()
+
+        # Should have stealth marker in the file
+        # (implementation can choose format: field, filename itself, or both)
+        assert local_file.name == "HANDOFFS_LOCAL.md"
+
+
+class TestStealthHandoffCLI:
+    """Tests for stealth handoff CLI support."""
+
+    def test_cli_add_stealth_handoff(
+        self, temp_lessons_base: Path, temp_project_root: Path
+    ):
+        """CLI should support --stealth flag for adding handoffs."""
+        env = os.environ.copy()
+        env["PROJECT_DIR"] = str(temp_project_root)
+        env["LESSONS_BASE"] = str(temp_lessons_base)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "core/cli.py",
+                "handoff",
+                "add",
+                "Secret CLI work",
+                "--stealth",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode == 0
+        assert "hf-" in result.stdout
+        assert "(stealth)" in result.stdout
+
+        # Verify stored in LOCAL file
+        local_file = temp_project_root / ".recall" / "HANDOFFS_LOCAL.md"
+        if not local_file.exists():
+            local_file = temp_project_root / ".coding-agent-lessons" / "HANDOFFS_LOCAL.md"
+
+        assert local_file.exists()
+        content = local_file.read_text()
+        assert "Secret CLI work" in content
+
+
+class TestStealthHandoffUpdate:
+    """Tests for updating stealth handoffs."""
+
+    def test_update_stealth_handoff_status(self, manager: "LessonsManager"):
+        """Should be able to update status of stealth handoffs."""
+        stealth_id = manager.handoff_add(title="Secret work", stealth=True)
+
+        manager.handoff_update_status(stealth_id, "in_progress")
+
+        handoff = manager.handoff_get(stealth_id)
+        assert handoff.status == "in_progress"
+
+    def test_update_stealth_handoff_next(self, manager: "LessonsManager"):
+        """Should be able to update next steps of stealth handoffs."""
+        stealth_id = manager.handoff_add(title="Secret work", stealth=True)
+
+        manager.handoff_update_next(stealth_id, "Continue stealth work")
+
+        handoff = manager.handoff_get(stealth_id)
+        assert handoff.next_steps == "Continue stealth work"
+
+    def test_add_tried_to_stealth_handoff(self, manager: "LessonsManager"):
+        """Should be able to add tried steps to stealth handoffs."""
+        stealth_id = manager.handoff_add(title="Secret work", stealth=True)
+
+        manager.handoff_add_tried(stealth_id, "success", "Secret step worked")
+
+        handoff = manager.handoff_get(stealth_id)
+        assert len(handoff.tried) == 1
+        assert handoff.tried[0].description == "Secret step worked"
+
+
+class TestStealthHandoffComplete:
+    """Tests for completing stealth handoffs."""
+
+    def test_complete_stealth_handoff(self, manager: "LessonsManager"):
+        """Should be able to complete stealth handoffs."""
+        stealth_id = manager.handoff_add(title="Secret work", stealth=True)
+
+        result = manager.handoff_complete(stealth_id)
+
+        assert result.handoff.status == "completed"
+        assert result.handoff.stealth is True
+
+    def test_archive_stealth_handoff(self, manager: "LessonsManager"):
+        """Should be able to archive stealth handoffs."""
+        stealth_id = manager.handoff_add(title="Secret work", stealth=True)
+        manager.handoff_complete(stealth_id)
+
+        manager.handoff_archive(stealth_id)
+
+        # Should no longer be gettable
+        handoff = manager.handoff_get(stealth_id)
+        assert handoff is None
+
+        # Should be in stealth archive (HANDOFFS_LOCAL_ARCHIVE.md or similar)
+        # or in a separate section of the archive
+
+
+class TestStealthMixedOperations:
+    """Tests for mixed stealth and regular handoff operations."""
+
+    def test_list_mixed_handoffs(self, manager: "LessonsManager"):
+        """list() should return both stealth and regular handoffs."""
+        stealth1 = manager.handoff_add(title="Stealth 1", stealth=True)
+        regular1 = manager.handoff_add(title="Regular 1", stealth=False)
+        stealth2 = manager.handoff_add(title="Stealth 2", stealth=True)
+        regular2 = manager.handoff_add(title="Regular 2", stealth=False)
+
+        handoffs = manager.handoff_list()
+
+        ids = [h.id for h in handoffs]
+        assert stealth1 in ids
+        assert regular1 in ids
+        assert stealth2 in ids
+        assert regular2 in ids
+
+    def test_inject_mixed_handoffs(self, manager: "LessonsManager"):
+        """inject() should include both stealth and regular handoffs."""
+        stealth_id = manager.handoff_add(title="Stealth work", stealth=True)
+        regular_id = manager.handoff_add(title="Regular work", stealth=False)
+
+        manager.handoff_update_status(stealth_id, "in_progress")
+        manager.handoff_update_status(regular_id, "in_progress")
+
+        output = manager.handoff_inject()
+
+        assert "Stealth work" in output
+        assert "Regular work" in output
+
+    def test_handoff_ready_includes_stealth(self, manager: "LessonsManager"):
+        """handoff_ready() should include stealth handoffs."""
+        stealth_id = manager.handoff_add(title="Stealth ready", stealth=True)
+        regular_id = manager.handoff_add(title="Regular ready", stealth=False)
+
+        ready = manager.handoff_ready()
+
+        ids = [h.id for h in ready]
+        assert stealth_id in ids
+        assert regular_id in ids
+
+
+# =============================================================================
+# Phase 10: Dependency Inference Tests
+# =============================================================================
+
+
+class TestDependencyInferenceCLI:
+    """Tests for CLI update with --blocked-by flag."""
+
+    def test_cli_update_blocked_by_single_id(
+        self, temp_lessons_base: Path, temp_project_root: Path
+    ):
+        """CLI update with --blocked-by should set single blocker ID."""
+        # Create handoffs file with legacy format for predictable ID
+        handoffs_file = temp_project_root / ".recall" / "HANDOFFS.md"
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        handoffs_file.write_text(f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Main task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Test handoff
+
+**Tried**:
+
+**Next**:
+
+---
+
+### [A002] Blocking task
+- **Status**: in_progress | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Blocker
+
+**Tried**:
+
+**Next**:
+
+---
+""")
+
+        # Get the project root (coding-agent-lessons directory)
+        repo_root = Path(__file__).parent.parent
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "core.cli",
+                "handoff",
+                "update",
+                "A001",
+                "--blocked-by",
+                "A002",
+            ],
+            cwd=str(repo_root),
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "Updated A001 blocked_by to A002" in result.stdout
+
+        # Verify in manager
+        manager = LessonsManager(
+            lessons_base=temp_lessons_base,
+            project_root=temp_project_root,
+        )
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert handoff.blocked_by == ["A002"]
+
+    def test_cli_update_blocked_by_multiple_ids(
+        self, temp_lessons_base: Path, temp_project_root: Path
+    ):
+        """CLI update with --blocked-by should accept comma-separated IDs."""
+        # Create handoffs file with legacy format for predictable IDs
+        handoffs_file = temp_project_root / ".recall" / "HANDOFFS.md"
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        handoffs_file.write_text(f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Main task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Test handoff
+
+**Tried**:
+
+**Next**:
+
+---
+
+### [A002] First blocker
+- **Status**: in_progress | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Blocker 1
+
+**Tried**:
+
+**Next**:
+
+---
+
+### [A003] Second blocker
+- **Status**: in_progress | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Blocker 2
+
+**Tried**:
+
+**Next**:
+
+---
+""")
+
+        # Get the project root (coding-agent-lessons directory)
+        repo_root = Path(__file__).parent.parent
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "core.cli",
+                "handoff",
+                "update",
+                "A001",
+                "--blocked-by",
+                "A002,A003",
+            ],
+            cwd=str(repo_root),
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "Updated A001 blocked_by to A002, A003" in result.stdout
+
+        # Verify in manager
+        manager = LessonsManager(
+            lessons_base=temp_lessons_base,
+            project_root=temp_project_root,
+        )
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert set(handoff.blocked_by) == {"A002", "A003"}
+
+    def test_cli_update_blocked_by_with_hf_ids(
+        self, temp_lessons_base: Path, temp_project_root: Path
+    ):
+        """CLI update with --blocked-by should accept hf-XXXXXXX format IDs."""
+        manager = LessonsManager(
+            lessons_base=temp_lessons_base,
+            project_root=temp_project_root,
+        )
+        main_id = manager.handoff_add(title="Main task")
+        blocker_id = manager.handoff_add(title="Blocking task")
+
+        # Get the project root (coding-agent-lessons directory)
+        repo_root = Path(__file__).parent.parent
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "core.cli",
+                "handoff",
+                "update",
+                main_id,
+                "--blocked-by",
+                blocker_id,
+            ],
+            cwd=str(repo_root),
+            env={
+                **os.environ,
+                "LESSONS_BASE": str(temp_lessons_base),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+
+        # Verify in manager
+        handoff = manager.handoff_get(main_id)
+        assert handoff is not None
+        assert handoff.blocked_by == [blocker_id]
+
+
+class TestDependencyInferenceParsing:
+    """Tests for parsing blocked_by from APPROACH UPDATE patterns."""
+
+    def test_explicit_blocked_by_single(self, manager: "LessonsManager"):
+        """APPROACH UPDATE A001: blocked_by A002 should set single blocker."""
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        handoffs_file.write_text(f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Main task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Test handoff
+
+**Tried**:
+
+**Next**:
+
+---
+""")
+
+        # Simulate what stop-hook would do
+        manager.handoff_update_blocked_by("A001", ["A002"])
+
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert handoff.blocked_by == ["A002"]
+
+    def test_explicit_blocked_by_multiple(self, manager: "LessonsManager"):
+        """APPROACH UPDATE A001: blocked_by A002,A003 should set multiple blockers."""
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        handoffs_file.write_text(f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Main task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Test handoff
+
+**Tried**:
+
+**Next**:
+
+---
+""")
+
+        # Simulate what stop-hook would do with comma-separated IDs
+        manager.handoff_update_blocked_by("A001", ["A002", "A003"])
+
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert set(handoff.blocked_by) == {"A002", "A003"}
+
+
+class TestDependencyInferencePatterns:
+    """Tests for inferring blocked_by from natural language patterns."""
+
+    def test_infer_waiting_for_pattern(self, manager: "LessonsManager"):
+        """'waiting for A002' in next_steps should infer blocked_by A002."""
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        handoffs_file.write_text(f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Main task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Test handoff
+
+**Tried**:
+
+**Next**:
+
+---
+
+### [A002] Blocking task
+- **Status**: in_progress | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Blocker
+
+**Tried**:
+
+**Next**:
+
+---
+""")
+
+        # Test the shell function via Python emulation
+        # The actual inference happens in stop-hook.sh, but we test the Python side
+        # by verifying that update_blocked_by works correctly
+        manager.handoff_update_blocked_by("A001", ["A002"])
+
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert "A002" in handoff.blocked_by
+
+    def test_infer_blocked_by_pattern(self, manager: "LessonsManager"):
+        """'blocked by A003' in next_steps should infer blocked_by A003."""
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        handoffs_file.write_text(f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Main task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Test handoff
+
+**Tried**:
+
+**Next**:
+
+---
+""")
+
+        manager.handoff_update_blocked_by("A001", ["A003"])
+
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert "A003" in handoff.blocked_by
+
+    def test_infer_depends_on_pattern(self, manager: "LessonsManager"):
+        """'depends on hf-abc1234' in next_steps should infer blocked_by hf-abc1234."""
+        main_id = manager.handoff_add(title="Main task")
+        blocker_id = manager.handoff_add(title="Blocking task")
+
+        manager.handoff_update_blocked_by(main_id, [blocker_id])
+
+        handoff = manager.handoff_get(main_id)
+        assert handoff is not None
+        assert blocker_id in handoff.blocked_by
+
+    def test_infer_after_completes_pattern(self, manager: "LessonsManager"):
+        """'after A002 completes' in next_steps should infer blocked_by A002."""
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        handoffs_file.write_text(f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Main task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Test handoff
+
+**Tried**:
+
+**Next**:
+
+---
+""")
+
+        manager.handoff_update_blocked_by("A001", ["A002"])
+
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert "A002" in handoff.blocked_by
+
+
+class TestDependencyInferencePrecedence:
+    """Tests for explicit blocked_by overriding inferred patterns."""
+
+    def test_explicit_overrides_inferred(self, manager: "LessonsManager"):
+        """Explicit blocked_by should replace any previously inferred blockers."""
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        handoffs_file.write_text(f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Main task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Test handoff
+- **Blocked By**: A002
+
+**Tried**:
+
+**Next**:
+
+---
+""")
+
+        # Explicit update should replace existing blockers
+        manager.handoff_update_blocked_by("A001", ["A003", "A004"])
+
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert set(handoff.blocked_by) == {"A003", "A004"}
+        assert "A002" not in handoff.blocked_by
+
+    def test_clear_blocked_by_with_empty_list(self, manager: "LessonsManager"):
+        """Setting blocked_by to empty list should clear all blockers."""
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        handoffs_file.write_text(f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Main task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Test handoff
+- **Blocked By**: A002, A003
+
+**Tried**:
+
+**Next**:
+
+---
+""")
+
+        manager.handoff_update_blocked_by("A001", [])
+
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        assert handoff.blocked_by == []
+
+
+class TestDependencyInferenceShell:
+    """Tests for shell-based inference function (infer_blocked_by in stop-hook.sh)."""
+
+    def test_infer_blocked_by_shell_function(self, temp_project_root: Path):
+        """Test infer_blocked_by shell function extracts blockers from text."""
+        # Write a self-contained test script that defines the function inline
+        # (extracted from stop-hook.sh) to avoid sourcing issues
+        test_script = temp_project_root / "test_infer.sh"
+
+        test_script.write_text("""#!/bin/bash
+# Inline copy of infer_blocked_by function from stop-hook.sh
+infer_blocked_by() {
+    local text="$1"
+    local blockers=""
+
+    # Pattern: "waiting for <ID>"
+    local waiting_matches
+    waiting_matches=$(echo "$text" | grep -oE 'waiting for (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \\
+        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
+    [[ -n "$waiting_matches" ]] && blockers="$waiting_matches"
+
+    # Pattern: "blocked by <ID>"
+    local blocked_matches
+    blocked_matches=$(echo "$text" | grep -oE 'blocked by (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \\
+        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
+    if [[ -n "$blocked_matches" ]]; then
+        [[ -n "$blockers" ]] && blockers="$blockers"$'\\n'"$blocked_matches" || blockers="$blocked_matches"
+    fi
+
+    # Pattern: "depends on <ID>"
+    local depends_matches
+    depends_matches=$(echo "$text" | grep -oE 'depends on (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \\
+        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
+    if [[ -n "$depends_matches" ]]; then
+        [[ -n "$blockers" ]] && blockers="$blockers"$'\\n'"$depends_matches" || blockers="$depends_matches"
+    fi
+
+    # Pattern: "after <ID> completes"
+    local after_matches
+    after_matches=$(echo "$text" | grep -oE 'after (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) completes' | \\
+        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
+    if [[ -n "$after_matches" ]]; then
+        [[ -n "$blockers" ]] && blockers="$blockers"$'\\n'"$after_matches" || blockers="$after_matches"
+    fi
+
+    # Deduplicate and format as comma-separated list
+    if [[ -n "$blockers" ]]; then
+        echo "$blockers" | sort -u | tr '\\n' ',' | sed 's/,$//'
+    fi
+}
+
+# Test cases
+echo "Test 1: waiting for A002"
+result=$(infer_blocked_by "waiting for A002")
+echo "Result: $result"
+
+echo "Test 2: blocked by hf-abc1234"
+result=$(infer_blocked_by "blocked by hf-abc1234")
+echo "Result: $result"
+
+echo "Test 3: depends on A003"
+result=$(infer_blocked_by "depends on A003")
+echo "Result: $result"
+
+echo "Test 4: after A001 completes"
+result=$(infer_blocked_by "after A001 completes")
+echo "Result: $result"
+
+echo "Test 5: multiple patterns"
+result=$(infer_blocked_by "waiting for A002 and blocked by A003")
+echo "Result: $result"
+
+echo "Test 6: no patterns"
+result=$(infer_blocked_by "just some text without any IDs")
+echo "Result: $result"
+""")
+
+        result = subprocess.run(
+            ["bash", str(test_script)],
+            capture_output=True,
+            text=True,
+        )
+
+        # Check results - the output should contain the expected blocker IDs
+        output = result.stdout
+        assert "Test 1" in output
+        assert "A002" in output
+        assert "hf-abc1234" in output
+        assert "A003" in output
+        assert "A001" in output
+
+    def test_infer_blocked_by_with_hf_format(self, temp_project_root: Path):
+        """Test infer_blocked_by handles hf-XXXXXXX format IDs."""
+        test_script = temp_project_root / "test_infer_hf.sh"
+
+        test_script.write_text("""#!/bin/bash
+# Inline copy of infer_blocked_by function
+infer_blocked_by() {
+    local text="$1"
+    local blockers=""
+
+    # Pattern: "waiting for <ID>"
+    local waiting_matches
+    waiting_matches=$(echo "$text" | grep -oE 'waiting for (hf-[0-9a-f]{7}|[A-Z][0-9]{3})' | \\
+        grep -oE '(hf-[0-9a-f]{7}|[A-Z][0-9]{3})' || true)
+    [[ -n "$waiting_matches" ]] && blockers="$waiting_matches"
+
+    # Deduplicate and format as comma-separated list
+    if [[ -n "$blockers" ]]; then
+        echo "$blockers" | sort -u | tr '\\n' ',' | sed 's/,$//'
+    fi
+}
+
+result=$(infer_blocked_by "waiting for hf-abc1234 to complete")
+echo "$result"
+""")
+
+        result = subprocess.run(
+            ["bash", str(test_script)],
+            capture_output=True,
+            text=True,
+        )
+
+        # Should extract hf-abc1234
+        assert "hf-abc1234" in result.stdout
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

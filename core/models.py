@@ -282,6 +282,7 @@ class Handoff:
     last_session: Optional[date] = None  # When checkpoint was last updated
     handoff: Optional["HandoffContext"] = None  # Rich context for session handoffs
     blocked_by: List[str] = field(default_factory=list)  # IDs of blocking handoffs
+    stealth: bool = False  # If True, stored in HANDOFFS_LOCAL.md (not committed to git)
 
     # Backward compatibility: 'files' is an alias for 'refs'
     @property
