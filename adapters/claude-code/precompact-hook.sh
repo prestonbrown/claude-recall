@@ -11,6 +11,9 @@
 
 set -uo pipefail
 
+# Guard against recursive calls from Haiku subprocesses
+[[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
+
 # Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
 CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
 CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
@@ -105,7 +108,7 @@ Conversation:
 
     # Call claude in programmatic mode with haiku
     local result
-    result=$(echo "$prompt" | timeout "$CLAUDE_TIMEOUT" claude -p --model haiku 2>/dev/null) || return 1
+    result=$(echo "$prompt" | LESSONS_SCORING_ACTIVE=1 timeout "$CLAUDE_TIMEOUT" claude -p --model haiku 2>/dev/null) || return 1
 
     # Validate we got something useful
     [[ -z "$result" ]] && return 1
@@ -136,7 +139,7 @@ $messages"
 
     # Call claude in programmatic mode with haiku
     local result
-    result=$(echo "$prompt" | timeout "$CLAUDE_TIMEOUT" claude -p --model haiku 2>/dev/null) || return 1
+    result=$(echo "$prompt" | LESSONS_SCORING_ACTIVE=1 timeout "$CLAUDE_TIMEOUT" claude -p --model haiku 2>/dev/null) || return 1
 
     # Validate we got something useful
     [[ -z "$result" ]] && return 1

@@ -70,8 +70,10 @@ score_and_format_lessons() {
     local cwd="$2"
 
     # Call the Python score-relevance command
+    # Export LESSONS_SCORING_ACTIVE so Python can inherit it and pass to Haiku subprocess
     local result
     result=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+        LESSONS_SCORING_ACTIVE=1 \
         timeout "$RELEVANCE_TIMEOUT" \
         python3 "$PYTHON_MANAGER" score-relevance "$prompt" \
             --top "$TOP_LESSONS" \
