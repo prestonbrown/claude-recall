@@ -3744,5 +3744,152 @@ class TestHashBasedIds:
         assert new_id in handoff.blocked_by
 
 
+# =============================================================================
+# File References (Phase 3) - path:line format
+# =============================================================================
+
+
+class TestFileReferences:
+    """Tests for file:line references in handoffs."""
+
+    def test_handoff_refs_field(self, manager: "LessonsManager"):
+        """Handoff should have refs field (list of str) for file:line references."""
+        handoff_id = manager.handoff_add(
+            title="Test refs field",
+            refs=["core/handoffs.py:142", "core/models.py:50-75"],
+        )
+
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff is not None
+        assert hasattr(handoff, "refs")
+        assert handoff.refs == ["core/handoffs.py:142", "core/models.py:50-75"]
+
+    def test_ref_format_path_line(self, manager: "LessonsManager"):
+        """Should validate path:line format (e.g., file.py:42)."""
+        from core.handoffs import _validate_ref
+
+        assert _validate_ref("core/handoffs.py:142") is True
+        assert _validate_ref("src/main.ts:1") is True
+        assert _validate_ref("file.py:999") is True
+        assert _validate_ref("deep/nested/path/file.go:50") is True
+
+        # Invalid formats
+        assert _validate_ref("just/a/path.py") is False  # No line number
+        assert _validate_ref("file.py:") is False  # Empty line number
+        assert _validate_ref(":42") is False  # No path
+        assert _validate_ref("file.py:abc") is False  # Non-numeric line
+
+    def test_ref_format_path_range(self, manager: "LessonsManager"):
+        """Should validate path:start-end format (e.g., file.py:50-75)."""
+        from core.handoffs import _validate_ref
+
+        assert _validate_ref("core/models.py:50-75") is True
+        assert _validate_ref("file.ts:1-100") is True
+        assert _validate_ref("deep/path/file.go:10-20") is True
+
+        # Invalid range formats
+        assert _validate_ref("file.py:50-") is False  # Missing end
+        assert _validate_ref("file.py:-75") is False  # Missing start
+        assert _validate_ref("file.py:50-75-100") is False  # Too many parts
+
+    def test_refs_serialize_to_markdown(self, manager: "LessonsManager"):
+        """refs field should serialize to markdown as - **Refs**: ..."""
+        handoff_id = manager.handoff_add(
+            title="Test refs serialization",
+            refs=["handoffs.py:142", "models.py:50-75"],
+        )
+
+        # Read file content
+        content = manager.project_handoffs_file.read_text()
+
+        # Should use **Refs** format with pipe separator
+        assert "- **Refs**: handoffs.py:142 | models.py:50-75" in content
+
+    def test_refs_parse_from_markdown(self, manager: "LessonsManager"):
+        """Should parse refs from - **Refs**: ... markdown format."""
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+
+        today = date.today().isoformat()
+        content = f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [hf-abc1234] Test parsing refs
+- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**: core/handoffs.py:142 | core/models.py:50-75 | tests/test.py:10
+- **Description**: Testing refs parsing
+
+**Tried**:
+
+**Next**:
+
+---
+"""
+        handoffs_file.write_text(content)
+
+        handoff = manager.handoff_get("hf-abc1234")
+        assert handoff is not None
+        assert handoff.refs == ["core/handoffs.py:142", "core/models.py:50-75", "tests/test.py:10"]
+
+    def test_files_alias_for_refs(self, manager: "LessonsManager"):
+        """Old 'files' attribute should still work as alias for 'refs'."""
+        handoff_id = manager.handoff_add(
+            title="Test backward compat",
+            refs=["core/main.py:100"],
+        )
+
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff is not None
+
+        # Both refs and files should return same data
+        assert handoff.refs == ["core/main.py:100"]
+        assert handoff.files == ["core/main.py:100"]
+
+        # Setting via files should also work
+        manager.handoff_update_files(handoff_id, ["new/path.py:50"])
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.refs == ["new/path.py:50"]
+        assert handoff.files == ["new/path.py:50"]
+
+    def test_old_files_format_parsed(self, manager: "LessonsManager"):
+        """Old - **Files**: format should still be parsed for backward compat."""
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+
+        today = date.today().isoformat()
+        old_format_content = f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work with tried steps and next steps.
+> When completed, review for lessons to extract.
+
+## Active Handoffs
+
+### [A001] Legacy with old Files format
+- **Status**: in_progress | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Files**: src/main.py, src/utils.py
+- **Description**: Old format still works
+
+**Tried**:
+
+**Next**:
+
+---
+"""
+        handoffs_file.write_text(old_format_content)
+
+        handoff = manager.handoff_get("A001")
+        assert handoff is not None
+        # Old files should be available via refs
+        assert handoff.refs == ["src/main.py", "src/utils.py"]
+        # And via files alias
+        assert handoff.files == ["src/main.py", "src/utils.py"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

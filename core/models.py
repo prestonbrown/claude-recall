@@ -276,12 +276,23 @@ class Handoff:
     next_steps: str = ""
     phase: str = "research"  # research|planning|implementing|review
     agent: str = "user"  # explore|general-purpose|plan|review|user
-    files: List[str] = field(default_factory=list)
+    refs: List[str] = field(default_factory=list)  # file:line refs (e.g., "core/main.py:50")
     tried: List[TriedStep] = field(default_factory=list)
     checkpoint: str = ""  # Progress summary from PreCompact hook (legacy, use handoff instead)
     last_session: Optional[date] = None  # When checkpoint was last updated
     handoff: Optional["HandoffContext"] = None  # Rich context for session handoffs
     blocked_by: List[str] = field(default_factory=list)  # IDs of blocking handoffs
+
+    # Backward compatibility: 'files' is an alias for 'refs'
+    @property
+    def files(self) -> List[str]:
+        """Backward compatibility alias for refs."""
+        return self.refs
+
+    @files.setter
+    def files(self, value: List[str]) -> None:
+        """Backward compatibility setter for refs."""
+        self.refs = value
 
 
 # Backward compatibility alias

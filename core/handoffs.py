@@ -72,6 +72,26 @@ def _get_legacy_dir() -> str:
     return ".coding-agent-lessons"
 
 
+def _validate_ref(ref: str) -> bool:
+    """
+    Validate file:line or file:start-end reference format.
+
+    Valid formats:
+    - path/to/file.py:42        (single line)
+    - path/to/file.py:50-75     (line range)
+
+    Args:
+        ref: Reference string to validate
+
+    Returns:
+        True if valid format, False otherwise
+    """
+    # Pattern: path:line or path:start-end
+    # Path must have at least one character, line must be digits, optional -end
+    pattern = r'^[^\s:]+:\d+(-\d+)?$'
+    return bool(re.match(pattern, ref))
+
+
 class HandoffsMixin:
     """
     Mixin containing handoff-related methods.
@@ -200,7 +220,9 @@ class HandoffsMixin:
             r"^\s*-\s*\*\*Created\*\*:\s*(\d{4}-\d{2}-\d{2})"
             r"\s*\|\s*\*\*Updated\*\*:\s*(\d{4}-\d{2}-\d{2})"
         )
-        # Pattern for files line: - **Files**: file1, file2
+        # Pattern for refs line: - **Refs**: file:line | file:line (new format, pipe-separated)
+        refs_pattern = re.compile(r"^\s*-\s*\*\*Refs\*\*:\s*(.*)$")
+        # Pattern for files line: - **Files**: file1, file2 (legacy format, comma-separated)
         files_pattern = re.compile(r"^\s*-\s*\*\*Files\*\*:\s*(.*)$")
         # Pattern for description line: - **Description**: desc
         desc_pattern = re.compile(r"^\s*-\s*\*\*Description\*\*:\s*(.*)$")
@@ -266,14 +288,22 @@ class HandoffsMixin:
                 # Malformed - skip this handoff
                 continue
 
-            # Parse files line
-            files = []
+            # Parse refs/files line - try new Refs format first, then legacy Files format
+            refs = []
             if idx < len(lines):
+                refs_match = refs_pattern.match(lines[idx])
                 files_match = files_pattern.match(lines[idx])
-                if files_match:
+                if refs_match:
+                    # New format: pipe-separated refs
+                    refs_str = refs_match.group(1).strip()
+                    if refs_str:
+                        refs = [r.strip() for r in refs_str.split("|") if r.strip()]
+                    idx += 1
+                elif files_match:
+                    # Legacy format: comma-separated files
                     files_str = files_match.group(1).strip()
                     if files_str:
-                        files = [f.strip() for f in files_str.split(",") if f.strip()]
+                        refs = [f.strip() for f in files_str.split(",") if f.strip()]
                     idx += 1
 
             # Parse description line
@@ -409,7 +439,7 @@ class HandoffsMixin:
                 status=status,
                 created=created,
                 updated=updated,
-                files=files,
+                refs=refs,
                 description=description,
                 tried=tried,
                 next_steps=next_steps,
@@ -434,7 +464,7 @@ class HandoffsMixin:
             f"### [{handoff.id}] {handoff.title}",
             f"- **Status**: {handoff.status} | **Phase**: {handoff.phase} | **Agent**: {handoff.agent}",
             f"- **Created**: {handoff.created.isoformat()} | **Updated**: {handoff.updated.isoformat()}",
-            f"- **Files**: {', '.join(handoff.files)}",
+            f"- **Refs**: {' | '.join(handoff.refs)}",
             f"- **Description**: {handoff.description}",
         ]
 
@@ -549,6 +579,7 @@ class HandoffsMixin:
         title: str,
         desc: Optional[str] = None,
         files: Optional[List[str]] = None,
+        refs: Optional[List[str]] = None,
         phase: str = "research",
         agent: str = "user",
     ) -> str:
@@ -558,7 +589,8 @@ class HandoffsMixin:
         Args:
             title: Handoff title
             desc: Optional description
-            files: Optional list of files
+            files: Optional list of files (deprecated, use refs)
+            refs: Optional list of file:line refs (e.g., ["core/main.py:50"])
             phase: Initial phase (research, planning, implementing, review)
             agent: Agent working on this (explore, general-purpose, plan, review, user)
 
@@ -573,6 +605,9 @@ class HandoffsMixin:
         if agent not in self.VALID_AGENTS:
             raise ValueError(f"Invalid agent: {agent}")
 
+        # refs takes precedence, files is for backward compat
+        ref_list = refs if refs is not None else (files or [])
+
         self._init_handoffs_file()
 
         with FileLock(self.project_handoffs_file):
@@ -586,7 +621,7 @@ class HandoffsMixin:
                 status="not_started",
                 created=today,
                 updated=today,
-                files=files or [],
+                refs=ref_list,
                 description=desc or "",
                 tried=[],
                 next_steps="",
@@ -614,11 +649,12 @@ class HandoffsMixin:
         title: str,
         desc: Optional[str] = None,
         files: Optional[List[str]] = None,
+        refs: Optional[List[str]] = None,
         phase: str = "research",
         agent: str = "user",
     ) -> str:
         """Backward compatibility alias for handoff_add."""
-        return self.handoff_add(title=title, desc=desc, files=files, phase=phase, agent=agent)
+        return self.handoff_add(title=title, desc=desc, files=files, refs=refs, phase=phase, agent=agent)
 
     def handoff_update_status(self, handoff_id: str, status: str) -> None:
         """
@@ -965,13 +1001,13 @@ class HandoffsMixin:
         """Backward compatibility alias for handoff_update_next."""
         return self.handoff_update_next(approach_id, text)
 
-    def handoff_update_files(self, handoff_id: str, files_list: List[str]) -> None:
+    def handoff_update_refs(self, handoff_id: str, refs_list: List[str]) -> None:
         """
-        Update a handoff's file list.
+        Update a handoff's refs list.
 
         Args:
             handoff_id: The handoff ID
-            files_list: List of files
+            refs_list: List of file:line refs
 
         Raises:
             ValueError: If handoff not found
@@ -982,7 +1018,7 @@ class HandoffsMixin:
             found = False
             for handoff in handoffs:
                 if handoff.id == handoff_id:
-                    handoff.files = files_list
+                    handoff.refs = refs_list
                     handoff.updated = date.today()
                     found = True
                     break
@@ -991,6 +1027,19 @@ class HandoffsMixin:
                 raise ValueError(f"Handoff {handoff_id} not found")
 
             self._write_handoffs_file(handoffs)
+
+    def handoff_update_files(self, handoff_id: str, files_list: List[str]) -> None:
+        """
+        Update a handoff's file list (deprecated, use handoff_update_refs).
+
+        Args:
+            handoff_id: The handoff ID
+            files_list: List of files/refs
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        return self.handoff_update_refs(handoff_id, files_list)
 
     # Backward compatibility alias
     def approach_update_files(self, approach_id: str, files_list: List[str]) -> None:
@@ -1575,13 +1624,13 @@ Consider extracting lessons about:
 
                 lines.append(f"- **Status**: {status_str} | **Phase**: {handoff.phase} | **Last**: {time_str}")
 
-                # Compact files display (first 3 + count)
-                if handoff.files:
-                    if len(handoff.files) <= 3:
-                        files_str = ", ".join(handoff.files)
+                # Compact refs display (first 3 + count) with pipe separator
+                if handoff.refs:
+                    if len(handoff.refs) <= 3:
+                        refs_str = " | ".join(handoff.refs)
                     else:
-                        files_str = ", ".join(handoff.files[:3]) + f" (+{len(handoff.files) - 3} more)"
-                    lines.append(f"- **Files**: {files_str}")
+                        refs_str = " | ".join(handoff.refs[:3]) + f" (+{len(handoff.refs) - 3} more)"
+                    lines.append(f"- **Refs**: {refs_str}")
 
                 # Compact tried steps summary (not full list)
                 if handoff.tried:
