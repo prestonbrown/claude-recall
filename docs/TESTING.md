@@ -8,14 +8,14 @@ The test suite uses **pytest** with Python's standard library. Tests are organiz
 
 ```
 tests/
-├── test_lessons_manager.py   # Core lessons + CLI (136 tests)
-└── test_handoffs.py          # Handoffs system (139 tests)
+├── test_lessons_manager.py   # Core lessons + CLI (400+ tests)
+└── test_handoffs.py          # Handoffs system
 ```
 
 ## Running Tests
 
 ```bash
-# Run all tests (275 tests)
+# Run all tests (400+ tests)
 python3 -m pytest tests/ -v
 
 # Run with coverage
@@ -395,14 +395,14 @@ manager.add_lesson("pattern", "Title", "Content")  # TypeError!
 
 | Component | Development Path | Installed Path |
 |-----------|-----------------|----------------|
-| Python manager | `core/lessons_manager.py` | `~/.config/coding-agent-lessons/lessons_manager.py` |
+| Python CLI | `core/cli.py` | `~/.config/coding-agent-lessons/cli.py` |
 | Debug logger | `core/debug_logger.py` | `~/.config/coding-agent-lessons/debug_logger.py` |
 | Bash wrapper | `core/lessons-manager.sh` | `~/.config/coding-agent-lessons/lessons-manager.sh` |
 | Inject hook | `adapters/claude-code/inject-hook.sh` | `~/.claude/hooks/inject-hook.sh` |
 | Smart inject | `adapters/claude-code/smart-inject-hook.sh` | `~/.claude/hooks/smart-inject-hook.sh` |
 | Stop hook | `adapters/claude-code/stop-hook.sh` | `~/.claude/hooks/stop-hook.sh` |
 
-### Import Paths in lessons_manager.py
+### Import Paths in cli.py
 
 The Python manager handles both dev and installed environments:
 

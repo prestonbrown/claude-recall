@@ -8,7 +8,7 @@ This module provides functions to parse and format lessons stored in markdown fo
 
 import re
 from datetime import date
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 # Handle both module import and direct script execution
 try:
@@ -31,7 +31,17 @@ except ImportError:
     )
 
 
-def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[tuple]:
+# Pattern for parsing old metadata format (without Velocity field)
+OLD_METADATA_PATTERN = re.compile(
+    r"^\s*-\s*\*\*Uses\*\*:\s*(\d+)"
+    r"\s*\|\s*\*\*Learned\*\*:\s*(\d{4}-\d{2}-\d{2})"
+    r"\s*\|\s*\*\*Last\*\*:\s*(\d{4}-\d{2}-\d{2})"
+    r"\s*\|\s*\*\*Category\*\*:\s*(\w+)"
+    r"(?:\s*\|\s*\*\*Source\*\*:\s*(\w+))?"
+)
+
+
+def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple[Lesson, int]]:
     """
     Parse a lesson from a list of lines starting at start_idx.
 
@@ -66,14 +76,7 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[tuple
     meta_match = METADATA_PATTERN.match(meta_line)
     if not meta_match:
         # Try to parse old format without Velocity
-        old_meta_pattern = re.compile(
-            r"^\s*-\s*\*\*Uses\*\*:\s*(\d+)"
-            r"\s*\|\s*\*\*Learned\*\*:\s*(\d{4}-\d{2}-\d{2})"
-            r"\s*\|\s*\*\*Last\*\*:\s*(\d{4}-\d{2}-\d{2})"
-            r"\s*\|\s*\*\*Category\*\*:\s*(\w+)"
-            r"(?:\s*\|\s*\*\*Source\*\*:\s*(\w+))?"
-        )
-        old_match = old_meta_pattern.match(meta_line)
+        old_match = OLD_METADATA_PATTERN.match(meta_line)
         if not old_match:
             return None
         try:

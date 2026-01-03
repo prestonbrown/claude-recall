@@ -8,6 +8,7 @@ This module contains all lesson-related methods as a mixin class.
 
 import os
 import re
+import string
 import subprocess
 import time
 from datetime import date
@@ -254,8 +255,11 @@ class LessonsMixin:
             CitationResult with updated metrics
 
         Raises:
-            ValueError: If the lesson is not found
+            ValueError: If the lesson is not found or ID format is invalid
         """
+        if not re.match(r'^[LS]\d{3}$', lesson_id):
+            raise ValueError(f"Invalid lesson ID format: {lesson_id}")
+
         level = "system" if lesson_id.startswith("S") else "project"
         file_path = self.system_lessons_file if level == "system" else self.project_lessons_file
 
@@ -590,8 +594,9 @@ No explanations, just ID: SCORE lines."""
 
         try:
             # Call Haiku via claude CLI
-            # Set LESSONS_SCORING_ACTIVE to prevent hooks from recursively
-            # calling score_relevance on the Haiku subagent
+            # LESSONS_SCORING_ACTIVE=1 is a guard to prevent hooks from recursively
+            # calling score_relevance on the Haiku subprocess. When set, hooks should
+            # skip relevance scoring to avoid infinite recursion and wasted API calls.
             env = os.environ.copy()
             env["LESSONS_SCORING_ACTIVE"] = "1"
             result = subprocess.run(
@@ -669,7 +674,10 @@ No explanations, just ID: SCORE lines."""
                 query_text=query_text,
                 error=error_msg,
             )
-        except Exception as e:
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            # OSError: permission denied, broken pipe, etc.
+            # ValueError: parsing errors
+            # SubprocessError: base class for process-related errors
             duration_ms = int((time.time() - start_time) * 1000)
             error_msg = str(e)
             logger.relevance_score(query_len, lesson_count, duration_ms, [], error=error_msg)
@@ -885,7 +893,6 @@ No explanations, just ID: SCORE lines."""
 
     def _normalize_title(self, title: str) -> str:
         """Normalize title for duplicate comparison."""
-        import string
         # Lowercase, remove punctuation, normalize whitespace
         normalized = title.lower()
         for char in string.punctuation:

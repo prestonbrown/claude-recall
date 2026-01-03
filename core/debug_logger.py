@@ -28,8 +28,8 @@ from typing import Any, Dict, List, Optional
 DEBUG_ENV_VAR = "RECALL_DEBUG"  # New name
 DEBUG_ENV_VAR_LEGACY = "LESSONS_DEBUG"  # Old name for backward compat
 LOG_FILE_NAME = "debug.log"
-MAX_LOG_SIZE_MB = 50
-MAX_LOG_FILES = 3  # Keep debug.log, debug.log.1, debug.log.2
+MAX_LOG_SIZE_MB = 50  # 50MB keeps ~500K events
+MAX_LOG_FILES = 3  # 3 files = 150MB max disk usage
 
 # Session ID - generated once per process
 _SESSION_ID: Optional[str] = None
@@ -129,9 +129,12 @@ class DebugLogger:
 
             with open(self._log_path, "a") as f:
                 f.write(json.dumps(event, default=str) + "\n")
-        except Exception:
-            # Never let logging errors affect main operation
-            pass
+        except (OSError, IOError, ValueError) as e:
+            # Never let logging errors affect main operation.
+            # At trace level, we attempt to log the failure to stderr for debugging.
+            if self._level >= 3:
+                import sys
+                print(f"[debug_logger] write failed: {type(e).__name__}: {e}", file=sys.stderr)
 
     # =========================================================================
     # Level 1: Info events
@@ -258,7 +261,12 @@ class DebugLogger:
             }
         )
 
-    # Backward compatibility alias
+    # =========================================================================
+    # DEPRECATED ALIASES (remove after 2025-06-01)
+    # These delegate to handoff_* methods and are kept for API compatibility.
+    # =========================================================================
+
+    # DEPRECATED (remove after 2025-06-01): Use handoff_created instead
     def approach_created(
         self,
         approach_id: str,
@@ -266,7 +274,7 @@ class DebugLogger:
         phase: str,
         agent: str,
     ) -> None:
-        """Backward compatibility alias for handoff_created."""
+        """DEPRECATED: Use handoff_created instead."""
         return self.handoff_created(handoff_id=approach_id, title=title, phase=phase, agent=agent)
 
     def handoff_change(
@@ -290,7 +298,7 @@ class DebugLogger:
             }
         )
 
-    # Backward compatibility alias
+    # DEPRECATED (remove after 2025-06-01): Use handoff_change instead
     def approach_change(
         self,
         approach_id: str,
@@ -298,7 +306,7 @@ class DebugLogger:
         old_value: Optional[str] = None,
         new_value: Optional[str] = None,
     ) -> None:
-        """Backward compatibility alias for handoff_change."""
+        """DEPRECATED: Use handoff_change instead."""
         return self.handoff_change(handoff_id=approach_id, action=action, old_value=old_value, new_value=new_value)
 
     def handoff_completed(
@@ -320,14 +328,14 @@ class DebugLogger:
             }
         )
 
-    # Backward compatibility alias
+    # DEPRECATED (remove after 2025-06-01): Use handoff_completed instead
     def approach_completed(
         self,
         approach_id: str,
         tried_count: int,
         duration_days: Optional[int] = None,
     ) -> None:
-        """Backward compatibility alias for handoff_completed."""
+        """DEPRECATED: Use handoff_completed instead."""
         return self.handoff_completed(handoff_id=approach_id, tried_count=tried_count, duration_days=duration_days)
 
     def error(self, operation: str, error: str, context: Optional[Dict] = None) -> None:

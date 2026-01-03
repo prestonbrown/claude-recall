@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import json as json_module
 import os
 import sys
 from pathlib import Path
@@ -121,76 +122,76 @@ def main():
     )
 
     # handoff command (with subcommands) - "approach" is kept as alias for backward compat
-    approach_parser = subparsers.add_parser("handoff", aliases=["approach"], help="Manage handoffs (work tracking)")
-    approach_subparsers = approach_parser.add_subparsers(dest="approach_command", help="Handoff commands")
+    handoff_parser = subparsers.add_parser("handoff", aliases=["approach"], help="Manage handoffs (work tracking). 'approach' is a deprecated alias.")
+    handoff_subparsers = handoff_parser.add_subparsers(dest="handoff_command", help="Handoff commands")
 
-    # approach add (alias: start)
-    approach_add_parser = approach_subparsers.add_parser("add", aliases=["start"], help="Add a new approach")
-    approach_add_parser.add_argument("title", help="Approach title")
-    approach_add_parser.add_argument("--desc", help="Description")
-    approach_add_parser.add_argument("--files", help="Comma-separated list of files")
-    approach_add_parser.add_argument("--phase", default="research", help="Initial phase (research, planning, implementing, review)")
-    approach_add_parser.add_argument("--agent", default="user", help="Agent working on this (explore, general-purpose, plan, review, user)")
-    approach_add_parser.add_argument("--stealth", action="store_true", help="Store in local file (not committed to git)")
+    # handoff add (alias: start)
+    handoff_add_parser = handoff_subparsers.add_parser("add", aliases=["start"], help="Add a new handoff")
+    handoff_add_parser.add_argument("title", help="Handoff title")
+    handoff_add_parser.add_argument("--desc", help="Description")
+    handoff_add_parser.add_argument("--files", help="Comma-separated list of files")
+    handoff_add_parser.add_argument("--phase", default="research", help="Initial phase (research, planning, implementing, review)")
+    handoff_add_parser.add_argument("--agent", default="user", help="Agent working on this (explore, general-purpose, plan, review, user)")
+    handoff_add_parser.add_argument("--stealth", action="store_true", help="Store in local file (not committed to git)")
 
-    # approach update
-    approach_update_parser = approach_subparsers.add_parser("update", help="Update an approach")
-    approach_update_parser.add_argument("id", help="Approach ID (e.g., A001)")
-    approach_update_parser.add_argument("--status", help="New status (not_started, in_progress, blocked, completed)")
-    approach_update_parser.add_argument("--tried", nargs=2, metavar=("OUTCOME", "DESC"), help="Add tried approach (outcome: success|fail|partial)")
-    approach_update_parser.add_argument("--next", help="Update next steps")
-    approach_update_parser.add_argument("--files", help="Update files (comma-separated)")
-    approach_update_parser.add_argument("--desc", help="Update description")
-    approach_update_parser.add_argument("--phase", help="Update phase (research, planning, implementing, review)")
-    approach_update_parser.add_argument("--agent", help="Update agent (explore, general-purpose, plan, review, user)")
-    approach_update_parser.add_argument("--checkpoint", help="Update checkpoint (progress summary for session handoff)")
-    approach_update_parser.add_argument("--blocked-by", help="Set blocked_by dependencies (comma-separated handoff IDs)")
+    # handoff update
+    handoff_update_parser = handoff_subparsers.add_parser("update", help="Update a handoff")
+    handoff_update_parser.add_argument("id", help="Handoff ID (e.g., A001 or hf-abc1234)")
+    handoff_update_parser.add_argument("--status", help="New status (not_started, in_progress, blocked, completed)")
+    handoff_update_parser.add_argument("--tried", nargs=2, metavar=("OUTCOME", "DESC"), help="Add tried step (outcome: success|fail|partial)")
+    handoff_update_parser.add_argument("--next", help="Update next steps")
+    handoff_update_parser.add_argument("--files", help="Update files (comma-separated)")
+    handoff_update_parser.add_argument("--desc", help="Update description")
+    handoff_update_parser.add_argument("--phase", help="Update phase (research, planning, implementing, review)")
+    handoff_update_parser.add_argument("--agent", help="Update agent (explore, general-purpose, plan, review, user)")
+    handoff_update_parser.add_argument("--checkpoint", help="Update checkpoint (progress summary for session handoff)")
+    handoff_update_parser.add_argument("--blocked-by", help="Set blocked_by dependencies (comma-separated handoff IDs)")
 
-    # approach complete
-    approach_complete_parser = approach_subparsers.add_parser("complete", help="Mark approach as completed")
-    approach_complete_parser.add_argument("id", help="Approach ID")
+    # handoff complete
+    handoff_complete_parser = handoff_subparsers.add_parser("complete", help="Mark handoff as completed")
+    handoff_complete_parser.add_argument("id", help="Handoff ID")
 
-    # approach archive
-    approach_archive_parser = approach_subparsers.add_parser("archive", help="Archive an approach")
-    approach_archive_parser.add_argument("id", help="Approach ID")
+    # handoff archive
+    handoff_archive_parser = handoff_subparsers.add_parser("archive", help="Archive a handoff")
+    handoff_archive_parser.add_argument("id", help="Handoff ID")
 
-    # approach delete (alias: remove)
-    approach_delete_parser = approach_subparsers.add_parser("delete", aliases=["remove"], help="Delete an approach")
-    approach_delete_parser.add_argument("id", help="Approach ID")
+    # handoff delete (alias: remove)
+    handoff_delete_parser = handoff_subparsers.add_parser("delete", aliases=["remove"], help="Delete a handoff")
+    handoff_delete_parser.add_argument("id", help="Handoff ID")
 
-    # approach list
-    approach_list_parser = approach_subparsers.add_parser("list", help="List approaches")
-    approach_list_parser.add_argument("--status", help="Filter by status")
-    approach_list_parser.add_argument("--include-completed", action="store_true", help="Include completed approaches")
+    # handoff list
+    handoff_list_parser = handoff_subparsers.add_parser("list", help="List handoffs")
+    handoff_list_parser.add_argument("--status", help="Filter by status")
+    handoff_list_parser.add_argument("--include-completed", action="store_true", help="Include completed handoffs")
 
-    # approach show
-    approach_show_parser = approach_subparsers.add_parser("show", help="Show an approach")
-    approach_show_parser.add_argument("id", help="Approach ID")
+    # handoff show
+    handoff_show_parser = handoff_subparsers.add_parser("show", help="Show a handoff")
+    handoff_show_parser.add_argument("id", help="Handoff ID")
 
-    # approach inject
-    approach_subparsers.add_parser("inject", help="Output approaches for context injection")
+    # handoff inject
+    handoff_subparsers.add_parser("inject", help="Output handoffs for context injection")
 
-    # approach sync-todos (sync from TodoWrite tool calls)
-    sync_todos_parser = approach_subparsers.add_parser(
+    # handoff sync-todos (sync from TodoWrite tool calls)
+    sync_todos_parser = handoff_subparsers.add_parser(
         "sync-todos",
-        help="Sync TodoWrite todos to approach (called by stop-hook)"
+        help="Sync TodoWrite todos to handoff (called by stop-hook)"
     )
     sync_todos_parser.add_argument("todos_json", help="JSON array of todos from TodoWrite")
 
-    # approach inject-todos (format approaches as todo suggestions)
-    approach_subparsers.add_parser(
+    # handoff inject-todos (format handoffs as todo suggestions)
+    handoff_subparsers.add_parser(
         "inject-todos",
-        help="Format active approach as TodoWrite continuation prompt"
+        help="Format active handoff as TodoWrite continuation prompt"
     )
 
-    # approach ready (list ready handoffs)
-    approach_subparsers.add_parser(
+    # handoff ready (list ready handoffs)
+    handoff_subparsers.add_parser(
         "ready",
         help="List handoffs that are ready to work on (not blocked)"
     )
 
-    # approach set-context (set structured handoff context from precompact hook)
-    set_context_parser = approach_subparsers.add_parser(
+    # handoff set-context (set structured handoff context from precompact hook)
+    set_context_parser = handoff_subparsers.add_parser(
         "set-context",
         help="Set structured handoff context (called by precompact-hook)"
     )
@@ -202,8 +203,8 @@ def main():
         help="JSON object with summary, critical_files, recent_changes, learnings, blockers, git_ref"
     )
 
-    # approach resume (resume handoff with validation)
-    resume_parser = approach_subparsers.add_parser(
+    # handoff resume (resume handoff with validation)
+    resume_parser = handoff_subparsers.add_parser(
         "resume",
         help="Resume a handoff with validation of codebase state"
     )
@@ -328,16 +329,19 @@ def main():
             print(result.format(top_n=args.top, min_score=args.min_score))
 
         elif args.command in ("handoff", "approach"):
-            if not args.approach_command:
-                approach_parser.print_help()
+            if args.command == "approach":
+                print("Note: 'approach' command is deprecated, use 'handoff' instead", file=sys.stderr)
+
+            if not args.handoff_command:
+                handoff_parser.print_help()
                 sys.exit(1)
 
-            if args.approach_command in ("add", "start"):
+            if args.handoff_command in ("add", "start"):
                 files = None
                 if args.files:
                     files = [f.strip() for f in args.files.split(",") if f.strip()]
                 stealth = getattr(args, 'stealth', False)
-                approach_id = manager.approach_add(
+                handoff_id = manager.handoff_add(
                     title=args.title,
                     desc=args.desc,
                     files=files,
@@ -346,135 +350,134 @@ def main():
                     stealth=stealth,
                 )
                 mode = " (stealth)" if stealth else ""
-                print(f"Added approach {approach_id}: {args.title}{mode}")
+                print(f"Added handoff {handoff_id}: {args.title}{mode}")
 
-            elif args.approach_command == "update":
+            elif args.handoff_command == "update":
                 updated = False
                 if args.status:
-                    manager.approach_update_status(args.id, args.status)
+                    manager.handoff_update_status(args.id, args.status)
                     print(f"Updated {args.id} status to {args.status}")
                     updated = True
                 if args.tried:
                     outcome, desc = args.tried
-                    manager.approach_add_tried(args.id, outcome, desc)
-                    print(f"Added tried approach to {args.id}")
+                    manager.handoff_add_tried(args.id, outcome, desc)
+                    print(f"Added tried step to {args.id}")
                     updated = True
                 if args.next:
-                    manager.approach_update_next(args.id, args.next)
+                    manager.handoff_update_next(args.id, args.next)
                     print(f"Updated {args.id} next steps")
                     updated = True
                 if args.files:
                     files_list = [f.strip() for f in args.files.split(",") if f.strip()]
-                    manager.approach_update_files(args.id, files_list)
+                    manager.handoff_update_files(args.id, files_list)
                     print(f"Updated {args.id} files")
                     updated = True
                 if args.desc:
-                    manager.approach_update_desc(args.id, args.desc)
+                    manager.handoff_update_desc(args.id, args.desc)
                     print(f"Updated {args.id} description")
                     updated = True
                 if args.phase:
-                    manager.approach_update_phase(args.id, args.phase)
+                    manager.handoff_update_phase(args.id, args.phase)
                     print(f"Updated {args.id} phase to {args.phase}")
                     updated = True
                 if args.agent:
-                    manager.approach_update_agent(args.id, args.agent)
+                    manager.handoff_update_agent(args.id, args.agent)
                     print(f"Updated {args.id} agent to {args.agent}")
                     updated = True
                 if args.checkpoint:
-                    manager.approach_update_checkpoint(args.id, args.checkpoint)
+                    manager.handoff_update_checkpoint(args.id, args.checkpoint)
                     print(f"Updated {args.id} checkpoint")
                     updated = True
                 blocked_by_arg = getattr(args, 'blocked_by', None)
                 if blocked_by_arg:
                     blocked_by_list = [b.strip() for b in blocked_by_arg.split(",") if b.strip()]
-                    manager.approach_update_blocked_by(args.id, blocked_by_list)
+                    manager.handoff_update_blocked_by(args.id, blocked_by_list)
                     print(f"Updated {args.id} blocked_by to {', '.join(blocked_by_list)}")
                     updated = True
                 if not updated:
                     print("No update options provided", file=sys.stderr)
                     sys.exit(1)
 
-            elif args.approach_command == "complete":
-                result = manager.approach_complete(args.id)
+            elif args.handoff_command == "complete":
+                result = manager.handoff_complete(args.id)
                 print(f"Completed {args.id}")
                 print("\n" + result.extraction_prompt)
 
-            elif args.approach_command == "archive":
-                manager.approach_archive(args.id)
+            elif args.handoff_command == "archive":
+                manager.handoff_archive(args.id)
                 print(f"Archived {args.id}")
 
-            elif args.approach_command == "delete":
-                manager.approach_delete(args.id)
+            elif args.handoff_command == "delete":
+                manager.handoff_delete(args.id)
                 print(f"Deleted {args.id}")
 
-            elif args.approach_command == "list":
-                approaches = manager.approach_list(
+            elif args.handoff_command == "list":
+                handoffs = manager.handoff_list(
                     status_filter=args.status,
                     include_completed=args.include_completed,
                 )
-                if not approaches:
-                    print("(no approaches found)")
+                if not handoffs:
+                    print("(no handoffs found)")
                 else:
-                    for approach in approaches:
-                        print(f"[{approach.id}] {approach.title}")
-                        print(f"    Status: {approach.status} | Created: {approach.created} | Updated: {approach.updated}")
-                        if approach.files:
-                            print(f"    Files: {', '.join(approach.files)}")
-                        if approach.description:
-                            print(f"    Description: {approach.description}")
-                    print(f"\nTotal: {len(approaches)} approach(es)")
+                    for handoff in handoffs:
+                        print(f"[{handoff.id}] {handoff.title}")
+                        print(f"    Status: {handoff.status} | Created: {handoff.created} | Updated: {handoff.updated}")
+                        if handoff.files:
+                            print(f"    Files: {', '.join(handoff.files)}")
+                        if handoff.description:
+                            print(f"    Description: {handoff.description}")
+                    print(f"\nTotal: {len(handoffs)} handoff(s)")
 
-            elif args.approach_command == "show":
-                approach = manager.approach_get(args.id)
-                if approach is None:
-                    print(f"Error: Approach {args.id} not found", file=sys.stderr)
+            elif args.handoff_command == "show":
+                handoff = manager.handoff_get(args.id)
+                if handoff is None:
+                    print(f"Error: Handoff {args.id} not found", file=sys.stderr)
                     sys.exit(1)
-                print(f"### [{approach.id}] {approach.title}")
-                print(f"- **Status**: {approach.status}")
-                print(f"- **Created**: {approach.created}")
-                print(f"- **Updated**: {approach.updated}")
-                print(f"- **Files**: {', '.join(approach.files) if approach.files else '(none)'}")
-                print(f"- **Description**: {approach.description if approach.description else '(none)'}")
-                if approach.checkpoint:
-                    session_info = f" ({approach.last_session})" if approach.last_session else ""
-                    print(f"- **Checkpoint{session_info}**: {approach.checkpoint}")
+                print(f"### [{handoff.id}] {handoff.title}")
+                print(f"- **Status**: {handoff.status}")
+                print(f"- **Created**: {handoff.created}")
+                print(f"- **Updated**: {handoff.updated}")
+                print(f"- **Files**: {', '.join(handoff.files) if handoff.files else '(none)'}")
+                print(f"- **Description**: {handoff.description if handoff.description else '(none)'}")
+                if handoff.checkpoint:
+                    session_info = f" ({handoff.last_session})" if handoff.last_session else ""
+                    print(f"- **Checkpoint{session_info}**: {handoff.checkpoint}")
                 print()
                 print("**Tried**:")
-                if approach.tried:
-                    for i, tried in enumerate(approach.tried, 1):
+                if handoff.tried:
+                    for i, tried in enumerate(handoff.tried, 1):
                         print(f"{i}. [{tried.outcome}] {tried.description}")
                 else:
                     print("(none)")
                 print()
-                print(f"**Next**: {approach.next_steps if approach.next_steps else '(none)'}")
+                print(f"**Next**: {handoff.next_steps if handoff.next_steps else '(none)'}")
 
-            elif args.approach_command == "inject":
-                output = manager.approach_inject()
+            elif args.handoff_command == "inject":
+                output = manager.handoff_inject()
                 if output:
                     print(output)
                 else:
-                    print("(no active approaches)")
+                    print("(no active handoffs)")
 
-            elif args.approach_command == "sync-todos":
-                import json as json_module
+            elif args.handoff_command == "sync-todos":
                 try:
                     todos = json_module.loads(args.todos_json)
                     if not isinstance(todos, list):
                         print("Error: todos_json must be a JSON array", file=sys.stderr)
                         sys.exit(1)
-                    result = manager.approach_sync_todos(todos)
+                    result = manager.handoff_sync_todos(todos)
                     if result:
-                        print(f"Synced {len(todos)} todo(s) to approach {result}")
+                        print(f"Synced {len(todos)} todo(s) to handoff {result}")
                 except json_module.JSONDecodeError as e:
                     print(f"Error: Invalid JSON: {e}", file=sys.stderr)
                     sys.exit(1)
 
-            elif args.approach_command == "inject-todos":
-                output = manager.approach_inject_todos()
+            elif args.handoff_command == "inject-todos":
+                output = manager.handoff_inject_todos()
                 if output:
                     print(output)
 
-            elif args.approach_command == "ready":
+            elif args.handoff_command == "ready":
                 ready_handoffs = manager.handoff_ready()
                 if not ready_handoffs:
                     print("(no ready handoffs)")
@@ -487,8 +490,7 @@ def main():
                             print(f"    Blocked by: {', '.join(handoff.blocked_by)} (all completed)")
                     print(f"\nReady: {len(ready_handoffs)} handoff(s)")
 
-            elif args.approach_command == "set-context":
-                import json as json_module
+            elif args.handoff_command == "set-context":
                 try:
                     from core.models import HandoffContext
                 except ImportError:
@@ -507,13 +509,13 @@ def main():
                         blockers=context_data.get("blockers", []),
                         git_ref=context_data.get("git_ref", ""),
                     )
-                    manager.approach_update_context(args.id, context)
+                    manager.handoff_update_context(args.id, context)
                     print(f"Set context for {args.id} (git ref: {context.git_ref})")
                 except json_module.JSONDecodeError as e:
                     print(f"Error: Invalid JSON: {e}", file=sys.stderr)
                     sys.exit(1)
 
-            elif args.approach_command == "resume":
+            elif args.handoff_command == "resume":
                 result = manager.handoff_resume(args.id)
                 print(result.format())
 

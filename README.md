@@ -21,6 +21,7 @@ Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 - **Phases**: `research` → `planning` → `implementing` → `review`
 - **Session continuity**: Handoffs restore as TodoWrite suggestions on next session
 - **Completion workflow**: Extract lessons when finishing work
+- **Command patterns**: Uses `APPROACH:`, `APPROACH UPDATE`, `APPROACH COMPLETE` for backward compatibility
 
 ## Quick Install
 
@@ -120,7 +121,7 @@ Use the `/lessons` slash command:
 Left side: Total uses (logarithmic scale)
 Right side: Recent velocity (decays over time)
 
-### Approaches Lifecycle
+### Handoffs Lifecycle
 
 **Via TodoWrite (recommended)**:
 1. **Use TodoWrite**: Agent uses TodoWrite naturally with reminders
@@ -163,7 +164,7 @@ The system can infer phases from tool usage:
 ```
 coding-agent-lessons/
 ├── core/
-│   ├── lessons_manager.py      # Python implementation (primary)
+│   ├── cli.py                  # Python CLI entry point (primary)
 │   ├── debug_logger.py         # JSON debug logging
 │   └── lessons-manager.sh      # Bash wrapper (calls Python)
 ├── adapters/
@@ -176,7 +177,7 @@ coding-agent-lessons/
 │   └── opencode/
 │       └── ...
 └── tests/
-    ├── test_lessons_manager.py # Lesson tests
+    ├── test_lessons_manager.py # 400+ lesson & handoff tests
     ├── test_handoffs.py        # Handoff tests
     └── test_debug_logger.py    # Debug logger tests
 ```

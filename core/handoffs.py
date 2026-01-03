@@ -7,9 +7,10 @@ This module contains all handoff-related methods as a mixin class.
 Handoffs track multi-step work across sessions (formerly called "approaches").
 """
 
+import hashlib
 import re
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -30,7 +31,10 @@ try:
         HandoffCompleteResult,
         ValidationResult,
         HandoffResumeResult,
-        # Backward compatibility aliases
+        # ============================================================
+        # DEPRECATED ALIASES (remove after 2025-06-01)
+        # These exist for backward compatibility with external code
+        # ============================================================
         TriedApproach,
         Approach,
         ApproachCompleteResult,
@@ -55,7 +59,10 @@ except ImportError:
         HandoffCompleteResult,
         ValidationResult,
         HandoffResumeResult,
-        # Backward compatibility aliases
+        # ============================================================
+        # DEPRECATED ALIASES (remove after 2025-06-01)
+        # These exist for backward compatibility with external code
+        # ============================================================
         TriedApproach,
         Approach,
         ApproachCompleteResult,
@@ -182,7 +189,10 @@ class HandoffsMixin:
         return self.project_handoffs_archive
 
     def _init_handoffs_file(self) -> None:
-        """Initialize handoffs file with header if it doesn't exist."""
+        """Initialize handoffs file with standard header if it doesn't exist.
+
+        Creates parent directories as needed. File header includes the H1 title.
+        """
         file_path = self.project_handoffs_file
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -493,7 +503,7 @@ class HandoffsMixin:
 
         return handoffs
 
-    # Backward compatibility alias
+    # DEPRECATED (remove after 2025-06-01): Use _parse_handoffs_file instead
     def _parse_approaches_file(self, file_path: Path) -> List[Handoff]:
         """Backward compatibility alias for _parse_handoffs_file."""
         return self._parse_handoffs_file(file_path)
@@ -546,7 +556,7 @@ class HandoffsMixin:
 
         return "\n".join(lines)
 
-    # Backward compatibility alias
+    # DEPRECATED (remove after 2025-06-01): Use _format_handoff instead
     def _format_approach(self, handoff: Handoff) -> str:
         """Backward compatibility alias for _format_handoff."""
         return self._format_handoff(handoff)
@@ -570,7 +580,7 @@ class HandoffsMixin:
 
         self.project_handoffs_file.write_text("\n".join(parts))
 
-    # Backward compatibility alias
+    # DEPRECATED (remove after 2025-06-01): Use _write_handoffs_file instead
     def _write_approaches_file(self, handoffs: List[Handoff]) -> None:
         """Backward compatibility alias for _write_handoffs_file."""
         return self._write_handoffs_file(handoffs)
@@ -596,8 +606,6 @@ class HandoffsMixin:
 
     def _generate_handoff_id(self, title: str) -> str:
         """Generate hash-based ID like hf-a1b2c3d for multi-agent safety."""
-        import hashlib
-        from datetime import datetime
         seed = f"{title}:{datetime.now().isoformat()}"
         hash_hex = hashlib.sha256(seed.encode()).hexdigest()[:7]
         return f"hf-{hash_hex}"
@@ -628,7 +636,7 @@ class HandoffsMixin:
 
         return f"A{max_id + 1:03d}"
 
-    # Backward compatibility alias
+    # DEPRECATED (remove after 2025-06-01): Use _get_next_handoff_id instead
     def _get_next_approach_id(self) -> str:
         """Backward compatibility alias for _get_next_handoff_id."""
         return self._get_next_handoff_id()
@@ -2110,5 +2118,5 @@ Consider extracting lessons about:
         return self.handoff_resume(approach_id)
 
 
-# Backward compatibility alias for the mixin class
+# DEPRECATED (remove after 2025-06-01): Use HandoffsMixin instead
 ApproachesMixin = HandoffsMixin

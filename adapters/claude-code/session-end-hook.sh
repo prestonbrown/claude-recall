@@ -120,8 +120,8 @@ Conversation:
     echo "$result"
 }
 
-# Get the most recent active approach/handoff
-get_most_recent_approach() {
+# Get the most recent active handoff
+get_most_recent_handoff() {
     local project_root="$1"
 
     if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -185,7 +185,7 @@ main() {
 
     # Find most recent active handoff
     local handoff_id
-    handoff_id=$(get_most_recent_approach "$project_root")
+    handoff_id=$(get_most_recent_handoff "$project_root")
 
     # No active handoff - nothing to checkpoint
     [[ -z "$handoff_id" ]] && {

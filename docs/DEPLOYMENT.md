@@ -35,7 +35,7 @@ cp adapters/claude-code/stop-hook.sh ~/.claude/hooks/
 chmod +x ~/.claude/hooks/*.sh
 
 # Copy core manager
-cp core/lessons_manager.py ~/.config/coding-agent-lessons/
+cp core/cli.py ~/.config/coding-agent-lessons/
 ```
 
 3. **Configure Claude Code:**

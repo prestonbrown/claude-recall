@@ -77,25 +77,25 @@ main() {
     # Generate lessons context
     local summary=$(generate_context "$cwd")
 
-    # Also get active approaches (project-level only)
-    local approaches=""
+    # Also get active handoffs (project-level only)
+    local handoffs=""
     local todo_continuation=""
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        approaches=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" approach inject 2>/dev/null || true)
+        handoffs=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" python3 "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
 
-        # Generate todo continuation prompt if there are active approaches
-        if [[ -n "$approaches" && "$approaches" != "(no active approaches)" ]]; then
-            # Extract the most recent approach for todo format
-            todo_continuation=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" python3 "$PYTHON_MANAGER" approach inject-todos 2>/dev/null || true)
+        # Generate todo continuation prompt if there are active handoffs
+        if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
+            # Extract the most recent handoff for todo format
+            todo_continuation=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" python3 "$PYTHON_MANAGER" handoff inject-todos 2>/dev/null || true)
         fi
     fi
-    if [[ -n "$approaches" && "$approaches" != "(no active approaches)" ]]; then
+    if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
         if [[ -n "$summary" ]]; then
             summary="$summary
 
-$approaches"
+$handoffs"
         else
-            summary="$approaches"
+            summary="$handoffs"
         fi
     fi
 
@@ -106,9 +106,9 @@ $approaches"
         proj_count="${BASH_REMATCH[2]}"
     fi
 
-    local approach_count=0
-    if [[ -n "$approaches" && "$approaches" != "(no active approaches)" ]]; then
-        approach_count=$(echo "$approaches" | grep -c "^### \[A" || true)
+    local handoff_count=0
+    if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
+        handoff_count=$(echo "$handoffs" | grep -cE "^### \[(hf-[0-9a-f]+|A[0-9]{3})\]" || true)
     fi
 
     # Build feedback message (only non-zero parts)
@@ -127,11 +127,11 @@ $approaches"
         fi
         feedback="$lessons_str lessons"
     fi
-    if [[ $approach_count -gt 0 ]]; then
+    if [[ $handoff_count -gt 0 ]]; then
         if [[ -n "$feedback" ]]; then
-            feedback="$feedback, $approach_count active approaches"
+            feedback="$feedback, $handoff_count active handoffs"
         else
-            feedback="$approach_count active approaches"
+            feedback="$handoff_count active handoffs"
         fi
     fi
 
@@ -153,7 +153,7 @@ $todo_continuation"
         fi
 
         local escaped=$(printf '%s' "$summary" | jq -Rs .)
-        # NOTE: $feedback contains user-visible summary like "4 system + 4 project lessons, 3 active approaches"
+        # NOTE: $feedback contains user-visible summary like "4 system + 4 project lessons, 3 active handoffs"
         # Currently disabled - Claude Code doesn't surface systemMessage or stderr to users.
         # When/if Claude Code adds hook feedback display, uncomment:
         # cat << EOF

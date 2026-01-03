@@ -45,9 +45,9 @@ from typing import List, Optional
 try:
     from core import (
         LessonsManager,
-        Approach,
-        TriedApproach,
-        ApproachCompleteResult,
+        Handoff,
+        TriedStep,
+        HandoffCompleteResult,
     )
 except ImportError:
     # Mark all tests as expected to fail until implementation exists
@@ -146,12 +146,12 @@ def manager_with_approaches(manager: "LessonsManager") -> "LessonsManager":
 
 
 # =============================================================================
-# Adding Approaches
+# Adding Handoffs
 # =============================================================================
 
 
-class TestApproachAdd:
-    """Tests for adding approaches."""
+class TestHandoffAdd:
+    """Tests for adding handoffs."""
 
     def test_approach_add_creates_file(self, manager: "LessonsManager"):
         """Adding an approach should create the handoffs file (HANDOFFS.md or legacy APPROACHES.md)."""
@@ -220,12 +220,12 @@ class TestApproachAdd:
 
 
 # =============================================================================
-# Updating Approaches
+# Updating Handoffs
 # =============================================================================
 
 
-class TestApproachUpdateStatus:
-    """Tests for updating approach status."""
+class TestHandoffUpdateStatus:
+    """Tests for updating handoff status."""
 
     def test_approach_update_status_valid(self, manager_with_approaches: "LessonsManager"):
         """Should update status with valid values."""
@@ -258,8 +258,8 @@ class TestApproachUpdateStatus:
             manager.approach_update_status("A999", "in_progress")
 
 
-class TestApproachAddTried:
-    """Tests for adding tried approaches."""
+class TestHandoffAddTried:
+    """Tests for adding tried steps."""
 
     def test_approach_add_tried_success(self, manager_with_approaches: "LessonsManager"):
         """Should add a successful tried approach."""
@@ -316,7 +316,7 @@ class TestApproachAddTried:
             manager_with_approaches.approach_add_tried("A001", "maybe", "Uncertain result")
 
 
-class TestApproachUpdateNext:
+class TestHandoffUpdateNext:
     """Tests for updating next steps."""
 
     def test_approach_update_next(self, manager_with_approaches: "LessonsManager"):
@@ -346,7 +346,7 @@ class TestApproachUpdateNext:
         assert approach.next_steps == ""
 
 
-class TestApproachUpdateFiles:
+class TestHandoffUpdateFiles:
     """Tests for updating file lists."""
 
     def test_approach_update_files(self, manager_with_approaches: "LessonsManager"):
@@ -376,7 +376,7 @@ class TestApproachUpdateFiles:
         assert approach.files == []
 
 
-class TestApproachUpdateDesc:
+class TestHandoffUpdateDesc:
     """Tests for updating description."""
 
     def test_approach_update_desc(self, manager_with_approaches: "LessonsManager"):
@@ -387,7 +387,7 @@ class TestApproachUpdateDesc:
         assert approach.description == "New description text"
 
 
-class TestApproachUpdateSetsDate:
+class TestHandoffUpdateSetsDate:
     """Tests for automatic date updates."""
 
     def test_approach_update_sets_updated_date(self, manager_with_approaches: "LessonsManager"):
@@ -418,12 +418,12 @@ class TestApproachUpdateSetsDate:
 
 
 # =============================================================================
-# Completing and Archiving Approaches
+# Completing and Archiving Handoffs
 # =============================================================================
 
 
-class TestApproachComplete:
-    """Tests for completing approaches."""
+class TestHandoffComplete:
+    """Tests for completing handoffs."""
 
     def test_approach_complete_sets_status(self, manager_with_approaches: "LessonsManager"):
         """Completing should set status to completed."""
@@ -461,8 +461,8 @@ class TestApproachComplete:
         assert result.approach.title == "Implementing WebSocket reconnection"
 
 
-class TestApproachArchive:
-    """Tests for archiving approaches."""
+class TestHandoffArchive:
+    """Tests for archiving handoffs."""
 
     def test_approach_archive_moves_to_archive_file(
         self, manager_with_approaches: "LessonsManager"
@@ -535,8 +535,8 @@ class TestApproachArchive:
         assert "Refactoring database layer" in content
 
 
-class TestApproachDelete:
-    """Tests for deleting approaches."""
+class TestHandoffDelete:
+    """Tests for deleting handoffs."""
 
     def test_approach_delete_removes_entry(self, manager_with_approaches: "LessonsManager"):
         """Deleting should remove the approach entirely."""
@@ -569,12 +569,12 @@ class TestApproachDelete:
 
 
 # =============================================================================
-# Querying Approaches
+# Querying Handoffs
 # =============================================================================
 
 
-class TestApproachGet:
-    """Tests for getting individual approaches."""
+class TestHandoffGet:
+    """Tests for getting individual handoffs."""
 
     def test_approach_get_existing(self, manager_with_approaches: "LessonsManager"):
         """Should return the approach with correct data."""
@@ -597,7 +597,7 @@ class TestApproachGet:
         """Should return an Approach dataclass instance."""
         approach = manager_with_approaches.approach_get("A001")
 
-        assert isinstance(approach, Approach)
+        assert isinstance(approach, Handoff)
         assert hasattr(approach, "id")
         assert hasattr(approach, "title")
         assert hasattr(approach, "status")
@@ -609,8 +609,8 @@ class TestApproachGet:
         assert hasattr(approach, "next_steps")
 
 
-class TestApproachList:
-    """Tests for listing approaches."""
+class TestHandoffList:
+    """Tests for listing handoffs."""
 
     def test_approach_list_all(self, manager_with_approaches: "LessonsManager"):
         """Should list all approaches."""
@@ -665,7 +665,7 @@ class TestApproachList:
         assert approaches == []
 
 
-class TestApproachInject:
+class TestHandoffInject:
     """Tests for context injection."""
 
     def test_approach_inject_active_only(self, manager_with_approaches: "LessonsManager"):
@@ -735,7 +735,7 @@ class TestApproachInject:
 # =============================================================================
 
 
-class TestApproachEdgeCases:
+class TestHandoffEdgeCases:
     """Tests for edge cases and error handling."""
 
     def test_approach_with_special_characters(self, manager: "LessonsManager"):
@@ -865,8 +865,8 @@ Missing the status line
 # =============================================================================
 
 
-class TestApproachDataClasses:
-    """Tests for Approach and TriedApproach data classes."""
+class TestHandoffDataClasses:
+    """Tests for Handoff and TriedStep data classes."""
 
     def test_approach_dataclass_fields(self, manager_with_approaches: "LessonsManager"):
         """Approach should have all required fields."""
@@ -889,7 +889,7 @@ class TestApproachDataClasses:
         approach = manager_with_approaches.approach_get("A001")
         tried = approach.tried[0]
 
-        assert isinstance(tried, TriedApproach)
+        assert isinstance(tried, TriedStep)
         assert isinstance(tried.outcome, str)
         assert isinstance(tried.description, str)
 
@@ -899,8 +899,8 @@ class TestApproachDataClasses:
 # =============================================================================
 
 
-class TestApproachFileFormat:
-    """Tests for APPROACHES.md file format."""
+class TestHandoffFileFormat:
+    """Tests for HANDOFFS.md file format."""
 
     def test_approach_file_has_header(self, manager: "LessonsManager"):
         """Approaches file should have proper header."""
@@ -966,8 +966,8 @@ class TestApproachFileFormat:
 # =============================================================================
 
 
-class TestApproachPhase:
-    """Tests for approach phase tracking."""
+class TestHandoffPhase:
+    """Tests for handoff phase tracking."""
 
     def test_approach_add_defaults_to_research_phase(self, manager: "LessonsManager"):
         """New approaches should default to 'research' phase."""
@@ -1047,8 +1047,8 @@ class TestApproachPhase:
 # =============================================================================
 
 
-class TestApproachAgent:
-    """Tests for approach agent tracking."""
+class TestHandoffAgent:
+    """Tests for handoff agent tracking."""
 
     def test_approach_add_defaults_to_user_agent(self, manager: "LessonsManager"):
         """New approaches should default to 'user' agent (no subagent)."""
@@ -1132,7 +1132,7 @@ class TestApproachAgent:
 # =============================================================================
 
 
-class TestApproachPhaseAgentFormat:
+class TestHandoffPhaseAgentFormat:
     """Tests for phase and agent in file format."""
 
     def test_approach_format_includes_phase(self, manager: "LessonsManager"):
@@ -1219,7 +1219,7 @@ class TestApproachPhaseAgentFormat:
 # =============================================================================
 
 
-class TestApproachCLIPhaseAgent:
+class TestHandoffCLIPhaseAgent:
     """Tests for phase and agent CLI commands."""
 
     def test_cli_approach_add_with_phase(self, manager: "LessonsManager"):
@@ -1264,7 +1264,7 @@ class TestApproachCLIPhaseAgent:
 # =============================================================================
 
 
-class TestApproachPhaseAgentEdgeCases:
+class TestHandoffPhaseAgentEdgeCases:
     """Tests for edge cases with phase and agent."""
 
     def test_approach_backward_compatibility_no_phase_agent(self, manager: "LessonsManager"):
@@ -1347,12 +1347,12 @@ class TestApproachPhaseAgentEdgeCases:
 
 
 # =============================================================================
-# Phase 4.6: Approach Decay Tests
+# Phase 4.6: Handoff Decay Tests
 # =============================================================================
 
 
-class TestApproachDecayVisibility:
-    """Tests for completed approach visibility rules."""
+class TestHandoffDecayVisibility:
+    """Tests for completed handoff visibility rules."""
 
     def test_approach_list_completed_returns_completed(
         self, manager_with_approaches: "LessonsManager"
@@ -1421,8 +1421,8 @@ class TestApproachDecayVisibility:
         assert len(completed) >= 2
 
 
-class TestApproachInjectWithCompleted:
-    """Tests for showing completed approaches in injection."""
+class TestHandoffInjectWithCompleted:
+    """Tests for showing completed handoffs in injection."""
 
     def test_approach_inject_shows_recent_completions(
         self, manager: "LessonsManager"
@@ -1482,7 +1482,7 @@ class TestApproachInjectWithCompleted:
         assert "Task 4" not in output
 
 
-class TestApproachAutoArchive:
+class TestHandoffAutoArchive:
     """Tests for auto-archiving after lesson extraction."""
 
     def test_approach_complete_with_lessons_extracted(
@@ -1518,7 +1518,7 @@ class TestApproachAutoArchive:
         assert "Feature work" in archive_file.read_text()
 
 
-class TestApproachDecayConstants:
+class TestHandoffDecayConstants:
     """Tests for decay configuration constants."""
 
     def test_default_max_completed_count(self, manager: "LessonsManager"):
@@ -1537,8 +1537,8 @@ class TestApproachDecayConstants:
 # =============================================================================
 
 
-class TestPlanModeApproachCreation:
-    """Tests for auto-creating approaches when entering plan mode."""
+class TestPlanModeHandoffCreation:
+    """Tests for auto-creating handoffs when entering plan mode."""
 
     def test_approach_add_from_plan_mode(self, manager: "LessonsManager"):
         """Should be able to create approach with plan mode context."""
@@ -1973,7 +1973,7 @@ class TestStopHookLastReference:
 # =============================================================================
 
 
-class TestApproachCheckpoint:
+class TestHandoffCheckpoint:
     """Test checkpoint field for session handoff."""
 
     def test_approach_has_checkpoint_field(self, manager: LessonsManager) -> None:
@@ -2033,7 +2033,7 @@ class TestApproachCheckpoint:
         assert approach.checkpoint == "Second checkpoint"
 
 
-class TestApproachCheckpointFormat:
+class TestHandoffCheckpointFormat:
     """Test checkpoint field in markdown format."""
 
     def test_checkpoint_formatted_in_markdown(self, manager: LessonsManager) -> None:
@@ -2084,7 +2084,7 @@ class TestApproachCheckpointFormat:
         assert approach.last_session is None
 
 
-class TestApproachCheckpointInjection:
+class TestHandoffCheckpointInjection:
     """Test checkpoint in context injection output."""
 
     def test_approach_inject_shows_checkpoint(self, manager: LessonsManager) -> None:
@@ -2122,7 +2122,7 @@ class TestApproachCheckpointInjection:
         assert "**Checkpoint" not in output
 
 
-class TestApproachCheckpointCLI:
+class TestHandoffCheckpointCLI:
     """Test checkpoint via CLI."""
 
     def test_cli_approach_update_checkpoint(
@@ -2188,7 +2188,7 @@ class TestApproachCheckpointCLI:
         assert approach.checkpoint == "Progress: tests passing"
 
 
-class TestApproachCheckpointPreservation:
+class TestHandoffCheckpointPreservation:
     """Test checkpoint is preserved across updates."""
 
     def test_checkpoint_preserved_on_status_update(
@@ -2228,8 +2228,8 @@ class TestApproachCheckpointPreservation:
 # =============================================================================
 
 
-class TestApproachSyncTodos:
-    """Tests for TodoWrite → Approach sync functionality."""
+class TestHandoffSyncTodos:
+    """Tests for TodoWrite to Handoff sync functionality."""
 
     def test_sync_creates_approach_if_none_active(self, manager: LessonsManager) -> None:
         """sync_todos creates new approach from first todo if no active approaches."""
@@ -2323,8 +2323,8 @@ class TestApproachSyncTodos:
         assert len(approach.tried) == 1
 
 
-class TestApproachInjectTodos:
-    """Tests for Approach → TodoWrite injection functionality."""
+class TestHandoffInjectTodos:
+    """Tests for Handoff to TodoWrite injection functionality."""
 
     def test_inject_returns_empty_if_no_active(self, manager: LessonsManager) -> None:
         """inject_todos returns empty string if no active approaches."""
@@ -2382,7 +2382,7 @@ class TestApproachInjectTodos:
 
 
 class TestTodoSyncRoundTrip:
-    """Tests for full TodoWrite ↔ Approach round-trip sync."""
+    """Tests for full TodoWrite to Handoff round-trip sync."""
 
     def test_full_round_trip(self, manager: LessonsManager) -> None:
         """Todos synced to approach can be restored as todos."""
@@ -2416,8 +2416,8 @@ class TestTodoSyncRoundTrip:
         assert "completed" not in json_str  # Not in the JSON
 
 
-class TestStaleApproachArchival:
-    """Tests for auto-archiving stale approaches."""
+class TestStaleHandoffArchival:
+    """Tests for auto-archiving stale handoffs."""
 
     def test_stale_approach_archived_on_inject(self, manager: LessonsManager) -> None:
         """Approaches untouched for >7 days are auto-archived during inject."""
@@ -2509,8 +2509,8 @@ class TestStaleApproachArchival:
         assert "Fresh task" in manager.project_approaches_file.read_text()
 
 
-class TestCompletedApproachArchival:
-    """Tests for auto-archiving completed approaches after N days."""
+class TestCompletedHandoffArchival:
+    """Tests for auto-archiving completed handoffs after N days."""
 
     def test_completed_approach_archived_after_days(self, manager: LessonsManager) -> None:
         """Completed approaches are archived after APPROACH_COMPLETED_ARCHIVE_DAYS."""
@@ -2618,7 +2618,7 @@ class TestCompletedApproachArchival:
 
 
 class TestAutoCompleteOnFinalPattern:
-    """Tests for auto-completing approaches when tried step matches 'final' patterns."""
+    """Tests for auto-completing handoffs when tried step matches 'final' patterns."""
 
     def test_tried_with_final_commit_autocompletes(self, manager: LessonsManager) -> None:
         """Adding tried step with 'Final report and commit' marks approach complete."""
@@ -2714,7 +2714,7 @@ class TestAutoCompleteOnFinalPattern:
 
 
 class TestAutoPhaseUpdate:
-    """Tests for auto-updating phase based on tried steps."""
+    """Tests for auto-updating phase based on tried steps in handoffs."""
 
     def test_implement_keyword_bumps_to_implementing(self, manager: LessonsManager) -> None:
         """Tried step containing 'implement' bumps phase to implementing."""
@@ -2843,7 +2843,7 @@ class TestAutoPhaseUpdate:
 
 
 class TestExtractThemes:
-    """Tests for _extract_themes() step categorization."""
+    """Tests for _extract_themes() step categorization in handoffs."""
 
     def test_extract_themes_guard_keywords(self, manager: LessonsManager) -> None:
         """Steps with guard/destructor keywords are categorized as 'guard'."""
@@ -2926,7 +2926,7 @@ class TestExtractThemes:
 
 
 class TestSummarizeTriedSteps:
-    """Tests for _summarize_tried_steps() compact formatting."""
+    """Tests for _summarize_tried_steps() compact formatting in handoffs."""
 
     def test_summarize_empty_returns_empty(self, manager: LessonsManager) -> None:
         """Empty tried list returns empty list of lines."""
@@ -3029,8 +3029,8 @@ class TestSummarizeTriedSteps:
         assert "Earlier:" not in result_str
 
 
-class TestApproachInjectCompact:
-    """Tests for compact approach injection format."""
+class TestHandoffInjectCompact:
+    """Tests for compact handoff injection format."""
 
     def test_inject_shows_relative_time(self, manager: LessonsManager) -> None:
         """Injection shows relative time instead of full dates."""

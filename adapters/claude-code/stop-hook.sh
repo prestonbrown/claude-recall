@@ -235,41 +235,54 @@ process_ai_lessons() {
     (( added_count > 0 )) && echo "[lessons] $added_count AI lesson(s) added" >&2
 }
 
-# Detect and process APPROACH patterns in assistant messages
+# ============================================================
+# HANDOFF PATTERN PROCESSING
+# ============================================================
+# Patterns processed (from transcript output):
+#   HANDOFF: <title>              - Start tracking new handoff
+#   HANDOFF UPDATE <id>: ...      - Update existing handoff
+#   HANDOFF COMPLETE <id>         - Mark handoff complete
+#
+# Legacy patterns still supported:
+#   APPROACH: <title>             - Alias for HANDOFF:
+#   APPROACH UPDATE <id>: ...     - Alias for HANDOFF UPDATE
+#   APPROACH COMPLETE <id>        - Alias for HANDOFF COMPLETE
+#
 # ID can be explicit (A###) or LAST (most recently created in this processing run)
-# Patterns:
-#   APPROACH: <title>                                     -> approach add "<title>"
-#   APPROACH: <title> - <description>                     -> approach add "<title>" --desc "<description>"
-#   PLAN MODE: <title>                                    -> approach add "<title>" --phase research --agent plan
-#   APPROACH UPDATE A###|LAST: status <status>            -> approach update ID --status <status>
-#   APPROACH UPDATE A###|LAST: phase <phase>              -> approach update ID --phase <phase>
-#   APPROACH UPDATE A###|LAST: agent <agent>              -> approach update ID --agent <agent>
-#   APPROACH UPDATE A###|LAST: desc <text>                -> approach update ID --desc "<text>"
-#   APPROACH UPDATE A###|LAST: tried <outcome> - <desc>   -> approach update ID --tried <outcome> "<desc>"
-#   APPROACH UPDATE A###|LAST: next <text>                -> approach update ID --next "<text>"
-#   APPROACH COMPLETE A###|LAST                           -> approach complete ID
-process_approaches() {
+# Full pattern variants:
+#   HANDOFF/APPROACH: <title>                                     -> approach add "<title>"
+#   HANDOFF/APPROACH: <title> - <description>                     -> approach add "<title>" --desc "<description>"
+#   PLAN MODE: <title>                                            -> approach add "<title>" --phase research --agent plan
+#   HANDOFF/APPROACH UPDATE A###|LAST: status <status>            -> approach update ID --status <status>
+#   HANDOFF/APPROACH UPDATE A###|LAST: phase <phase>              -> approach update ID --phase <phase>
+#   HANDOFF/APPROACH UPDATE A###|LAST: agent <agent>              -> approach update ID --agent <agent>
+#   HANDOFF/APPROACH UPDATE A###|LAST: desc <text>                -> approach update ID --desc "<text>"
+#   HANDOFF/APPROACH UPDATE A###|LAST: tried <outcome> - <desc>   -> approach update ID --tried <outcome> "<desc>"
+#   HANDOFF/APPROACH UPDATE A###|LAST: next <text>                -> approach update ID --next "<text>"
+#   HANDOFF/APPROACH COMPLETE A###|LAST                           -> approach complete ID
+process_handoffs() {
     local transcript_path="$1"
     local project_root="$2"
     local last_timestamp="$3"
     local processed_count=0
-    local last_approach_id=""  # Track last created approach for LAST reference
+    local last_handoff_id=""  # Track last created handoff for LAST reference
 
-    # Extract approach patterns from assistant messages
+    # Extract handoff patterns from assistant messages
     # Also match PLAN MODE: pattern for plan mode integration
-    local approach_lines=""
+    # Support both HANDOFF and APPROACH (legacy) patterns
+    local pattern_lines=""
     if [[ -z "$last_timestamp" ]]; then
-        approach_lines=$(jq -r 'select(.type == "assistant") |
+        pattern_lines=$(jq -r 'select(.type == "assistant") |
             .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -E '^(APPROACH( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
+            grep -E '^((HANDOFF|APPROACH)( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
     else
-        approach_lines=$(jq -r --arg ts "$last_timestamp" '
+        pattern_lines=$(jq -r --arg ts "$last_timestamp" '
             select(.type == "assistant" and .timestamp > $ts) |
             .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -E '^(APPROACH( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
+            grep -E '^((HANDOFF|APPROACH)( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
     fi
 
-    [[ -z "$approach_lines" ]] && return 0
+    [[ -z "$pattern_lines" ]] && return 0
 
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
@@ -277,10 +290,10 @@ process_approaches() {
         [[ ${#line} -gt 1000 ]] && continue
         local result=""
 
-        # Pattern 1: APPROACH: <title> [- <description>] -> add new approach
+        # Pattern 1: HANDOFF: or APPROACH: <title> [- <description>] -> add new handoff
         # Use -- to terminate options and prevent injection via crafted titles
-        if [[ "$line" =~ ^APPROACH:\ (.+)$ ]]; then
-            local full_match="${BASH_REMATCH[1]}"
+        if [[ "$line" =~ ^(HANDOFF|APPROACH):\ (.+)$ ]]; then
+            local full_match="${BASH_REMATCH[2]}"
             local title=""
             local desc=""
 
@@ -304,13 +317,13 @@ process_approaches() {
                     result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                         python3 "$PYTHON_MANAGER" approach add -- "$title" 2>&1 || true)
                 fi
-                # Extract created ID for LAST reference (e.g., "Added approach hf-a1b2c3d: ..." or "Added approach A001: ...")
-                if [[ "$result" =~ Added\ approach\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) ]]; then
-                    last_approach_id="${BASH_REMATCH[1]}"
+                # Extract created ID for LAST reference (e.g., "Added handoff hf-a1b2c3d: ..." or "Added handoff A001: ...")
+                if [[ "$result" =~ Added\ (approach|handoff)\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) ]]; then
+                    last_handoff_id="${BASH_REMATCH[2]}"
                 fi
             fi
 
-        # Pattern 1b: PLAN MODE: <title> -> add approach with plan mode defaults
+        # Pattern 1b: PLAN MODE: <title> -> add handoff with plan mode defaults
         elif [[ "$line" =~ ^PLAN\ MODE:\ (.+)$ ]]; then
             local title="${BASH_REMATCH[1]}"
             title=$(sanitize_input "$title" 200)
@@ -320,122 +333,122 @@ process_approaches() {
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
                     python3 "$PYTHON_MANAGER" approach add --phase research --agent plan -- "$title" 2>&1 || true)
                 # Extract created ID for LAST reference
-                if [[ "$result" =~ Added\ approach\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) ]]; then
-                    last_approach_id="${BASH_REMATCH[1]}"
+                if [[ "$result" =~ Added\ (approach|handoff)\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}) ]]; then
+                    last_handoff_id="${BASH_REMATCH[2]}"
                 fi
             fi
 
-        # Pattern 2: APPROACH UPDATE A###|hf-XXXXXXX|LAST: status <status>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ status\ (.+)$ ]]; then
-            local approach_id="${BASH_REMATCH[1]}"
-            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
-            [[ -z "$approach_id" ]] && continue
-            local status="${BASH_REMATCH[2]}"
+        # Pattern 2: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: status <status>
+        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ status\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[2]}"
+            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
+            [[ -z "$handoff_id" ]] && continue
+            local status="${BASH_REMATCH[3]}"
             status=$(sanitize_input "$status" 20)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --status "$status" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --status "$status" 2>&1 || true)
             fi
 
-        # Pattern 2b: APPROACH UPDATE A###|hf-XXXXXXX|LAST: phase <phase>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ phase\ (.+)$ ]]; then
-            local approach_id="${BASH_REMATCH[1]}"
-            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
-            [[ -z "$approach_id" ]] && continue
-            local phase="${BASH_REMATCH[2]}"
+        # Pattern 2b: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: phase <phase>
+        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ phase\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[2]}"
+            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
+            [[ -z "$handoff_id" ]] && continue
+            local phase="${BASH_REMATCH[3]}"
             phase=$(sanitize_input "$phase" 20)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --phase "$phase" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --phase "$phase" 2>&1 || true)
             fi
 
-        # Pattern 2c: APPROACH UPDATE A###|hf-XXXXXXX|LAST: agent <agent>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ agent\ (.+)$ ]]; then
-            local approach_id="${BASH_REMATCH[1]}"
-            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
-            [[ -z "$approach_id" ]] && continue
-            local agent="${BASH_REMATCH[2]}"
+        # Pattern 2c: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: agent <agent>
+        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ agent\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[2]}"
+            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
+            [[ -z "$handoff_id" ]] && continue
+            local agent="${BASH_REMATCH[3]}"
             agent=$(sanitize_input "$agent" 30)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --agent "$agent" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --agent "$agent" 2>&1 || true)
             fi
 
-        # Pattern 2d: APPROACH UPDATE A###|hf-XXXXXXX|LAST: desc <text>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ desc\ (.+)$ ]]; then
-            local approach_id="${BASH_REMATCH[1]}"
-            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
-            [[ -z "$approach_id" ]] && continue
-            local desc_text="${BASH_REMATCH[2]}"
+        # Pattern 2d: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: desc <text>
+        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ desc\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[2]}"
+            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
+            [[ -z "$handoff_id" ]] && continue
+            local desc_text="${BASH_REMATCH[3]}"
             desc_text=$(sanitize_input "$desc_text" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --desc "$desc_text" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --desc "$desc_text" 2>&1 || true)
             fi
 
-        # Pattern 3: APPROACH UPDATE A###|hf-XXXXXXX|LAST: tried <outcome> - <description>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
-            local approach_id="${BASH_REMATCH[1]}"
-            local outcome="${BASH_REMATCH[2]}"
-            local description="${BASH_REMATCH[3]}"
-            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
-            [[ -z "$approach_id" ]] && continue
+        # Pattern 3: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: tried <outcome> - <description>
+        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[2]}"
+            local outcome="${BASH_REMATCH[3]}"
+            local description="${BASH_REMATCH[4]}"
+            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
+            [[ -z "$handoff_id" ]] && continue
             # Validate outcome is one of the expected values
             [[ "$outcome" =~ ^(success|fail|partial)$ ]] || continue
             description=$(sanitize_input "$description" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --tried "$outcome" "$description" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --tried "$outcome" "$description" 2>&1 || true)
             fi
 
-        # Pattern 4: APPROACH UPDATE A###|hf-XXXXXXX|LAST: next <text>
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ next\ (.+)$ ]]; then
-            local approach_id="${BASH_REMATCH[1]}"
-            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
-            [[ -z "$approach_id" ]] && continue
-            local next_text="${BASH_REMATCH[2]}"
+        # Pattern 4: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: next <text>
+        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ next\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[2]}"
+            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
+            [[ -z "$handoff_id" ]] && continue
+            local next_text="${BASH_REMATCH[3]}"
             next_text=$(sanitize_input "$next_text" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --next -- "$next_text" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --next -- "$next_text" 2>&1 || true)
 
                 # Infer blocked_by from next_steps text patterns
                 local inferred_blockers
                 inferred_blockers=$(infer_blocked_by "$next_text")
                 if [[ -n "$inferred_blockers" ]]; then
                     PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                        python3 "$PYTHON_MANAGER" approach update "$approach_id" --blocked-by "$inferred_blockers" 2>&1 || true
+                        python3 "$PYTHON_MANAGER" approach update "$handoff_id" --blocked-by "$inferred_blockers" 2>&1 || true
                 fi
             fi
 
-        # Pattern 4b: APPROACH UPDATE A###|hf-XXXXXXX|LAST: blocked_by <id>,<id>,...
-        elif [[ "$line" =~ ^APPROACH\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ blocked_by\ (.+)$ ]]; then
-            local approach_id="${BASH_REMATCH[1]}"
-            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
-            [[ -z "$approach_id" ]] && continue
-            local blocked_ids="${BASH_REMATCH[2]}"
+        # Pattern 4b: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: blocked_by <id>,<id>,...
+        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ blocked_by\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[2]}"
+            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
+            [[ -z "$handoff_id" ]] && continue
+            local blocked_ids="${BASH_REMATCH[3]}"
             blocked_ids=$(sanitize_input "$blocked_ids" 200)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach update "$approach_id" --blocked-by "$blocked_ids" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach update "$handoff_id" --blocked-by "$blocked_ids" 2>&1 || true)
             fi
 
-        # Pattern 5: APPROACH COMPLETE A###|hf-XXXXXXX|LAST
-        elif [[ "$line" =~ ^APPROACH\ COMPLETE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)$ ]]; then
-            local approach_id="${BASH_REMATCH[1]}"
-            [[ "$approach_id" == "LAST" ]] && approach_id="$last_approach_id"
-            [[ -z "$approach_id" ]] && continue
+        # Pattern 5: HANDOFF/APPROACH COMPLETE A###|hf-XXXXXXX|LAST
+        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ COMPLETE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)$ ]]; then
+            local handoff_id="${BASH_REMATCH[2]}"
+            [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
+            [[ -z "$handoff_id" ]] && continue
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
                 result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                    python3 "$PYTHON_MANAGER" approach complete "$approach_id" 2>&1 || true)
+                    python3 "$PYTHON_MANAGER" approach complete "$handoff_id" 2>&1 || true)
             fi
         fi
 
@@ -443,12 +456,12 @@ process_approaches() {
         if [[ -n "$result" && "$result" != Error:* ]]; then
             ((processed_count++)) || true
         fi
-    done <<< "$approach_lines"
+    done <<< "$pattern_lines"
 
-    (( processed_count > 0 )) && echo "[approaches] $processed_count approach command(s) processed" >&2
+    (( processed_count > 0 )) && echo "[handoffs] $processed_count handoff command(s) processed" >&2
 }
 
-# Capture TodoWrite tool calls and sync to approaches
+# Capture TodoWrite tool calls and sync to handoffs
 # This bridges ephemeral TodoWrite with persistent HANDOFFS.md
 # - completed todos -> tried entries (success)
 # - in_progress todo -> checkpoint
@@ -485,14 +498,14 @@ capture_todowrite() {
         return 0
     fi
 
-    # Call Python manager to sync todos to approach
+    # Call Python manager to sync todos to handoff
     if [[ -f "$PYTHON_MANAGER" ]]; then
         local result
         result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
             python3 "$PYTHON_MANAGER" approach sync-todos "$todo_json" 2>&1 || true)
 
         if [[ -n "$result" && "$result" != Error:* ]]; then
-            echo "[approaches] Synced TodoWrite to approach" >&2
+            echo "[handoffs] Synced TodoWrite to handoff" >&2
         fi
     fi
 }
@@ -525,10 +538,10 @@ main() {
     # Process AI LESSON: patterns (adds new AI-generated lessons)
     process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
 
-    # Process APPROACH: patterns (approach tracking and plan mode)
-    process_approaches "$transcript_path" "$project_root" "$last_timestamp"
+    # Process HANDOFF/APPROACH: patterns (handoff tracking and plan mode)
+    process_handoffs "$transcript_path" "$project_root" "$last_timestamp"
 
-    # Capture TodoWrite tool calls and sync to approaches
+    # Capture TodoWrite tool calls and sync to handoffs
     capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
 
     # Process entries newer than checkpoint

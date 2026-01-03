@@ -22,11 +22,15 @@ else
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
 
-# Tunable parameters
-MIN_PROMPT_LENGTH=20     # Skip short prompts like "hi" or "yes"
-RELEVANCE_TIMEOUT=10     # Max seconds to wait for Haiku scoring
-MIN_RELEVANCE_SCORE=3    # Only include lessons scored >= this
-TOP_LESSONS=5            # Max lessons to inject
+# Tunable parameters for relevance scoring
+RELEVANCE_TOP_N=5          # Number of lessons to inject after scoring
+SCORE_RELEVANCE_TIMEOUT=10 # Haiku timeout in seconds (10s handles ~100 lessons)
+MIN_PROMPT_LENGTH=20       # Skip scoring for very short prompts
+MIN_RELEVANCE_SCORE=3      # Only include lessons scored >= this threshold
+
+# Backward compatibility aliases
+TOP_LESSONS=$RELEVANCE_TOP_N
+RELEVANCE_TIMEOUT=$SCORE_RELEVANCE_TIMEOUT
 
 is_enabled() {
     local config="$HOME/.claude/settings.json"

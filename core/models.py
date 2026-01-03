@@ -26,26 +26,23 @@ ROBOT_EMOJI = "\U0001f916"  # Robot emoji for AI lessons
 VELOCITY_DECAY_FACTOR = 0.5  # 50% half-life per decay cycle
 VELOCITY_EPSILON = 0.01  # Below this, treat velocity as zero
 
-# Handoff visibility constants (renamed from Approach)
+# Handoff visibility constants
 HANDOFF_MAX_COMPLETED = 3  # Keep last N completed handoffs visible
 HANDOFF_MAX_AGE_DAYS = 7  # Or completed within N days
 HANDOFF_STALE_DAYS = 7  # Auto-archive active handoffs untouched for N days
 HANDOFF_COMPLETED_ARCHIVE_DAYS = 3  # Archive completed handoffs after N days
 
-# Backward compatibility aliases for constants
+# DEPRECATED (remove after 2025-06-01): Use HANDOFF_* constants instead
 APPROACH_MAX_COMPLETED = HANDOFF_MAX_COMPLETED
 APPROACH_MAX_AGE_DAYS = HANDOFF_MAX_AGE_DAYS
 APPROACH_STALE_DAYS = HANDOFF_STALE_DAYS
 APPROACH_COMPLETED_ARCHIVE_DAYS = HANDOFF_COMPLETED_ARCHIVE_DAYS
 
 # Relevance scoring constants
-SCORE_RELEVANCE_TIMEOUT = 30  # Default timeout for Haiku call
+SCORE_RELEVANCE_TIMEOUT = 30  # 30 seconds is enough for Haiku to score ~100 lessons
 SCORE_RELEVANCE_MAX_QUERY_LEN = 5000  # Truncate query to prevent huge prompts
 
 # Regex patterns for parsing lessons
-LESSON_HEADER_PATTERN = re.compile(
-    r"^###\s*\[([LS]\d{3})\]\s*\[([^\]]+)\]\s*(.+)$"
-)
 # Support both old format (/) and new format (|)
 LESSON_HEADER_PATTERN_FLEXIBLE = re.compile(
     r"^###\s*\[([LS]\d{3})\]\s*\[([*+\-|/\ ]+)\]\s*(.*)$"
@@ -255,12 +252,17 @@ class DecayResult:
 
 @dataclass
 class TriedStep:
-    """Represents a tried step within a Handoff."""
+    """A single tried step within a Handoff.
+
+    Attributes:
+        description: What was attempted
+        outcome: 'success', 'fail', or 'partial'
+    """
     outcome: str  # success|fail|partial
     description: str
 
 
-# Backward compatibility alias
+# DEPRECATED (remove after 2025-06-01): Use TriedStep instead
 TriedApproach = TriedStep
 
 
@@ -296,7 +298,7 @@ class Handoff:
         self.refs = value
 
 
-# Backward compatibility alias
+# DEPRECATED (remove after 2025-06-01): Use Handoff instead
 Approach = Handoff
 
 
@@ -313,7 +315,7 @@ class HandoffCompleteResult:
         return self.handoff
 
 
-# Backward compatibility alias
+# DEPRECATED (remove after 2025-06-01): Use HandoffCompleteResult instead
 ApproachCompleteResult = HandoffCompleteResult
 
 
