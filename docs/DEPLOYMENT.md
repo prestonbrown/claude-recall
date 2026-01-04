@@ -115,8 +115,8 @@ cp -r /path/to/claude-recall/adapters/opencode/* lessons-plugin/
 |----------|---------|
 | `~/.claude/hooks/inject-hook.sh` | SessionStart hook |
 | `~/.claude/hooks/stop-hook.sh` | Stop hook - citation tracking |
-| `~/.claude/hooks/session-end-hook.sh` | Stop hook - handoff context capture |
-| `~/.claude/hooks/precompact-hook.sh` | PreCompact hook - handoff context before compaction |
+| `~/.claude/hooks/session-end-hook.sh` | Stop hook - captures handoff context |
+| `~/.claude/hooks/precompact-hook.sh` | PreCompact hook - saves handoff context before compaction |
 | `~/.claude/settings.json` | Claude Code configuration |
 
 ### Project Files
@@ -222,7 +222,7 @@ Start a new Claude Code session. You should see:
 - "LESSONS ACTIVE: X system (S###), Y project (L###)"
 - Top lessons with star ratings
 - "LESSON DUTY" reminder
-- "APPROACH TRACKING" instructions
+- "HANDOFF TRACKING" instructions
 
 ## Troubleshooting
 
@@ -278,7 +278,7 @@ Start a new Claude Code session. You should see:
    cat $PROJECT/.claude-recall/HANDOFFS.md
    ```
 
-2. **Test handoff injection:**
+2. **Test handoffs injection:**
    ```bash
    PROJECT_DIR=$PWD python3 ~/.config/claude-recall/cli.py handoff inject
    ```
@@ -303,9 +303,9 @@ Start a new Claude Code session. You should see:
 # Backup system lessons
 cp ~/.config/claude-recall/LESSONS.md ~/lessons-backup-$(date +%Y%m%d).md
 
-# Backup project lessons and approaches
+# Backup project lessons and handoffs
 cp .claude-recall/LESSONS.md ~/project-lessons-$(date +%Y%m%d).md
-cp .claude-recall/APPROACHES.md ~/approaches-$(date +%Y%m%d).md
+cp .claude-recall/HANDOFFS.md ~/handoffs-$(date +%Y%m%d).md
 ```
 
 ### Migrate to New Machine

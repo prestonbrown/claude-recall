@@ -17,13 +17,13 @@ Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 - **AI-generated lessons**: Agent can propose lessons (marked with robot emoji)
 - **Token tracking**: Warns when context injection is heavy (>2000 tokens)
 
-### Handoffs System (formerly "Approaches")
+### Handoffs System
 - **TodoWrite sync**: Use TodoWrite naturally - todos auto-sync to HANDOFFS.md for persistence
 - **Work tracking**: Track ongoing tasks with tried steps and next steps
 - **Phases**: `research` → `planning` → `implementing` → `review`
 - **Session continuity**: Handoffs restore as TodoWrite suggestions on next session
 - **Completion workflow**: Extract lessons when finishing work
-- **Command patterns**: Uses `APPROACH:`, `APPROACH UPDATE`, `APPROACH COMPLETE` for backward compatibility
+- **Command patterns**: `HANDOFF:`, `HANDOFF UPDATE`, `HANDOFF COMPLETE`
 
 ## Quick Install
 
@@ -88,10 +88,10 @@ Your todos map to handoff fields:
 **Manual handoff commands** (for explicit control):
 
 ```
-APPROACH: Implement WebSocket reconnection
-APPROACH UPDATE A001: tried fail - Simple setTimeout retry races with disconnect
-APPROACH UPDATE A001: tried success - Event-based with AbortController
-APPROACH COMPLETE A001
+HANDOFF: Implement WebSocket reconnection
+HANDOFF UPDATE hf-abc1234: tried fail - Simple setTimeout retry races with disconnect
+HANDOFF UPDATE hf-abc1234: tried success - Event-based with AbortController
+HANDOFF COMPLETE hf-abc1234
 ```
 
 ### Plan Mode Integration
@@ -121,7 +121,7 @@ Use the `/lessons` slash command:
 
 ### Lessons Lifecycle
 
-1. **Session Start**: Top 3 lessons by stars + approaches injected as context
+1. **Session Start**: Top 3 lessons by stars + handoffs injected as context
 2. **First Prompt**: Smart injection scores all lessons against query via Haiku, injects most relevant
 3. **Citation**: Agent cites `[L001]` when applying → uses/velocity increase
 4. **Decay**: Weekly decay reduces velocity; stale lessons lose uses
@@ -143,14 +143,14 @@ Right side: Recent velocity (decays over time)
 
 **Via TodoWrite (recommended)**:
 1. **Use TodoWrite**: Agent uses TodoWrite naturally with reminders
-2. **Auto-sync**: stop-hook captures final todo state to APPROACHES.md
-3. **Restore**: Next session, inject-hook formats approach as TodoWrite continuation
+2. **Auto-sync**: stop-hook captures final todo state to HANDOFFS.md
+3. **Restore**: Next session, inject-hook formats handoff as TodoWrite continuation
 
 **Via manual commands**:
-1. **Create**: `APPROACH: title` or `PLAN MODE: title`
-2. **Track**: Update status, phase, tried approaches, next steps
-3. **Complete**: `APPROACH COMPLETE A001` triggers lesson extraction prompt
-4. **Archive**: Completed approaches move to archive, recent ones stay visible
+1. **Create**: `HANDOFF: title` or `PLAN MODE: title`
+2. **Track**: Update status, phase, tried steps, next steps
+3. **Complete**: `HANDOFF COMPLETE hf-abc1234` triggers lesson extraction prompt
+4. **Archive**: Completed handoffs move to archive, recent ones stay visible
 
 ### Phase Detection
 
@@ -178,7 +178,7 @@ The system can infer phases from tool usage:
 
 <project>/.claude-recall/
 ├── LESSONS.md                  # Project-specific lessons
-└── HANDOFFS.md                 # Active work tracking (formerly APPROACHES.md)
+└── HANDOFFS.md                 # Active work tracking
 ```
 
 ### Core Implementation
@@ -277,9 +277,9 @@ When working with you, the agent will:
 
 1. **CITE** lessons when applying: *"Applying [L001]: using XML event_cb..."*
 2. **PROPOSE** lessons when corrected or discovering patterns
-3. **TRACK** approaches for multi-step work
+3. **TRACK** handoffs for multi-step work
 4. **UPDATE** phase and status as work progresses
-5. **EXTRACT** lessons when completing approaches
+5. **EXTRACT** lessons when completing handoffs
 
 ## Testing
 

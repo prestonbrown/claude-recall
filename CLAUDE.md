@@ -25,7 +25,7 @@ Stop hook → parses output, updates lessons/handoffs, tracks citations
 
 **Lessons**: Dual-rated `[uses|velocity]` - left = total uses (log scale), right = recency (decays 50%/week). At 50 uses, project lessons promote to system.
 
-**Handoffs**: Track multi-step work with status, phase (research→planning→implementing→review), tried steps, and next steps. (Formerly called "approaches".)
+**Handoffs**: Track multi-step work with status, phase (research→planning→implementing→review), tried steps, and next steps.
 
 ## Key Commands
 
@@ -38,7 +38,7 @@ python3 core/cli.py inject 5                          # Top 5 by stars
 python3 core/cli.py score-relevance "query" --top 5   # Top 5 by relevance
 python3 core/cli.py add pattern "Title" "Content"
 python3 core/cli.py cite L001
-python3 core/cli.py handoff list                      # or 'approach list' (alias)
+python3 core/cli.py handoff list
 ```
 
 ## Writing Tests
@@ -68,6 +68,6 @@ python3 core/cli.py handoff list                      # or 'approach list' (alia
 Stop hook parses these from agent output:
 - `LESSON: [category:] title - content` → add project lesson
 - `[L001]:` or `[S001]:` → cite (increments uses/velocity)
-- `APPROACH: title` → start tracking work (handoff)
-- `APPROACH UPDATE A001: tried success|fail|partial - desc` → record attempt
-- `APPROACH COMPLETE A001` → finish and extract lessons
+- `HANDOFF: title` → start tracking work
+- `HANDOFF UPDATE H001: tried success|fail|partial - desc` → record attempt
+- `HANDOFF COMPLETE H001` → finish and extract lessons

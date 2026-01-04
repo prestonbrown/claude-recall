@@ -252,23 +252,18 @@ process_ai_lessons() {
 #   HANDOFF UPDATE <id>: ...      - Update existing handoff
 #   HANDOFF COMPLETE <id>         - Mark handoff complete
 #
-# Legacy patterns still supported:
-#   APPROACH: <title>             - Alias for HANDOFF:
-#   APPROACH UPDATE <id>: ...     - Alias for HANDOFF UPDATE
-#   APPROACH COMPLETE <id>        - Alias for HANDOFF COMPLETE
-#
-# ID can be explicit (A###) or LAST (most recently created in this processing run)
+# ID can be hf-XXXXXXX (new format) or legacy A### format
 # Full pattern variants:
-#   HANDOFF/APPROACH: <title>                                     -> approach add "<title>"
-#   HANDOFF/APPROACH: <title> - <description>                     -> approach add "<title>" --desc "<description>"
-#   PLAN MODE: <title>                                            -> approach add "<title>" --phase research --agent plan
-#   HANDOFF/APPROACH UPDATE A###|LAST: status <status>            -> approach update ID --status <status>
-#   HANDOFF/APPROACH UPDATE A###|LAST: phase <phase>              -> approach update ID --phase <phase>
-#   HANDOFF/APPROACH UPDATE A###|LAST: agent <agent>              -> approach update ID --agent <agent>
-#   HANDOFF/APPROACH UPDATE A###|LAST: desc <text>                -> approach update ID --desc "<text>"
-#   HANDOFF/APPROACH UPDATE A###|LAST: tried <outcome> - <desc>   -> approach update ID --tried <outcome> "<desc>"
-#   HANDOFF/APPROACH UPDATE A###|LAST: next <text>                -> approach update ID --next "<text>"
-#   HANDOFF/APPROACH COMPLETE A###|LAST                           -> approach complete ID
+#   HANDOFF: <title>                                     -> handoff add "<title>"
+#   HANDOFF: <title> - <description>                     -> handoff add "<title>" --desc "<description>"
+#   PLAN MODE: <title>                                   -> handoff add "<title>" --phase research --agent plan
+#   HANDOFF UPDATE <id>|LAST: status <status>            -> handoff update ID --status <status>
+#   HANDOFF UPDATE <id>|LAST: phase <phase>              -> handoff update ID --phase <phase>
+#   HANDOFF UPDATE <id>|LAST: agent <agent>              -> handoff update ID --agent <agent>
+#   HANDOFF UPDATE <id>|LAST: desc <text>                -> handoff update ID --desc "<text>"
+#   HANDOFF UPDATE <id>|LAST: tried <outcome> - <desc>   -> handoff update ID --tried <outcome> "<desc>"
+#   HANDOFF UPDATE <id>|LAST: next <text>                -> handoff update ID --next "<text>"
+#   HANDOFF COMPLETE <id>|LAST                           -> handoff complete ID
 process_handoffs() {
     local transcript_path="$1"
     local project_root="$2"
@@ -278,17 +273,16 @@ process_handoffs() {
 
     # Extract handoff patterns from assistant messages
     # Also match PLAN MODE: pattern for plan mode integration
-    # Support both HANDOFF and APPROACH (legacy) patterns
     local pattern_lines=""
     if [[ -z "$last_timestamp" ]]; then
         pattern_lines=$(jq -r 'select(.type == "assistant") |
             .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -E '^((HANDOFF|APPROACH)( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
+            grep -E '^(HANDOFF( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
     else
         pattern_lines=$(jq -r --arg ts "$last_timestamp" '
             select(.type == "assistant" and .timestamp > $ts) |
             .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -E '^((HANDOFF|APPROACH)( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
+            grep -E '^(HANDOFF( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
     fi
 
     [[ -z "$pattern_lines" ]] && return 0
@@ -299,10 +293,10 @@ process_handoffs() {
         [[ ${#line} -gt 1000 ]] && continue
         local result=""
 
-        # Pattern 1: HANDOFF: or APPROACH: <title> [- <description>] -> add new handoff
+        # Pattern 1: HANDOFF: <title> [- <description>] -> add new handoff
         # Use -- to terminate options and prevent injection via crafted titles
-        if [[ "$line" =~ ^(HANDOFF|APPROACH):\ (.+)$ ]]; then
-            local full_match="${BASH_REMATCH[2]}"
+        if [[ "$line" =~ ^HANDOFF:\ (.+)$ ]]; then
+            local full_match="${BASH_REMATCH[1]}"
             local title=""
             local desc=""
 
@@ -347,12 +341,12 @@ process_handoffs() {
                 fi
             fi
 
-        # Pattern 2: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: status <status>
-        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ status\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[2]}"
+        # Pattern 2: HANDOFF UPDATE <id>|LAST: status <status>
+        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ status\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[1]}"
             [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
             [[ -z "$handoff_id" ]] && continue
-            local status="${BASH_REMATCH[3]}"
+            local status="${BASH_REMATCH[2]}"
             status=$(sanitize_input "$status" 20)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -360,12 +354,12 @@ process_handoffs() {
                     python3 "$PYTHON_MANAGER" approach update "$handoff_id" --status "$status" 2>&1 || true)
             fi
 
-        # Pattern 2b: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: phase <phase>
-        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ phase\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[2]}"
+        # Pattern 2b: HANDOFF UPDATE <id>|LAST: phase <phase>
+        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ phase\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[1]}"
             [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
             [[ -z "$handoff_id" ]] && continue
-            local phase="${BASH_REMATCH[3]}"
+            local phase="${BASH_REMATCH[2]}"
             phase=$(sanitize_input "$phase" 20)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -373,12 +367,12 @@ process_handoffs() {
                     python3 "$PYTHON_MANAGER" approach update "$handoff_id" --phase "$phase" 2>&1 || true)
             fi
 
-        # Pattern 2c: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: agent <agent>
-        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ agent\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[2]}"
+        # Pattern 2c: HANDOFF UPDATE <id>|LAST: agent <agent>
+        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ agent\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[1]}"
             [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
             [[ -z "$handoff_id" ]] && continue
-            local agent="${BASH_REMATCH[3]}"
+            local agent="${BASH_REMATCH[2]}"
             agent=$(sanitize_input "$agent" 30)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -386,12 +380,12 @@ process_handoffs() {
                     python3 "$PYTHON_MANAGER" approach update "$handoff_id" --agent "$agent" 2>&1 || true)
             fi
 
-        # Pattern 2d: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: desc <text>
-        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ desc\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[2]}"
+        # Pattern 2d: HANDOFF UPDATE <id>|LAST: desc <text>
+        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ desc\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[1]}"
             [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
             [[ -z "$handoff_id" ]] && continue
-            local desc_text="${BASH_REMATCH[3]}"
+            local desc_text="${BASH_REMATCH[2]}"
             desc_text=$(sanitize_input "$desc_text" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -399,11 +393,11 @@ process_handoffs() {
                     python3 "$PYTHON_MANAGER" approach update "$handoff_id" --desc "$desc_text" 2>&1 || true)
             fi
 
-        # Pattern 3: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: tried <outcome> - <description>
-        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[2]}"
-            local outcome="${BASH_REMATCH[3]}"
-            local description="${BASH_REMATCH[4]}"
+        # Pattern 3: HANDOFF UPDATE <id>|LAST: tried <outcome> - <description>
+        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ tried\ ([a-z]+)\ -\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[1]}"
+            local outcome="${BASH_REMATCH[2]}"
+            local description="${BASH_REMATCH[3]}"
             [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
             [[ -z "$handoff_id" ]] && continue
             # Validate outcome is one of the expected values
@@ -415,12 +409,12 @@ process_handoffs() {
                     python3 "$PYTHON_MANAGER" approach update "$handoff_id" --tried "$outcome" "$description" 2>&1 || true)
             fi
 
-        # Pattern 4: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: next <text>
-        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ next\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[2]}"
+        # Pattern 4: HANDOFF UPDATE <id>|LAST: next <text>
+        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ next\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[1]}"
             [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
             [[ -z "$handoff_id" ]] && continue
-            local next_text="${BASH_REMATCH[3]}"
+            local next_text="${BASH_REMATCH[2]}"
             next_text=$(sanitize_input "$next_text" 500)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -436,12 +430,12 @@ process_handoffs() {
                 fi
             fi
 
-        # Pattern 4b: HANDOFF/APPROACH UPDATE A###|hf-XXXXXXX|LAST: blocked_by <id>,<id>,...
-        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ blocked_by\ (.+)$ ]]; then
-            local handoff_id="${BASH_REMATCH[2]}"
+        # Pattern 4b: HANDOFF UPDATE <id>|LAST: blocked_by <id>,<id>,...
+        elif [[ "$line" =~ ^HANDOFF\ UPDATE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST):\ blocked_by\ (.+)$ ]]; then
+            local handoff_id="${BASH_REMATCH[1]}"
             [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
             [[ -z "$handoff_id" ]] && continue
-            local blocked_ids="${BASH_REMATCH[3]}"
+            local blocked_ids="${BASH_REMATCH[2]}"
             blocked_ids=$(sanitize_input "$blocked_ids" 200)
 
             if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -449,9 +443,9 @@ process_handoffs() {
                     python3 "$PYTHON_MANAGER" approach update "$handoff_id" --blocked-by "$blocked_ids" 2>&1 || true)
             fi
 
-        # Pattern 5: HANDOFF/APPROACH COMPLETE A###|hf-XXXXXXX|LAST
-        elif [[ "$line" =~ ^(HANDOFF|APPROACH)\ COMPLETE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)$ ]]; then
-            local handoff_id="${BASH_REMATCH[2]}"
+        # Pattern 5: HANDOFF COMPLETE <id>|LAST
+        elif [[ "$line" =~ ^HANDOFF\ COMPLETE\ (hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)$ ]]; then
+            local handoff_id="${BASH_REMATCH[1]}"
             [[ "$handoff_id" == "LAST" ]] && handoff_id="$last_handoff_id"
             [[ -z "$handoff_id" ]] && continue
 

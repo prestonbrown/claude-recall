@@ -24,7 +24,7 @@ Architecture, internals, and contributing guide for the Claude Recall system.
 ┌─────────────────────────────────────────────────────────────┐
 │                Python Core (lessons_manager.py)              │
 │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐ │
-│  │    Lessons     │  │   Approaches   │  │   Injection    │ │
+│  │    Lessons     │  │    Handoffs    │  │   Injection    │ │
 │  │  add/cite/edit │  │ phases/agents  │  │ token tracking │ │
 │  │  decay/promote │  │ tried/next     │  │ context budget │ │
 │  └────────────────┘  └────────────────┘  └────────────────┘ │
@@ -71,8 +71,8 @@ class Lesson:
     scope: str        # project, system
 
 @dataclass
-class Approach:
-    id: str           # A001, A002, etc.
+class Handoff:
+    id: str           # hf-abc1234 (hash-based for multi-agent safety)
     title: str
     status: str       # pending, in_progress, blocked, completed
     phase: str        # research, planning, implementing, review
@@ -82,7 +82,7 @@ class Approach:
     description: str
     next_steps: str
     files: List[str]
-    tried: List[TriedApproach]
+    tried: List[TriedStep]
 ```
 
 #### Key Functions
@@ -98,10 +98,10 @@ class Approach:
 | `inject(count)` | Generate top N lessons for context |
 | `decay(days)` | Reduce velocity for stale lessons |
 | `promote(lesson_id)` | Move project lesson to system |
-| `approach_add(title, phase, agent)` | Create new approach |
-| `approach_update(id, **kwargs)` | Update approach fields |
-| `approach_complete(id)` | Mark complete, prompt for lessons |
-| `approach_inject()` | Generate approach context |
+| `handoff_add(title, phase, agent)` | Create new handoff |
+| `handoff_update(id, **kwargs)` | Update handoff fields |
+| `handoff_complete(id)` | Mark complete, prompt for lessons |
+| `handoff_inject()` | Generate handoff context |
 
 #### Rating System
 
@@ -188,9 +188,9 @@ Lessons can become stale. The decay system addresses this:
 - `.decay-last-run`: Unix timestamp of last decay
 - Checkpoint file modification times indicate session activity
 
-### Approaches System
+### Handoffs System
 
-Approaches track multi-step work with rich metadata:
+Handoffs track multi-step work with rich metadata:
 
 **Phases:**
 | Phase | Description |
@@ -211,11 +211,11 @@ Approaches track multi-step work with rich metadata:
 
 **Visibility Rules:**
 ```python
-APPROACH_MAX_COMPLETED = 3   # Keep last N completed
-APPROACH_MAX_AGE_DAYS = 7    # Or within N days
+HANDOFF_MAX_COMPLETED = 3   # Keep last N completed
+HANDOFF_MAX_AGE_DAYS = 7    # Or within N days
 ```
 
-Completed approaches remain visible if they match EITHER criterion.
+Completed handoffs remain visible if they match EITHER criterion.
 
 ## Adapters
 
@@ -225,18 +225,18 @@ Two shell scripts hook into Claude Code's event system:
 
 **inject-hook.sh** (SessionStart):
 - Calls `lessons_manager.py inject` for top lessons
-- Calls `lessons_manager.py approach inject` for active approaches
-- Adds "LESSON DUTY" and "APPROACH TRACKING" reminders
+- Calls `lessons_manager.py handoff inject` for active handoffs
+- Adds "LESSON DUTY" and "HANDOFF TRACKING" reminders
 - Triggers weekly decay check in background
 
 **stop-hook.sh** (Stop):
 - Parses assistant output for patterns:
   - `LESSON: category: title - content`
   - `AI LESSON: category: title - content`
-  - `APPROACH: title`
+  - `HANDOFF: title`
   - `PLAN MODE: title`
-  - `APPROACH UPDATE A###: field value`
-  - `APPROACH COMPLETE A###`
+  - `HANDOFF UPDATE hf-xxx: field value`
+  - `HANDOFF COMPLETE hf-xxx`
   - `[L###]: Applied...` (citations)
 - Uses incremental checkpointing
 - Cleans orphaned checkpoints opportunistically
@@ -282,12 +282,12 @@ A TypeScript plugin that hooks into OpenCode events:
 - Use locks or queues when multiple handlers modify shared state
 ```
 
-### Approaches File (APPROACHES.md)
+### Handoffs File (HANDOFFS.md)
 
 ```markdown
-# Active Approaches
+# Active Handoffs
 
-### [A001] Implementing WebSocket reconnection
+### [hf-abc1234] Implementing WebSocket reconnection
 - **Status**: in_progress | **Phase**: implementing | **Agent**: general-purpose
 - **Created**: 2025-12-28 | **Updated**: 2025-12-29
 - **Files**: src/websocket.ts, src/connection-manager.ts
@@ -309,9 +309,9 @@ export async function reconnect(delay: number = 1000): Promise<void> {
 
 ---
 
-# Completed Approaches
+# Completed Handoffs
 
-### [A000] Initial setup
+### [hf-def5678] Initial setup
 - **Status**: completed | **Phase**: review | **Agent**: user
 - **Created**: 2025-12-27 | **Updated**: 2025-12-27
 - ...
@@ -374,8 +374,8 @@ set -x
 # View lessons
 python3 core/lessons_manager.py list
 
-# View approaches
-python3 core/lessons_manager.py approach list
+# View handoffs
+python3 core/lessons_manager.py handoff list
 
 # Test injection
 python3 core/lessons_manager.py inject 5
@@ -420,9 +420,9 @@ cat ~/.config/claude-recall/.decay-last-run
 VELOCITY_DECAY_FACTOR = 0.7   # Multiply velocity by this on decay
 VELOCITY_EPSILON = 0.1        # Values below round to zero
 
-# Approach visibility
-APPROACH_MAX_COMPLETED = 3    # Keep last N completed approaches
-APPROACH_MAX_AGE_DAYS = 7     # Or within N days
+# Handoff visibility
+HANDOFF_MAX_COMPLETED = 3    # Keep last N completed handoffs
+HANDOFF_MAX_AGE_DAYS = 7     # Or within N days
 
 # Token thresholds
 TOKEN_HEAVY_THRESHOLD = 2000  # Warn when injection exceeds this

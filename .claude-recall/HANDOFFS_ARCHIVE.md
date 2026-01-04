@@ -1,9 +1,9 @@
-# APPROACHES_ARCHIVE.md - Archived Approaches
+# HANDOFFS_ARCHIVE.md - Archived Handoffs
 
-> Previously completed or archived approaches.
+> Previously completed or archived handoffs.
 
 
-### [A001] Debug approach parsing in stop-hook
+### [A001] Debug handoff parsing in stop-hook
 - **Status**: completed | **Phase**: implementing | **Agent**: user
 - **Created**: 2025-12-29 | **Updated**: 2025-12-29
 - **Files**: 
@@ -27,7 +27,7 @@
 
 ---
 
-### [A006] Fix approach system bugs
+### [A006] Fix handoff system bugs
 - **Status**: completed | **Phase**: research | **Agent**: user
 - **Created**: 2025-12-30 | **Updated**: 2025-12-30
 - **Refs**: 

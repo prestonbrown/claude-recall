@@ -271,22 +271,6 @@ class DebugLogger:
             }
         )
 
-    # =========================================================================
-    # DEPRECATED ALIASES (remove after 2025-06-01)
-    # These delegate to handoff_* methods and are kept for API compatibility.
-    # =========================================================================
-
-    # DEPRECATED (remove after 2025-06-01): Use handoff_created instead
-    def approach_created(
-        self,
-        approach_id: str,
-        title: str,
-        phase: str,
-        agent: str,
-    ) -> None:
-        """DEPRECATED: Use handoff_created instead."""
-        return self.handoff_created(handoff_id=approach_id, title=title, phase=phase, agent=agent)
-
     def handoff_change(
         self,
         handoff_id: str,
@@ -308,17 +292,6 @@ class DebugLogger:
             }
         )
 
-    # DEPRECATED (remove after 2025-06-01): Use handoff_change instead
-    def approach_change(
-        self,
-        approach_id: str,
-        action: str,
-        old_value: Optional[str] = None,
-        new_value: Optional[str] = None,
-    ) -> None:
-        """DEPRECATED: Use handoff_change instead."""
-        return self.handoff_change(handoff_id=approach_id, action=action, old_value=old_value, new_value=new_value)
-
     def handoff_completed(
         self,
         handoff_id: str,
@@ -337,16 +310,6 @@ class DebugLogger:
                 "duration_days": duration_days,
             }
         )
-
-    # DEPRECATED (remove after 2025-06-01): Use handoff_completed instead
-    def approach_completed(
-        self,
-        approach_id: str,
-        tried_count: int,
-        duration_days: Optional[int] = None,
-    ) -> None:
-        """DEPRECATED: Use handoff_completed instead."""
-        return self.handoff_completed(handoff_id=approach_id, tried_count=tried_count, duration_days=duration_days)
 
     def error(self, operation: str, error: str, context: Optional[Dict] = None) -> None:
         """Log errors - level 1 (always shown when debug enabled)."""

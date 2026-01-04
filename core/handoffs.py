@@ -189,17 +189,6 @@ class HandoffsMixin:
         data_dir = self._get_project_data_dir()
         return data_dir / "HANDOFFS_LOCAL_ARCHIVE.md"
 
-    # Backward compatibility aliases
-    @property
-    def project_approaches_file(self) -> Path:
-        """Backward compatibility alias for project_handoffs_file."""
-        return self.project_handoffs_file
-
-    @property
-    def project_approaches_archive(self) -> Path:
-        """Backward compatibility alias for project_handoffs_archive."""
-        return self.project_handoffs_archive
-
     def _init_handoffs_file(self) -> None:
         """Initialize handoffs file with standard header if it doesn't exist.
 
@@ -220,11 +209,6 @@ class HandoffsMixin:
 
 """
         file_path.write_text(header)
-
-    # Backward compatibility alias
-    def _init_approaches_file(self) -> None:
-        """Backward compatibility alias for _init_handoffs_file."""
-        return self._init_handoffs_file()
 
     def _init_stealth_handoffs_file(self) -> None:
         """Initialize stealth handoffs file with header if it doesn't exist."""
@@ -515,11 +499,6 @@ class HandoffsMixin:
 
         return handoffs
 
-    # DEPRECATED (remove after 2025-06-01): Use _parse_handoffs_file instead
-    def _parse_approaches_file(self, file_path: Path) -> List[Handoff]:
-        """Backward compatibility alias for _parse_handoffs_file."""
-        return self._parse_handoffs_file(file_path)
-
     def _format_handoff(self, handoff: Handoff) -> str:
         """Format a handoff for markdown storage."""
         lines = [
@@ -568,11 +547,6 @@ class HandoffsMixin:
 
         return "\n".join(lines)
 
-    # DEPRECATED (remove after 2025-06-01): Use _format_handoff instead
-    def _format_approach(self, handoff: Handoff) -> str:
-        """Backward compatibility alias for _format_handoff."""
-        return self._format_handoff(handoff)
-
     def _write_handoffs_file(self, handoffs: List[Handoff]) -> None:
         """Write handoffs back to file."""
         self._init_handoffs_file()
@@ -591,11 +565,6 @@ class HandoffsMixin:
             parts.append("")
 
         self.project_handoffs_file.write_text("\n".join(parts))
-
-    # DEPRECATED (remove after 2025-06-01): Use _write_handoffs_file instead
-    def _write_approaches_file(self, handoffs: List[Handoff]) -> None:
-        """Backward compatibility alias for _write_handoffs_file."""
-        return self._write_handoffs_file(handoffs)
 
     def _write_stealth_handoffs_file(self, handoffs: List[Handoff]) -> None:
         """Write stealth handoffs back to local file."""
@@ -647,11 +616,6 @@ class HandoffsMixin:
                     pass
 
         return f"A{max_id + 1:03d}"
-
-    # DEPRECATED (remove after 2025-06-01): Use _get_next_handoff_id instead
-    def _get_next_approach_id(self) -> str:
-        """Backward compatibility alias for _get_next_handoff_id."""
-        return self._get_next_handoff_id()
 
     def handoff_add(
         self,
@@ -813,20 +777,6 @@ class HandoffsMixin:
 
         raise ValueError(f"Handoff {handoff_id} not found")
 
-    # Backward compatibility alias
-    def approach_add(
-        self,
-        title: str,
-        desc: Optional[str] = None,
-        files: Optional[List[str]] = None,
-        refs: Optional[List[str]] = None,
-        phase: str = "research",
-        agent: str = "user",
-        stealth: bool = False,
-    ) -> str:
-        """Backward compatibility alias for handoff_add."""
-        return self.handoff_add(title=title, desc=desc, files=files, refs=refs, phase=phase, agent=agent, stealth=stealth)
-
     def handoff_update_status(self, handoff_id: str, status: str) -> None:
         """
         Update a handoff's status.
@@ -857,11 +807,6 @@ class HandoffsMixin:
             old_value=old_status[0],
             new_value=status,
         )
-
-    # Backward compatibility alias
-    def approach_update_status(self, approach_id: str, status: str) -> None:
-        """Backward compatibility alias for handoff_update_status."""
-        return self.handoff_update_status(approach_id, status)
 
     def handoff_update_phase(self, handoff_id: str, phase: str) -> None:
         """
@@ -894,11 +839,6 @@ class HandoffsMixin:
             new_value=phase,
         )
 
-    # Backward compatibility alias
-    def approach_update_phase(self, approach_id: str, phase: str) -> None:
-        """Backward compatibility alias for handoff_update_phase."""
-        return self.handoff_update_phase(approach_id, phase)
-
     def handoff_update_agent(self, handoff_id: str, agent: str) -> None:
         """
         Update a handoff's agent.
@@ -929,11 +869,6 @@ class HandoffsMixin:
             old_value=old_agent[0],
             new_value=agent,
         )
-
-    # Backward compatibility alias
-    def approach_update_agent(self, approach_id: str, agent: str) -> None:
-        """Backward compatibility alias for handoff_update_agent."""
-        return self.handoff_update_agent(approach_id, agent)
 
     # Patterns that indicate work is complete (must be at start, case-insensitive)
     COMPLETION_PATTERNS = ("final", "done", "complete", "finished")
@@ -1093,11 +1028,6 @@ class HandoffsMixin:
 
         self._update_handoff_in_file(handoff_id, update_fn)
 
-    # Backward compatibility alias
-    def approach_add_tried(self, approach_id: str, outcome: str, description: str) -> None:
-        """Backward compatibility alias for handoff_add_tried."""
-        return self.handoff_add_tried(approach_id, outcome, description)
-
     def handoff_update_next(self, handoff_id: str, text: str) -> None:
         """
         Update a handoff's next steps.
@@ -1113,11 +1043,6 @@ class HandoffsMixin:
             h.next_steps = text
 
         self._update_handoff_in_file(handoff_id, update_fn)
-
-    # Backward compatibility alias
-    def approach_update_next(self, approach_id: str, text: str) -> None:
-        """Backward compatibility alias for handoff_update_next."""
-        return self.handoff_update_next(approach_id, text)
 
     def handoff_update_refs(self, handoff_id: str, refs_list: List[str]) -> None:
         """
@@ -1148,11 +1073,6 @@ class HandoffsMixin:
         """
         return self.handoff_update_refs(handoff_id, files_list)
 
-    # Backward compatibility alias
-    def approach_update_files(self, approach_id: str, files_list: List[str]) -> None:
-        """Backward compatibility alias for handoff_update_files."""
-        return self.handoff_update_files(approach_id, files_list)
-
     def handoff_update_desc(self, handoff_id: str, description: str) -> None:
         """
         Update a handoff's description.
@@ -1168,11 +1088,6 @@ class HandoffsMixin:
             h.description = description
 
         self._update_handoff_in_file(handoff_id, update_fn)
-
-    # Backward compatibility alias
-    def approach_update_desc(self, approach_id: str, description: str) -> None:
-        """Backward compatibility alias for handoff_update_desc."""
-        return self.handoff_update_desc(approach_id, description)
 
     def handoff_update_checkpoint(self, handoff_id: str, checkpoint: str) -> None:
         """
@@ -1191,11 +1106,6 @@ class HandoffsMixin:
 
         self._update_handoff_in_file(handoff_id, update_fn)
 
-    # Backward compatibility alias
-    def approach_update_checkpoint(self, approach_id: str, checkpoint: str) -> None:
-        """Backward compatibility alias for handoff_update_checkpoint."""
-        return self.handoff_update_checkpoint(approach_id, checkpoint)
-
     def handoff_update_context(self, handoff_id: str, context: HandoffContext) -> None:
         """
         Update a handoff's context (rich structured context for session handoffs).
@@ -1213,11 +1123,6 @@ class HandoffsMixin:
 
         self._update_handoff_in_file(handoff_id, update_fn)
 
-    # Backward compatibility alias
-    def approach_update_context(self, approach_id: str, context: HandoffContext) -> None:
-        """Backward compatibility alias for handoff_update_context."""
-        return self.handoff_update_context(approach_id, context)
-
     def handoff_update_blocked_by(self, handoff_id: str, blocked_by: List[str]) -> None:
         """
         Update a handoff's blocked_by dependency list.
@@ -1233,11 +1138,6 @@ class HandoffsMixin:
             h.blocked_by = blocked_by
 
         self._update_handoff_in_file(handoff_id, update_fn)
-
-    # Backward compatibility alias
-    def approach_update_blocked_by(self, approach_id: str, blocked_by: List[str]) -> None:
-        """Backward compatibility alias for handoff_update_blocked_by."""
-        return self.handoff_update_blocked_by(approach_id, blocked_by)
 
     def handoff_complete(self, handoff_id: str) -> HandoffCompleteResult:
         """
@@ -1300,11 +1200,6 @@ Consider extracting lessons about:
             extraction_prompt=extraction_prompt,
         )
 
-    # Backward compatibility alias
-    def approach_complete(self, approach_id: str) -> HandoffCompleteResult:
-        """Backward compatibility alias for handoff_complete."""
-        return self.handoff_complete(approach_id)
-
     def handoff_archive(self, handoff_id: str) -> None:
         """
         Archive a handoff to HANDOFFS_ARCHIVE.md (or HANDOFFS_LOCAL_ARCHIVE.md for stealth).
@@ -1366,11 +1261,6 @@ Consider extracting lessons about:
             else:
                 self._write_handoffs_file(remaining)
 
-    # Backward compatibility alias
-    def approach_archive(self, approach_id: str) -> None:
-        """Backward compatibility alias for handoff_archive."""
-        return self.handoff_archive(approach_id)
-
     def handoff_delete(self, handoff_id: str) -> None:
         """
         Delete a handoff permanently (no archive).
@@ -1405,11 +1295,6 @@ Consider extracting lessons about:
                 self._write_stealth_handoffs_file(handoffs)
             else:
                 self._write_handoffs_file(handoffs)
-
-    # Backward compatibility alias
-    def approach_delete(self, approach_id: str) -> None:
-        """Backward compatibility alias for handoff_delete."""
-        return self.handoff_delete(approach_id)
 
     def _archive_stale_handoffs(self) -> List[str]:
         """
@@ -1467,11 +1352,6 @@ Consider extracting lessons about:
 
         return archived_ids
 
-    # Backward compatibility alias
-    def _archive_stale_approaches(self) -> List[str]:
-        """Backward compatibility alias for _archive_stale_handoffs."""
-        return self._archive_stale_handoffs()
-
     def _archive_old_completed_handoffs(self) -> List[str]:
         """
         Auto-archive completed handoffs older than HANDOFF_COMPLETED_ARCHIVE_DAYS.
@@ -1523,11 +1403,6 @@ Consider extracting lessons about:
 
         return archived_ids
 
-    # Backward compatibility alias
-    def _archive_old_completed_approaches(self) -> List[str]:
-        """Backward compatibility alias for _archive_old_completed_handoffs."""
-        return self._archive_old_completed_handoffs()
-
     def handoff_get(self, handoff_id: str) -> Optional[Handoff]:
         """
         Get a handoff by ID (searches both regular and stealth files).
@@ -1545,11 +1420,6 @@ Consider extracting lessons about:
                 return handoff
 
         return None
-
-    # Backward compatibility alias
-    def approach_get(self, approach_id: str) -> Optional[Handoff]:
-        """Backward compatibility alias for handoff_get."""
-        return self.handoff_get(approach_id)
 
     def handoff_list(
         self,
@@ -1575,15 +1445,6 @@ Consider extracting lessons about:
             handoffs = [h for h in handoffs if h.status != "completed"]
 
         return handoffs
-
-    # Backward compatibility alias
-    def approach_list(
-        self,
-        status_filter: Optional[str] = None,
-        include_completed: bool = False,
-    ) -> List[Handoff]:
-        """Backward compatibility alias for handoff_list."""
-        return self.handoff_list(status_filter=status_filter, include_completed=include_completed)
 
     def handoff_list_completed(
         self,
@@ -1636,15 +1497,6 @@ Consider extracting lessons about:
                 visible.append(handoff)
 
         return visible
-
-    # Backward compatibility alias
-    def approach_list_completed(
-        self,
-        max_count: Optional[int] = None,
-        max_age_days: Optional[int] = None,
-    ) -> List[Handoff]:
-        """Backward compatibility alias for handoff_list_completed."""
-        return self.handoff_list_completed(max_count=max_count, max_age_days=max_age_days)
 
     def handoff_inject(
         self,
@@ -1785,15 +1637,6 @@ Consider extracting lessons about:
 
         return "\n".join(lines)
 
-    # Backward compatibility alias
-    def approach_inject(
-        self,
-        max_completed: Optional[int] = None,
-        max_completed_age: Optional[int] = None,
-    ) -> str:
-        """Backward compatibility alias for handoff_inject."""
-        return self.handoff_inject(max_completed=max_completed, max_completed_age=max_completed_age)
-
     def handoff_sync_todos(self, todos: List[dict]) -> Optional[str]:
         """
         Sync TodoWrite todos to a handoff.
@@ -1872,11 +1715,6 @@ Consider extracting lessons about:
         })
 
         return handoff_id
-
-    # Backward compatibility alias
-    def approach_sync_todos(self, todos: List[dict]) -> Optional[str]:
-        """Backward compatibility alias for handoff_sync_todos."""
-        return self.handoff_sync_todos(todos)
 
     def handoff_inject_todos(self) -> str:
         """
@@ -1963,11 +1801,6 @@ Consider extracting lessons about:
 
         return "\n".join(lines)
 
-    # Backward compatibility alias
-    def approach_inject_todos(self) -> str:
-        """Backward compatibility alias for handoff_inject_todos."""
-        return self.handoff_inject_todos()
-
     def _is_handoff_ready(self, handoff: Handoff, all_handoffs: List[Handoff]) -> bool:
         """
         Check if a handoff is ready to work on.
@@ -2040,11 +1873,6 @@ Consider extracting lessons about:
 
         ready.sort(key=sort_key)
         return ready
-
-    # Backward compatibility alias
-    def approach_ready(self) -> List[Handoff]:
-        """Backward compatibility alias for handoff_ready."""
-        return self.handoff_ready()
 
     def handoff_resume(self, handoff_id: str) -> HandoffResumeResult:
         """
@@ -2123,12 +1951,3 @@ Consider extracting lessons about:
             validation=validation,
             context=context,
         )
-
-    # Backward compatibility alias
-    def approach_resume(self, approach_id: str) -> HandoffResumeResult:
-        """Backward compatibility alias for handoff_resume."""
-        return self.handoff_resume(approach_id)
-
-
-# DEPRECATED (remove after 2025-06-01): Use HandoffsMixin instead
-ApproachesMixin = HandoffsMixin

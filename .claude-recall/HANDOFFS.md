@@ -32,11 +32,11 @@
 15. [success] Claude Recall rename complete
 16. [success] [A003] Clarify user's request - handoff extraction vs lesson scoring
 
-**Next**: [A003] Rename to claude-recall: GitHub repo; [A005] Relevance scoring: inject only approaches relevant to current work; [A005] Structured checkpoint format for compact injection
+**Next**: [A003] Rename to claude-recall: GitHub repo; [A005] Relevance scoring: inject only handoffs relevant to current work; [A005] Structured checkpoint format for compact injection
 
 ---
 
-### [A004] Debug approach parsing in stop-hook
+### [A004] Debug handoff parsing in stop-hook
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: 2025-12-29 | **Updated**: 2025-12-29
 - **Refs**: 
@@ -53,25 +53,25 @@
 - **Created**: 2025-12-30 | **Updated**: 2026-01-01
 - **Refs**: 
 - **Description**: PreCompact hook captures progress before compaction. Remaining: relevance scoring, smart injection, context budget.
-- **Checkpoint**: Compact injection implemented: 90% token reduction via _summarize_tried_steps() and _extract_themes(). Auto-complete on Final/Done patterns. Auto-phase based on keywords. Remaining: relevance scoring for which approaches to inject, structured checkpoint format.
+- **Checkpoint**: Compact injection implemented: 90% token reduction via _summarize_tried_steps() and _extract_themes(). Auto-complete on Final/Done patterns. Auto-phase based on keywords. Remaining: relevance scoring for which handoffs to inject, structured checkpoint format.
 - **Last Session**: 2026-01-01
 
 **Tried**:
 1. [success] Research patterns
-2. [success] [A005] Write tests for archive old completed approaches
+2. [success] [A005] Write tests for archive old completed handoffs
 3. [success] [A005] Write tests for auto-complete on final pattern
 4. [success] [A005] Write tests for auto-update phase based on tried steps
-5. [success] [A005] Implement archive old completed approaches
+5. [success] [A005] Implement archive old completed handoffs
 6. [success] [A005] Implement auto-complete on final pattern
 7. [success] [A005] Implement auto-update phase based on tried steps
 8. [success] [A005] Run all tests and verify
 9. [success] Implement _extract_themes() for step categorization
 10. [success] Implement _summarize_tried_steps() for compact display
-11. [success] Modify approach_inject() for 90% token reduction
+11. [success] Modify handoff_inject() for 90% token reduction
 12. [success] Add 20 new tests for compact format
 13. [success] Test on helixscreen - verified 84 steps now 6 lines
 
-**Next**: Relevance scoring: inject only approaches relevant to current work. Structured checkpoint format.
+**Next**: Relevance scoring: inject only handoffs relevant to current work. Structured checkpoint format.
 
 ---
 
@@ -123,7 +123,7 @@
 
 ---
 
-### [hf-d44d6fd] Test approach
+### [hf-d44d6fd] Test handoff
 - **Status**: not_started | **Phase**: research | **Agent**: user
 - **Created**: 2026-01-02 | **Updated**: 2026-01-02
 - **Refs**: 

@@ -54,16 +54,16 @@ python3 -m pytest tests/ -v -k "phase"
 
 | Category | Tests | Description |
 |----------|-------|-------------|
-| Basic CRUD | 15 | Add, update, complete, list approaches |
+| Basic CRUD | 15 | Add, update, complete, list handoffs |
 | Status | 8 | Status transitions, validation |
 | Tried/Next | 12 | Record attempts, set next steps |
 | Code Snippets | 10 | Attach/parse code blocks |
 | Phases | 18 | Phase values, transitions |
-| Agents | 12 | Agent tracking per approach |
+| Agents | 12 | Agent tracking per handoff |
 | Phase Detection | 14 | Infer phase from tool usage |
 | Plan Mode | 8 | PLAN MODE: integration |
-| Injection | 12 | Approach context generation |
-| Visibility | 10 | Completed approach decay rules |
+| Injection | 12 | Handoff context generation |
+| Visibility | 10 | Completed handoff decay rules |
 | Archive | 8 | Archive and recent completions |
 | Hook Patterns | 12 | Stop-hook pattern matching |
 
@@ -87,7 +87,7 @@ def temp_env(tmp_path):
         "project_dir": str(project_dir),
         "lessons_base": str(lessons_base),
         "project_lessons": project_dir / ".claude-recall" / "LESSONS.md",
-        "approaches_file": project_dir / ".claude-recall" / "APPROACHES.md",
+        "handoffs_file": project_dir / ".claude-recall" / "HANDOFFS.md",
         "system_lessons": lessons_base / "LESSONS.md",
     }
 ```
@@ -116,39 +116,39 @@ def test_add_lesson(temp_env):
     assert lessons[0].content == "Test content"
 ```
 
-### Testing Approaches
+### Testing Handoffs
 
 ```python
-def test_approach_phase_transition(temp_env):
-    """Test updating approach phase."""
+def test_handoff_phase_transition(temp_env):
+    """Test updating handoff phase."""
     manager = LessonsManager(
         project_dir=temp_env["project_dir"],
         lessons_base=temp_env["lessons_base"]
     )
 
-    # Create approach
-    result = manager.approach_add("Test task", phase="research")
-    approach_id = result.split()[0]  # Extract A001
+    # Create handoff
+    result = manager.handoff_add("Test task", phase="research")
+    handoff_id = result.split()[0]  # Extract hf-abc1234
 
     # Update phase
-    manager.approach_update(approach_id, phase="implementing")
+    manager.handoff_update(handoff_id, phase="implementing")
 
     # Verify
-    approaches = manager.approach_list()
-    assert approaches[0].phase == "implementing"
+    handoffs = manager.handoff_list()
+    assert handoffs[0].phase == "implementing"
 ```
 
 ### Testing CLI Integration
 
 ```python
-def test_cli_approach_add(temp_env):
-    """Test CLI command for adding approach."""
+def test_cli_handoff_add(temp_env):
+    """Test CLI command for adding handoff."""
     import subprocess
     import sys
 
     result = subprocess.run(
-        [sys.executable, "core/lessons_manager.py", "approach", "add",
-         "--phase", "research", "--agent", "plan", "--", "Test approach"],
+        [sys.executable, "core/lessons_manager.py", "handoff", "add",
+         "--phase", "research", "--agent", "plan", "--", "Test handoff"],
         capture_output=True,
         text=True,
         env={
@@ -158,31 +158,31 @@ def test_cli_approach_add(temp_env):
     )
 
     assert result.returncode == 0
-    assert "A001" in result.stdout
+    assert "hf-" in result.stdout
 ```
 
 ### Testing Hook Patterns
 
 ```python
 def test_plan_mode_pattern(temp_env):
-    """Test PLAN MODE: pattern creates approach correctly."""
+    """Test PLAN MODE: pattern creates handoff correctly."""
     manager = LessonsManager(
         project_dir=temp_env["project_dir"],
         lessons_base=temp_env["lessons_base"]
     )
 
     # Simulate hook pattern: PLAN MODE: Implement feature
-    result = manager.approach_add(
+    result = manager.handoff_add(
         "Implement feature",
         phase="research",
         agent="plan"
     )
 
-    approach_id = result.split()[0]
-    approaches = manager.approach_list()
+    handoff_id = result.split()[0]
+    handoffs = manager.handoff_list()
 
-    assert approaches[0].phase == "research"
-    assert approaches[0].agent == "plan"
+    assert handoffs[0].phase == "research"
+    assert handoffs[0].agent == "plan"
 ```
 
 ## Test Fixtures
@@ -205,10 +205,10 @@ def sample_lesson(manager):
     return manager.list_lessons(scope="project")[0]
 
 @pytest.fixture
-def sample_approach(manager):
-    """Create a sample approach for testing."""
-    manager.approach_add("Sample task")
-    return manager.approach_list()[0]
+def sample_handoff(manager):
+    """Create a sample handoff for testing."""
+    manager.handoff_add("Sample task")
+    return manager.handoff_list()[0]
 ```
 
 ### File Content Fixtures
@@ -235,9 +235,9 @@ def lessons_with_velocity(temp_env):
 # Check lesson exists
 assert any(l.id == "L001" for l in manager.list_lessons())
 
-# Check approach status
-approach = manager.approach_list()[0]
-assert approach.status == "in_progress"
+# Check handoff status
+handoff = manager.handoff_list()[0]
+assert handoff.status == "in_progress"
 
 # Check injection output
 output = manager.inject(5)
@@ -249,13 +249,13 @@ output = manager.inject(100)  # Many lessons
 assert "CONTEXT HEAVY" in output or total_tokens < 2000
 ```
 
-### Approach-Specific
+### Handoff-Specific
 
 ```python
-# Check tried approach recorded
-approach = manager.approach_list()[0]
-assert len(approach.tried) == 1
-assert approach.tried[0].outcome == "fail"
+# Check tried handoff recorded
+handoff = manager.handoff_list()[0]
+assert len(handoff.tried) == 1
+assert handoff.tried[0].outcome == "fail"
 ```
 
 ## Mocking
@@ -371,7 +371,7 @@ def test_internal_example(temp_env):
 ```
 
 - Returns a dict with string paths
-- Keys: `project_dir`, `lessons_base`, `project_lessons`, `approaches_file`, `system_lessons`
+- Keys: `project_dir`, `lessons_base`, `project_lessons`, `handoffs_file`, `system_lessons`
 
 ### `add_lesson` Method Signature
 
@@ -486,7 +486,7 @@ open htmlcov/index.html
 
 ## Adding New Tests
 
-1. **Identify the component**: lessons, approaches, hooks, CLI
+1. **Identify the component**: lessons, handoffs, hooks, CLI
 2. **Choose the test file**: `test_lessons_manager.py` or `test_handoffs.py`
 3. **Find related tests**: Group with similar functionality
 4. **Write the test**: Follow AAA pattern (Arrange, Act, Assert)
