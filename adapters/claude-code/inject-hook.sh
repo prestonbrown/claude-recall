@@ -19,7 +19,7 @@ _env_debug="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
 if [[ -n "$_env_debug" ]]; then
     CLAUDE_RECALL_DEBUG="$_env_debug"
 elif [[ -f "$HOME/.claude/settings.json" ]]; then
-    _settings_debug=$(jq -r '.lessonsSystem.debugLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
+    _settings_debug=$(jq -r '.claudeRecall.debugLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
     CLAUDE_RECALL_DEBUG="${_settings_debug:-1}"
 else
     CLAUDE_RECALL_DEBUG="1"
@@ -36,7 +36,17 @@ else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
-DECAY_INTERVAL=$((7 * 86400))  # 7 days in seconds
+# Get decayIntervalDays from settings (default: 7)
+get_decay_interval_days() {
+    local config="$HOME/.claude/settings.json"
+    if [[ -f "$config" ]]; then
+        jq -r '.claudeRecall.decayIntervalDays // 7' "$config" 2>/dev/null || echo "7"
+    else
+        echo "7"
+    fi
+}
+DECAY_INTERVAL_DAYS=$(get_decay_interval_days)
+DECAY_INTERVAL=$((DECAY_INTERVAL_DAYS * 86400))  # Convert to seconds
 
 # Timing helpers (bash 3.x compatible - no associative arrays)
 get_ms() {
@@ -73,9 +83,19 @@ log_hook_end() {
 is_enabled() {
     local config="$HOME/.claude/settings.json"
     [[ -f "$config" ]] && {
-        local enabled=$(jq -r '.lessonsSystem.enabled // true' "$config" 2>/dev/null || echo "true")
+        local enabled=$(jq -r '.claudeRecall.enabled // true' "$config" 2>/dev/null || echo "true")
         [[ "$enabled" == "true" ]]
     } || return 0
+}
+
+# Get topLessonsToShow setting (default: 3)
+get_top_lessons_count() {
+    local config="$HOME/.claude/settings.json"
+    if [[ -f "$config" ]]; then
+        jq -r '.claudeRecall.topLessonsToShow // 3' "$config" 2>/dev/null || echo "3"
+    else
+        echo "3"
+    fi
 }
 
 # Run decay if it's been more than DECAY_INTERVAL since last run
@@ -102,19 +122,20 @@ run_decay_if_due() {
 }
 
 # Generate lessons context using Python manager (with bash fallback)
-# Note: Reduced to 3 lessons since smart-inject-hook.sh adds query-relevant ones
+# Note: topLessonsToShow is configurable (default: 3), smart-inject-hook.sh adds query-relevant ones
 generate_context() {
     local cwd="$1"
     local summary=""
+    local top_n=$(get_top_lessons_count)
 
     # Try Python manager first
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" inject 3 2>/dev/null || true)
+        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" inject "$top_n" 2>/dev/null || true)
     fi
 
     # Fall back to bash manager if Python fails or returns empty
     if [[ -z "$summary" && -x "$BASH_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" inject 3 2>/dev/null || true)
+        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" inject "$top_n" 2>/dev/null || true)
     fi
 
     echo "$summary"
@@ -211,7 +232,7 @@ Consider creating a handoff if continuing this work."
         local review_ids=""
         if [[ -n "$handoffs" ]] && echo "$handoffs" | grep -q "ready_for_review"; then
             # Extract handoff IDs that have ready_for_review status
-            review_ids=$(echo "$handoffs" | grep -B2 "ready_for_review" | grep -oE '\[hf-[0-9a-f]+\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')
+            review_ids=$(echo "$handoffs" | grep -B2 "ready_for_review" | grep -oE '\[hf-[0-9a-f]+\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//' || true)
         fi
 
         # Add lesson review duty if there are handoffs ready for review

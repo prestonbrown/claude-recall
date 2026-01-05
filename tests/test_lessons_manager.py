@@ -1532,6 +1532,72 @@ class TestHookPathResolution:
         assert result.returncode == 0
 
 
+class TestInjectHookHandoffs:
+    """Tests for inject-hook.sh handling of handoffs, especially edge cases."""
+
+    def test_inject_hook_no_crash_on_missing_review_ids(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Inject hook should not crash when grep for review IDs finds no matches.
+
+        With pipefail enabled, grep returning no matches (exit 1) could kill
+        the script if not handled properly.
+        """
+        import shutil
+        from core import LessonsManager
+
+        # Copy Python modules
+        core_dir = Path(__file__).parent.parent / "core"
+        modules = [
+            "cli.py", "manager.py", "debug_logger.py", "models.py",
+            "parsing.py", "file_lock.py", "lessons.py", "handoffs.py",
+            "__init__.py", "_version.py",
+        ]
+        for module in modules:
+            src = core_dir / module
+            if src.exists():
+                shutil.copy(src, temp_lessons_base / module)
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(level="project", category="pattern", title="Test", content="Content")
+
+        # Create a handoff that is NOT ready_for_review (should trigger the grep but find nothing)
+        handoffs_file = temp_project_root / ".claude-recall" / "HANDOFFS.md"
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        handoffs_file.write_text("""# HANDOFFS.md
+
+## Active Handoffs
+
+### [hf-abc123] Test handoff in progress
+- **Status**: in_progress | **Phase**: implementing | **Last**: 2026-01-05
+- **Tried** (1 step):
+  - [success] Working on it
+""")
+
+        hook_path = Path(__file__).parent.parent / "adapters" / "claude-code" / "inject-hook.sh"
+        if not hook_path.exists():
+            pytest.skip("inject-hook.sh not found")
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=json.dumps({"cwd": str(temp_project_root)}),
+            capture_output=True,
+            text=True,
+            cwd="/tmp",
+            env={
+                **os.environ,
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        # Hook should succeed even without any ready_for_review handoffs
+        assert result.returncode == 0, f"Hook failed: {result.stderr}"
+        assert "LESSONS" in result.stdout
+
+
 class TestReminderHook:
     """Tests for lesson-reminder-hook.sh config and logging."""
 
