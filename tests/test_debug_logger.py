@@ -12,11 +12,13 @@ import pytest
 from pathlib import Path
 
 from core.debug_logger import (
+    CLAUDE_SETTINGS_PATH,
     DebugLogger,
     get_logger,
     reset_logger,
     _get_debug_level,
     _get_session_id,
+    _read_settings_debug_level,
 )
 
 
@@ -106,6 +108,78 @@ class TestDebugLevel:
         """Invalid values should disable logging."""
         monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "invalid")
         assert _get_debug_level() == 0
+
+
+# =============================================================================
+# Tests: Settings File Configuration
+# =============================================================================
+
+
+class TestSettingsConfig:
+    """Test debug level from ~/.claude/settings.json."""
+
+    @pytest.fixture
+    def temp_claude_dir(self, tmp_path: Path, monkeypatch):
+        """Create a temporary ~/.claude directory and patch CLAUDE_SETTINGS_PATH."""
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        settings_path = claude_dir / "settings.json"
+        # Patch the module constant
+        import core.debug_logger as dl
+        monkeypatch.setattr(dl, "CLAUDE_SETTINGS_PATH", settings_path)
+        return settings_path
+
+    def test_reads_debug_level_from_settings(self, temp_claude_dir, monkeypatch):
+        """Should read debugLevel from settings.json."""
+        monkeypatch.delenv("CLAUDE_RECALL_DEBUG", raising=False)
+        monkeypatch.delenv("RECALL_DEBUG", raising=False)
+        monkeypatch.delenv("LESSONS_DEBUG", raising=False)
+
+        temp_claude_dir.write_text(json.dumps({
+            "lessonsSystem": {"debugLevel": 2}
+        }))
+        assert _read_settings_debug_level() == 2
+        assert _get_debug_level() == 2
+
+    def test_env_var_overrides_settings(self, temp_claude_dir, monkeypatch):
+        """Env var should take precedence over settings.json."""
+        temp_claude_dir.write_text(json.dumps({
+            "lessonsSystem": {"debugLevel": 2}
+        }))
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "3")
+        assert _get_debug_level() == 3
+
+    def test_returns_none_when_no_file(self, temp_claude_dir, monkeypatch):
+        """Should return None when settings file doesn't exist."""
+        monkeypatch.delenv("CLAUDE_RECALL_DEBUG", raising=False)
+        # Don't create the file
+        assert _read_settings_debug_level() is None
+        # Should fall back to default
+        assert _get_debug_level() == 1
+
+    def test_returns_none_when_no_debug_level(self, temp_claude_dir, monkeypatch):
+        """Should return None when debugLevel not in settings."""
+        monkeypatch.delenv("CLAUDE_RECALL_DEBUG", raising=False)
+        monkeypatch.delenv("RECALL_DEBUG", raising=False)
+        monkeypatch.delenv("LESSONS_DEBUG", raising=False)
+
+        temp_claude_dir.write_text(json.dumps({
+            "lessonsSystem": {"enabled": True}
+        }))
+        assert _read_settings_debug_level() is None
+        assert _get_debug_level() == 1
+
+    def test_handles_invalid_json(self, temp_claude_dir, monkeypatch):
+        """Should return None for invalid JSON."""
+        monkeypatch.delenv("CLAUDE_RECALL_DEBUG", raising=False)
+        temp_claude_dir.write_text("not valid json{")
+        assert _read_settings_debug_level() is None
+
+    def test_handles_missing_lessons_system(self, temp_claude_dir, monkeypatch):
+        """Should return None when lessonsSystem key missing."""
+        monkeypatch.delenv("CLAUDE_RECALL_DEBUG", raising=False)
+        temp_claude_dir.write_text(json.dumps({"hooks": {}}))
+        assert _read_settings_debug_level() is None
 
 
 # =============================================================================

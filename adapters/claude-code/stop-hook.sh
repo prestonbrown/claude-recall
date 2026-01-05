@@ -18,7 +18,16 @@ PHASE_TIMES_JSON="{}"  # Build JSON incrementally (bash 3.x compatible)
 # Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
 CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
 CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
-CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-1}}}"
+# Debug level: env var > settings.json > default (1)
+_env_debug="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
+if [[ -n "$_env_debug" ]]; then
+    CLAUDE_RECALL_DEBUG="$_env_debug"
+elif [[ -f "$HOME/.claude/settings.json" ]]; then
+    _settings_debug=$(jq -r '.lessonsSystem.debugLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
+    CLAUDE_RECALL_DEBUG="${_settings_debug:-1}"
+else
+    CLAUDE_RECALL_DEBUG="1"
+fi
 # Export for downstream Python manager
 export CLAUDE_RECALL_STATE
 # Export legacy names for downstream compatibility

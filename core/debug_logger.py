@@ -31,6 +31,7 @@ DEBUG_ENV_VAR_LEGACY = "LESSONS_DEBUG"  # Legacy name for backward compat
 LOG_FILE_NAME = "debug.log"
 MAX_LOG_SIZE_MB = 50  # 50MB keeps ~500K events
 MAX_LOG_FILES = 3  # 3 files = 150MB max disk usage
+CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
 # Session ID - generated once per process
 _SESSION_ID: Optional[str] = None
@@ -44,23 +45,52 @@ def _get_session_id() -> str:
     return _SESSION_ID
 
 
-def _get_debug_level() -> int:
-    """Get the configured debug level from environment.
+def _read_settings_debug_level() -> Optional[int]:
+    """Read debugLevel from ~/.claude/settings.json if it exists.
 
-    Checks environment variables in order of precedence:
-    CLAUDE_RECALL_DEBUG → RECALL_DEBUG → LESSONS_DEBUG → 1 (default)
+    Returns None if file doesn't exist or debugLevel isn't set.
     """
-    level = (
+    try:
+        if not CLAUDE_SETTINGS_PATH.exists():
+            return None
+        with open(CLAUDE_SETTINGS_PATH) as f:
+            settings = json.load(f)
+        level = settings.get("lessonsSystem", {}).get("debugLevel")
+        if level is not None:
+            return int(level)
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        pass
+    return None
+
+
+def _get_debug_level() -> int:
+    """Get the configured debug level.
+
+    Checks in order of precedence:
+    1. CLAUDE_RECALL_DEBUG env var (temporary override)
+    2. lessonsSystem.debugLevel in ~/.claude/settings.json
+    3. Default: 1
+    """
+    # Check env vars first (highest precedence)
+    env_level = (
         os.environ.get(DEBUG_ENV_VAR) or
         os.environ.get(DEBUG_ENV_VAR_FALLBACK) or
-        os.environ.get(DEBUG_ENV_VAR_LEGACY) or
-        "1"  # Default to info-level logging
+        os.environ.get(DEBUG_ENV_VAR_LEGACY)
     )
-    try:
-        return int(level)
-    except ValueError:
-        # Treat any non-numeric truthy value as level 1
-        return 1 if level.lower() in ("true", "yes", "on") else 0
+    if env_level:
+        try:
+            return int(env_level)
+        except ValueError:
+            # Treat any non-numeric truthy value as level 1
+            return 1 if env_level.lower() in ("true", "yes", "on") else 0
+
+    # Check settings.json
+    settings_level = _read_settings_debug_level()
+    if settings_level is not None:
+        return settings_level
+
+    # Default
+    return 1
 
 
 def _get_log_path() -> Path:
