@@ -31,6 +31,78 @@ except ImportError:
     )
 
 
+# Constraint signals - content keywords that indicate NEVER/ALWAYS rules
+# Note: These are matched with word boundaries (\b) to avoid false positives like "debug" matching "bug"
+CONSTRAINT_SIGNALS = [
+    "crash", "deadlock", "bug", "break", "destroy", "corrupt",
+    "never", "always", "must", "sacred", "critical", "causes",
+    "will fail", "data loss", "security", "wip", "uncommitted",
+]
+
+# Preference signals - content keywords that indicate soft preferences
+PREFERENCE_SIGNALS = ["prefer", "better to", "recommend", "style", "convention"]
+
+# Categories that imply constraint type
+CONSTRAINT_CATEGORIES = ("correction", "gotcha")
+
+
+def classify_lesson(content: str, category: str) -> str:
+    """Classify lesson type based on content signals and category.
+
+    Args:
+        content: The lesson content text
+        category: The lesson category (pattern, correction, gotcha, etc.)
+
+    Returns:
+        One of: "constraint", "informational", "preference"
+    """
+    content_lower = content.lower()
+
+    # Category hints - corrections and gotchas are constraints
+    if category in CONSTRAINT_CATEGORIES:
+        return "constraint"
+
+    # Check for constraint signals in content (using word boundaries to avoid false positives)
+    if any(re.search(rf'\b{signal}\b', content_lower) for signal in CONSTRAINT_SIGNALS):
+        return "constraint"
+
+    # Check for preference signals
+    if any(signal in content_lower for signal in PREFERENCE_SIGNALS):
+        return "preference"
+
+    return "informational"
+
+
+def frame_lesson_content(lesson: "Lesson") -> str:
+    """Add framing to lesson content based on type.
+
+    Args:
+        lesson: The Lesson object
+
+    Returns:
+        Content with appropriate framing prefix for constraint/preference types,
+        or original content for informational types.
+    """
+    content = lesson.content
+
+    # Guard against double-framing
+    if content.startswith(("NEVER:", "ALWAYS:", "Prefer:")):
+        return content  # Already framed
+
+    lesson_type = lesson.lesson_type or classify_lesson(content, lesson.category)
+
+    if lesson_type == "constraint":
+        # Detect ALWAYS vs NEVER from content
+        if "always" in content.lower():
+            return f"ALWAYS: {content}. Ask user before skipping."
+        else:
+            return f"NEVER: {content}. Ask user if exception needed."
+    elif lesson_type == "preference":
+        return f"Prefer: {content}. Ask user before deviating."
+    else:
+        return content  # informational - as-is
+
+
 # Pattern for parsing old metadata format (without Velocity field)
 OLD_METADATA_PATTERN = re.compile(
     r"^\s*-\s*\*\*Uses\*\*:\s*(\d+)"
@@ -88,6 +160,7 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple
             source = old_match.group(5) or "human"
         except ValueError:
             return None  # Malformed date, skip this lesson
+        stored_type = ""
     else:
         try:
             uses = int(meta_match.group(1))
@@ -96,6 +169,7 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple
             last_used = date.fromisoformat(meta_match.group(4))
             category = meta_match.group(5)
             source = meta_match.group(6) or "human"
+            stored_type = meta_match.group(7) or ""
         except ValueError:
             return None  # Malformed data, skip this lesson
 
@@ -115,6 +189,9 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple
     while end_idx < len(lines) and not lines[end_idx].strip():
         end_idx += 1
 
+    # Classify lesson type: use stored type if present, otherwise auto-classify
+    lesson_type = stored_type if stored_type else classify_lesson(content, category)
+
     lesson = Lesson(
         id=lesson_id,
         title=title,
@@ -127,6 +204,7 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple
         source=source,
         level=level,
         promotable=promotable,
+        lesson_type=lesson_type,
     )
 
     return (lesson, end_idx)
@@ -162,6 +240,9 @@ def format_lesson(lesson: Lesson) -> str:
         meta_parts.append("**Source**: ai")
     if not lesson.promotable:
         meta_parts.append("**Promotable**: no")
+    # Only store type if explicitly set (not auto-classified)
+    if lesson.lesson_type:
+        meta_parts.append(f"**Type**: {lesson.lesson_type}")
 
     meta_line = f"- {' | '.join(meta_parts)}"
     content_line = f"> {lesson.content}"

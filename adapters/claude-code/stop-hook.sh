@@ -23,7 +23,7 @@ _env_debug="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
 if [[ -n "$_env_debug" ]]; then
     CLAUDE_RECALL_DEBUG="$_env_debug"
 elif [[ -f "$HOME/.claude/settings.json" ]]; then
-    _settings_debug=$(jq -r '.lessonsSystem.debugLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
+    _settings_debug=$(jq -r '.claudeRecall.debugLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
     CLAUDE_RECALL_DEBUG="${_settings_debug:-1}"
 else
     CLAUDE_RECALL_DEBUG="1"
@@ -77,7 +77,7 @@ log_hook_end() {
 is_enabled() {
     local config="$HOME/.claude/settings.json"
     [[ -f "$config" ]] && {
-        local enabled=$(jq -r '.lessonsSystem.enabled // true' "$config" 2>/dev/null || echo "true")
+        local enabled=$(jq -r '.claudeRecall.enabled // true' "$config" 2>/dev/null || echo "true")
         [[ "$enabled" == "true" ]]
     } || return 0
 }
@@ -203,7 +203,10 @@ cleanup_orphaned_checkpoints() {
 
 # Detect and process AI LESSON: patterns in assistant messages
 # Format: AI LESSON: category: title - content
+# Format with explicit type: AI LESSON [constraint]: category: title - content
+# Types: constraint, informational, preference (auto-classified if not specified)
 # Example: AI LESSON: correction: Always use absolute paths - Relative paths fail in shell hooks
+# Example: AI LESSON [constraint]: gotcha: Never commit WIP - Uncommitted changes are sacred
 process_ai_lessons() {
     local transcript_path="$1"
     local project_root="$2"
@@ -229,9 +232,26 @@ process_ai_lessons() {
         [[ -z "$lesson_line" ]] && continue
 
         # Parse: AI LESSON: category: title - content
-        # Remove "AI LESSON: " prefix
-        local remainder="${lesson_line#AI LESSON: }"
-        remainder="${remainder#AI LESSON:}"  # Also handle without space
+        # Or:    AI LESSON [type]: category: title - content
+        local explicit_type=""
+        local remainder=""
+
+        # Check for optional [type] bracket
+        # Pattern: AI LESSON [type]: remainder
+        local ai_lesson_typed_pattern='^AI LESSON \[([a-z]+)\]: ?(.*)$'
+        if [[ "$lesson_line" =~ $ai_lesson_typed_pattern ]]; then
+            explicit_type="${BASH_REMATCH[1]}"
+            remainder="${BASH_REMATCH[2]}"
+            # Validate type
+            case "$explicit_type" in
+                constraint|informational|preference) ;;
+                *) explicit_type="" ;;  # Invalid type, ignore it
+            esac
+        else
+            # Remove "AI LESSON: " prefix
+            remainder="${lesson_line#AI LESSON: }"
+            remainder="${remainder#AI LESSON:}"  # Also handle without space
+        fi
 
         # Extract category (everything before first colon)
         local category="${remainder%%:*}"
@@ -269,9 +289,11 @@ process_ai_lessons() {
         # Add the lesson using Python manager (with bash fallback)
         # Use -- to terminate options and prevent injection via crafted titles
         local result=""
+        local type_args=""
+        [[ -n "$explicit_type" ]] && type_args="--type $explicit_type"
         if [[ -f "$PYTHON_MANAGER" ]]; then
             result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                python3 "$PYTHON_MANAGER" add-ai -- "$category" "$title" "$content" 2>&1 || true)
+                python3 "$PYTHON_MANAGER" add-ai $type_args -- "$category" "$title" "$content" 2>&1 || true)
         fi
 
         # Fall back to bash manager if Python fails

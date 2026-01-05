@@ -7,8 +7,36 @@ This module provides the LessonsManager class that combines lesson and handoff
 functionality through composition of mixins.
 """
 
+import json
 import os
 from pathlib import Path
+
+# Handle both module import and direct script execution
+try:
+    from core.debug_logger import get_logger
+except ImportError:
+    from debug_logger import get_logger
+
+# Default values for configurable settings
+DEFAULT_PROMOTION_THRESHOLD = 50
+DEFAULT_MAX_LESSONS = 30
+CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+
+
+def _read_claude_recall_settings() -> dict:
+    """Read claudeRecall settings from ~/.claude/settings.json.
+
+    Returns dict with settings or empty dict if not available.
+    """
+    try:
+        if not CLAUDE_SETTINGS_PATH.exists():
+            return {}
+        with open(CLAUDE_SETTINGS_PATH) as f:
+            settings = json.load(f)
+        return settings.get("claudeRecall", {})
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return {}
+
 
 # Handle both module import and direct script execution
 try:
@@ -114,6 +142,18 @@ class LessonsManager(LessonsMixin, HandoffsMixin):
         self._decay_state_file = self.state_dir / ".decay-last-run"
         self._session_state_dir = self.state_dir / ".citation-state"
 
+        # Warn if lessons exist in config dir but not being used
+        config_lessons = self.lessons_base / "LESSONS.md"
+        if config_lessons.exists() and self.system_lessons_file.exists():
+            # Both exist - the one in state_dir takes precedence, config is ignored
+            import sys
+            print(
+                f"Warning: System lessons found in both {config_lessons} and {self.system_lessons_file}. "
+                f"Using {self.system_lessons_file} (state dir). "
+                f"To merge, manually combine files then delete {config_lessons}",
+                file=sys.stderr
+            )
+
         # Get project data directory (prefers .claude-recall/ over legacy paths)
         project_data_dir = _get_project_data_dir(self.project_root)
         self.project_lessons_file = project_data_dir / "LESSONS.md"
@@ -121,6 +161,13 @@ class LessonsManager(LessonsMixin, HandoffsMixin):
         # Ensure project directory exists with auto-gitignore
         project_data_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_gitignore(project_data_dir)
+
+        # Read configurable settings from ~/.claude/settings.json
+        recall_settings = _read_claude_recall_settings()
+        self.promotion_threshold = recall_settings.get(
+            "promotionThreshold", DEFAULT_PROMOTION_THRESHOLD
+        )
+        self.max_lessons = recall_settings.get("maxLessons", DEFAULT_MAX_LESSONS)
 
     def _migrate_system_lessons(self) -> None:
         """Migrate system lessons from old ~/.config location to ~/.local/state."""

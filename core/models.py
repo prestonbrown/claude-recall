@@ -54,6 +54,7 @@ METADATA_PATTERN = re.compile(
     r"\s*\|\s*\*\*Last\*\*:\s*(\d{4}-\d{2}-\d{2})"
     r"\s*\|\s*\*\*Category\*\*:\s*(\w+)"
     r"(?:\s*\|\s*\*\*Source\*\*:\s*(\w+))?"
+    r"(?:\s*\|\s*\*\*Type\*\*:\s*(\w+))?"
 )
 CONTENT_PATTERN = re.compile(r"^>\s*(.*)$")
 
@@ -97,6 +98,7 @@ class Lesson:
     source: str = "human"  # 'human' or 'ai'
     level: str = "project"  # 'project' or 'system'
     promotable: bool = True  # False = never promote to system level
+    lesson_type: str = ""  # constraint|informational|preference (empty = auto-classify)
 
     @property
     def tokens(self) -> int:
@@ -207,6 +209,9 @@ class InjectionResult:
 
     def format(self) -> str:
         """Format injection result for display (condensed format)."""
+        # Late import to avoid circular dependency
+        from core.parsing import frame_lesson_content
+
         if not self.all_lessons:
             return ""
 
@@ -217,22 +222,36 @@ class InjectionResult:
             f"LESSONS ({self.system_count}S, {self.project_count}L | ~{total_tokens:,} tokens)"
         ]
 
-        # Top lessons - inline format with content preview
+        # Top lessons - inline format with framed content preview
         for lesson in self.top_lessons:
             rating = LessonRating.calculate(lesson.uses, lesson.velocity)
             prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
-            # Truncate content to ~60 chars
-            content_preview = lesson.content[:60] + "..." if len(lesson.content) > 60 else lesson.content
+            # Use framed content (NEVER/ALWAYS prefix for constraints)
+            framed_content = frame_lesson_content(lesson)
+            content_preview = framed_content[:80] + "..." if len(framed_content) > 80 else framed_content
             lines.append(f"  [{lesson.id}] {rating} {prefix}{lesson.title} - {content_preview}")
 
-        # Other lessons - compact single line with | separator
+        # Other lessons - constraint types get content, others stay compact
         remaining = [l for l in self.all_lessons if l not in self.top_lessons]
         if remaining:
-            other_items = []
-            for lesson in remaining:
+            # Separate constraints from others
+            constraint_lessons = [l for l in remaining if l.lesson_type == "constraint"]
+            other_lessons = [l for l in remaining if l.lesson_type != "constraint"]
+
+            # Constraints get full framed content
+            for lesson in constraint_lessons:
                 prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
-                other_items.append(f"[{lesson.id}] {prefix}{lesson.title}")
-            lines.append("  " + " | ".join(other_items))
+                framed_content = frame_lesson_content(lesson)
+                content_preview = framed_content[:80] + "..." if len(framed_content) > 80 else framed_content
+                lines.append(f"  [{lesson.id}] {prefix}{lesson.title} - {content_preview}")
+
+            # Other lessons stay compact
+            if other_lessons:
+                other_items = []
+                for lesson in other_lessons:
+                    prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
+                    other_items.append(f"[{lesson.id}] {prefix}{lesson.title}")
+                lines.append("  " + " | ".join(other_items))
 
         # Simplified footer
         lines.append("Cite [ID] when applying. LESSON: to add.")

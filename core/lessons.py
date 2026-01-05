@@ -124,6 +124,7 @@ class LessonsMixin:
         source: str = "human",
         force: bool = False,
         promotable: bool = True,
+        lesson_type: str = "",
     ) -> str:
         """
         Add a new lesson.
@@ -136,6 +137,7 @@ class LessonsMixin:
             source: 'human' or 'ai'
             force: If True, bypass duplicate detection
             promotable: If False, lesson will never be promoted to system level
+            lesson_type: 'constraint', 'informational', or 'preference' (auto-classified if empty)
 
         Returns:
             The assigned lesson ID (e.g., 'L001' or 'S001')
@@ -176,6 +178,7 @@ class LessonsMixin:
                 source=source,
                 level=level,
                 promotable=promotable,
+                lesson_type=lesson_type,
             )
 
             # Append to file
@@ -203,6 +206,7 @@ class LessonsMixin:
         title: str,
         content: str,
         promotable: bool = True,
+        lesson_type: str = "",
     ) -> str:
         """
         Convenience method to add an AI-generated lesson.
@@ -213,12 +217,14 @@ class LessonsMixin:
             title: Lesson title
             content: Lesson content
             promotable: If False, lesson will never be promoted to system level
+            lesson_type: 'constraint', 'informational', or 'preference' (auto-classified if empty)
 
         Returns:
             The assigned lesson ID
         """
         return self.add_lesson(
-            level, category, title, content, source="ai", promotable=promotable
+            level, category, title, content, source="ai", promotable=promotable,
+            lesson_type=lesson_type
         )
 
     def get_lesson(self, lesson_id: str) -> Optional[Lesson]:
@@ -294,9 +300,11 @@ class LessonsMixin:
             # Write back all lessons
             self._write_lessons_file(file_path, lessons, level)
 
+        # Use configurable threshold from settings (default: 50)
+        threshold = getattr(self, "promotion_threshold", SYSTEM_PROMOTION_THRESHOLD)
         promotion_ready = (
             lesson_id.startswith("L")
-            and new_uses >= SYSTEM_PROMOTION_THRESHOLD
+            and new_uses >= threshold
             and target.promotable
         )
 
@@ -715,41 +723,21 @@ No explanations, just ID: SCORE lines."""
         if not result.all_lessons:
             return ""
 
-        # Calculate total tokens
+        # Use InjectionResult.format() for the main formatting
+        formatted = result.format()
+
+        # Calculate total tokens for warning and logging
         total_tokens = sum(lesson.tokens for lesson in result.all_lessons)
 
-        lines = []
-
-        # Condensed header with counts and tokens
-        lines.append(
-            f"LESSONS ({result.system_count}S, {result.project_count}L | ~{total_tokens:,} tokens)"
-        )
-
-        # Token budget warning (only if heavy)
+        # Insert token budget warning after header if heavy
         if total_tokens > 2000:
-            lines.append(f"  ⚠️ CONTEXT HEAVY - Consider completing approaches, archiving stale lessons")
-
-        # Top lessons - inline format with content preview
-        for lesson in result.top_lessons:
-            rating = LessonRating(lesson.uses, lesson.velocity).format()
-            # Truncate content to ~60 chars
-            content_preview = lesson.content[:60] + "..." if len(lesson.content) > 60 else lesson.content
-            lines.append(f"  [{lesson.id}] {rating} {lesson.title} - {content_preview}")
-
-        # Other lessons - compact single line with | separator
-        other_lessons = result.all_lessons[limit:]
-        if other_lessons:
-            # Group other lessons into a compact format
-            other_items = []
-            for lesson in other_lessons:
-                other_items.append(f"[{lesson.id}] {lesson.title}")
-            # Join with | separator, one line
-            lines.append("  " + " | ".join(other_items))
-
-        # Simplified footer
-        lines.append("Cite [ID] when applying. LESSON: to add.")
+            lines = formatted.split("\n")
+            # Insert warning after the header line
+            lines.insert(1, "  ⚠️ CONTEXT HEAVY - Consider completing approaches, archiving stale lessons")
+            formatted = "\n".join(lines)
 
         # Log injection generation (level 2)
+        other_lessons = result.all_lessons[limit:]
         logger = get_logger()
         logger.injection_generated(
             token_budget=total_tokens,
@@ -758,7 +746,7 @@ No explanations, just ID: SCORE lines."""
             included_ids=[l.id for l in result.top_lessons],
         )
 
-        return "\n".join(lines)
+        return formatted
 
     def decay_lessons(self, stale_threshold_days: int = 30) -> DecayResult:
         """
@@ -827,6 +815,9 @@ No explanations, just ID: SCORE lines."""
 
                 self._write_lessons_file(file_path, lessons, level)
 
+        # Evict excess lessons if maxLessons is configured
+        evicted_count = self._evict_excess_lessons()
+
         self._update_decay_timestamp()
 
         # Log decay result
@@ -846,6 +837,58 @@ No explanations, just ID: SCORE lines."""
             skipped=False,
             message=f"Decayed: {decayed_uses} uses, {decayed_velocity} velocities ({recent_sessions} sessions since last run)",
         )
+
+    def _evict_excess_lessons(self) -> int:
+        """
+        Evict lessons when count exceeds maxLessons setting.
+
+        Removes oldest lessons (by last_used date) until count is within limit.
+        Eviction is per-level (project and system separately).
+
+        Returns:
+            Number of lessons evicted
+        """
+        # Get max_lessons from settings (set in LessonsManager.__init__)
+        max_lessons = getattr(self, "max_lessons", None)
+        if not max_lessons or max_lessons <= 0:
+            return 0
+
+        evicted_count = 0
+        logger = get_logger()
+
+        for level, file_path in [
+            ("project", self.project_lessons_file),
+            ("system", self.system_lessons_file),
+        ]:
+            if not file_path.exists():
+                continue
+
+            with FileLock(file_path):
+                lessons = self._parse_lessons_file(file_path, level)
+
+                if len(lessons) <= max_lessons:
+                    continue
+
+                # Sort by last_used (oldest first)
+                lessons_sorted = sorted(lessons, key=lambda l: l.last_used)
+                excess_count = len(lessons) - max_lessons
+
+                # Evict oldest lessons
+                to_evict = lessons_sorted[:excess_count]
+                remaining = lessons_sorted[excess_count:]
+
+                for lesson in to_evict:
+                    logger.mutation(
+                        op="evict",
+                        target=lesson.id,
+                        details={"reason": "maxLessons exceeded", "last_used": str(lesson.last_used)},
+                    )
+                    evicted_count += 1
+
+                # Write back only the remaining lessons
+                self._write_lessons_file(file_path, remaining, level)
+
+        return evicted_count
 
     # -------------------------------------------------------------------------
     # Helper Methods for Testing

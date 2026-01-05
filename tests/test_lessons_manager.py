@@ -1510,7 +1510,7 @@ class TestReminderHook:
         config_dir.mkdir()
         config_file = config_dir / "settings.json"
         config_file.write_text(json.dumps({
-            "lessonsSystem": {"enabled": True, "remindEvery": 3}
+            "claudeRecall": {"enabled": True, "remindEvery": 3}
         }))
 
         # Create state file at count 2 (next will be 3, triggering reminder)
@@ -1548,7 +1548,7 @@ class TestReminderHook:
         config_dir = tmp_path / ".claude"
         config_dir.mkdir()
         (config_dir / "settings.json").write_text(json.dumps({
-            "lessonsSystem": {"remindEvery": 100}
+            "claudeRecall": {"remindEvery": 100}
         }))
 
         # State at count 4, env says remind every 5
@@ -2004,6 +2004,271 @@ class TestScoreRelevance:
         assert result.error is None
         # Check that the prompt was truncated
         assert len(captured_prompt[0]) < len(long_query) + 500  # Some buffer for prompt template
+
+
+# =============================================================================
+# Lesson Classification and Framing Tests
+# =============================================================================
+
+
+class TestLessonClassification:
+    """Tests for automatic lesson type classification."""
+
+    def test_classify_constraint_by_keyword(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Lessons with 'crash', 'never', etc. should be classified as constraint."""
+        from core.parsing import classify_lesson
+
+        # Crash/bug keywords
+        assert classify_lesson("This will cause a crash", "pattern") == "constraint"
+        assert classify_lesson("Never do this - causes deadlock", "pattern") == "constraint"
+        assert classify_lesson("Always verify before doing this", "pattern") == "constraint"
+        assert classify_lesson("This will break the build", "pattern") == "constraint"
+
+    def test_classify_constraint_by_category(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Correction and gotcha categories should be classified as constraint."""
+        from core.parsing import classify_lesson
+
+        assert classify_lesson("Some content here", "correction") == "constraint"
+        assert classify_lesson("Some content here", "gotcha") == "constraint"
+
+    def test_classify_preference(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Lessons with 'prefer', 'better to' should be classified as preference."""
+        from core.parsing import classify_lesson
+
+        assert classify_lesson("Prefer using X over Y", "pattern") == "preference"
+        assert classify_lesson("It's better to use this approach", "pattern") == "preference"
+        assert classify_lesson("We recommend using TypeScript", "pattern") == "preference"
+
+    def test_classify_informational(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Default classification for neutral content is informational."""
+        from core.parsing import classify_lesson
+
+        assert classify_lesson("XML changes don't require recompilation", "pattern") == "informational"
+        assert classify_lesson("The config file is at /etc/app.conf", "pattern") == "informational"
+        # Verify false-positive words don't trigger constraint classification
+        # "debug" should NOT match "bug", "breakfast" should NOT match "break"
+        assert classify_lesson("Use debug logging for troubleshooting", "pattern") == "informational"
+        assert classify_lesson("Debugging tips for developers", "pattern") == "informational"
+        assert classify_lesson("Eat breakfast before coding", "pattern") == "informational"
+        assert classify_lesson("Breakpoints help with debugging", "pattern") == "informational"
+        assert classify_lesson("The debugger is useful", "pattern") == "informational"
+
+    def test_classification_on_load(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Lessons should be classified when loaded from file."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add a lesson that will be classified as constraint
+        manager.add_lesson("project", "gotcha", "WIP safety", "Never commit uncommitted changes")
+
+        # Reload and check classification
+        lessons = manager.list_lessons()
+        assert len(lessons) == 1
+        assert lessons[0].lesson_type == "constraint"
+
+
+class TestLessonFraming:
+    """Tests for lesson content framing at display time."""
+
+    def test_frame_constraint_with_never(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Constraint lessons without 'always' get NEVER framing."""
+        from core.parsing import frame_lesson_content, classify_lesson
+        from core.models import Lesson
+        from datetime import date
+
+        lesson = Lesson(
+            id="L001",
+            title="Test",
+            content="Don't commit WIP files",
+            uses=1,
+            velocity=0,
+            learned=date.today(),
+            last_used=date.today(),
+            category="correction",
+            lesson_type="constraint",
+        )
+
+        framed = frame_lesson_content(lesson)
+        assert framed.startswith("NEVER:")
+        assert "Ask user if exception needed" in framed
+
+    def test_frame_constraint_with_always(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Constraint lessons with 'always' in content get ALWAYS framing."""
+        from core.parsing import frame_lesson_content
+        from core.models import Lesson
+        from datetime import date
+
+        lesson = Lesson(
+            id="L001",
+            title="Test",
+            content="Always use explicit git add",
+            uses=1,
+            velocity=0,
+            learned=date.today(),
+            last_used=date.today(),
+            category="correction",
+            lesson_type="constraint",
+        )
+
+        framed = frame_lesson_content(lesson)
+        assert framed.startswith("ALWAYS:")
+        assert "Ask user before skipping" in framed
+
+    def test_frame_preference(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Preference lessons get Prefer framing."""
+        from core.parsing import frame_lesson_content
+        from core.models import Lesson
+        from datetime import date
+
+        lesson = Lesson(
+            id="L001",
+            title="Test",
+            content="Use TypeScript for new code",
+            uses=1,
+            velocity=0,
+            learned=date.today(),
+            last_used=date.today(),
+            category="pattern",
+            lesson_type="preference",
+        )
+
+        framed = frame_lesson_content(lesson)
+        assert framed.startswith("Prefer:")
+        assert "Ask user before deviating" in framed
+
+    def test_frame_informational_unchanged(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Informational lessons are not modified."""
+        from core.parsing import frame_lesson_content
+        from core.models import Lesson
+        from datetime import date
+
+        content = "Config file is at /etc/app.conf"
+        lesson = Lesson(
+            id="L001",
+            title="Test",
+            content=content,
+            uses=1,
+            velocity=0,
+            learned=date.today(),
+            last_used=date.today(),
+            category="pattern",
+            lesson_type="informational",
+        )
+
+        framed = frame_lesson_content(lesson)
+        assert framed == content  # Unchanged
+
+
+class TestExplicitLessonType:
+    """Tests for explicitly setting lesson type."""
+
+    def test_add_lesson_with_explicit_type(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Lessons can be added with explicit type."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add with explicit constraint type (even though content is neutral)
+        manager.add_lesson(
+            "project", "pattern", "Neutral title", "Neutral content",
+            lesson_type="constraint"
+        )
+
+        lessons = manager.list_lessons()
+        assert len(lessons) == 1
+        assert lessons[0].lesson_type == "constraint"
+
+    def test_explicit_type_stored_in_file(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Explicit type is stored in the LESSONS.md file."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        manager.add_lesson(
+            "project", "pattern", "Test", "Content",
+            lesson_type="preference"
+        )
+
+        # Check file contents
+        lessons_file = temp_project_root / ".claude-recall" / "LESSONS.md"
+        content = lessons_file.read_text()
+        assert "**Type**: preference" in content
+
+    def test_cli_add_with_type(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path):
+        """CLI --type flag should set explicit lesson type."""
+        result = subprocess.run(
+            [
+                "python3", "core/cli.py",
+                "add", "--type", "constraint",
+                "pattern", "CLI Test", "This is a constraint"
+            ],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0
+
+        # Verify type was stored
+        lessons_file = temp_project_root / ".claude-recall" / "LESSONS.md"
+        content = lessons_file.read_text()
+        assert "**Type**: constraint" in content
+
+
+class TestInjectionFraming:
+    """Tests for framed content in injection output."""
+
+    def test_inject_shows_framed_content(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Injection output should include framed content for constraint lessons."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add a constraint lesson
+        manager.add_lesson("project", "correction", "WIP Safety", "Never commit WIP files")
+
+        result = manager.inject(5)  # positional arg
+        output = result.format()
+
+        # Should see NEVER framing in output
+        assert "NEVER:" in output
+
+    def test_remaining_constraint_lessons_show_content(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Constraint lessons not in top_n should still show content."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add lessons that will be in top_n (will cite them to ensure higher uses)
+        for i in range(5):
+            manager.add_lesson("project", "pattern", f"Info {i}", f"Info content {i}")
+
+        # Add a constraint lesson that will be in "remaining" (lower uses)
+        manager.add_lesson("project", "correction", "Critical Rule", "Never do this dangerous thing")
+
+        # Cite the first 3 lessons multiple times to ensure they have higher uses
+        # This makes the test order-independent since inject() sorts by uses
+        for lesson_id in ["L001", "L002", "L003"]:
+            for _ in range(3):
+                manager.cite_lesson(lesson_id)
+
+        result = manager.inject(3)  # positional arg - top 3 by uses
+        output = result.format()
+
+        # The constraint lesson (L006) should show content even though it's in remaining
+        # because constraint lessons always show their content
+        assert "dangerous thing" in output or "NEVER:" in output
 
 
 # Helper for creating mock subprocess results (used in TestScoreRelevance)
