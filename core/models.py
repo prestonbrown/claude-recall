@@ -256,8 +256,8 @@ class InjectionResult:
                     other_items.append(f"[{lesson.id}] {prefix}{lesson.title}")
                 lines.append("  " + " | ".join(other_items))
 
-        # Simplified footer
-        lines.append("Cite [ID] when applying. LESSON: to add.")
+        # Simplified footer - explicit about output pattern (no shell commands!)
+        lines.append("Cite [ID] when applying. LESSON: [category:] title - content to add (output only, no shell commands).")
 
         return "\n".join(lines)
 
