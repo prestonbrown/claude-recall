@@ -614,15 +614,21 @@ def main():
                 # Full TUI mode
                 try:
                     from core.tui.app import RecallMonitorApp
-                    app = RecallMonitorApp(project_filter=args.project)
-                    app.run()
-                except ImportError as e:
-                    print(f"Error: TUI requires textual package: {e}", file=sys.stderr)
-                    print("Install with: pip install textual", file=sys.stderr)
-                    sys.exit(1)
+                except ImportError:
+                    try:
+                        from tui.app import RecallMonitorApp
+                    except ImportError as e:
+                        print(f"Error: TUI requires textual package: {e}", file=sys.stderr)
+                        print("Install with: pip install textual", file=sys.stderr)
+                        sys.exit(1)
+                app = RecallMonitorApp(project_filter=args.project)
+                app.run()
 
         elif args.command == "debug":
-            from core.debug_logger import get_logger
+            try:
+                from core.debug_logger import get_logger
+            except ImportError:
+                from debug_logger import get_logger
             logger = get_logger()
 
             if args.debug_command == "hook-start":

@@ -478,35 +478,112 @@ class TestProjectIsolation:
 
 
 class TestInstalledCLI:
-    """Test that installed CLI works correctly."""
+    """Test that installed CLI works correctly.
 
-    def test_installed_cli_imports_work(self, integration_env, hook_env):
-        """Verify CLI can import all required modules when installed."""
-        # Simulate installed environment by copying files like install.sh does
+    These tests verify the CLI works when installed in flat mode (no core/ prefix),
+    simulating ~/.config/claude-recall/ where files are copied directly.
+    """
+
+    @pytest.fixture
+    def installed_env(self, integration_env, hook_env) -> Dict[str, any]:
+        """Set up a fully installed environment with all modules."""
         claude_recall_base = integration_env["claude_recall_base"]
         repo_root = Path(__file__).parent.parent
         core_dir = repo_root / "core"
 
-        # Copy _version.py (the missing file that broke things)
-        version_file = core_dir / "_version.py"
-        if version_file.exists():
-            (claude_recall_base / "_version.py").write_text(version_file.read_text())
+        # Copy all Python modules (like install.sh does)
+        for py_file in core_dir.glob("*.py"):
+            (claude_recall_base / py_file.name).write_text(py_file.read_text())
 
-        # Try to run the CLI
-        result = subprocess.run(
-            ["python3", str(claude_recall_base / "cli.py"), "inject", "1"],
-            capture_output=True,
-            text=True,
-            env={
+        # Copy TUI directory (flat, no core/ prefix)
+        tui_src = core_dir / "tui"
+        tui_dst = claude_recall_base / "tui"
+        if tui_src.exists():
+            import shutil
+            if tui_dst.exists():
+                shutil.rmtree(tui_dst)
+            shutil.copytree(tui_src, tui_dst)
+
+        return {
+            "base": claude_recall_base,
+            "env": {
                 **hook_env,
                 "PYTHONPATH": "",  # Clear PYTHONPATH to simulate installed env
             },
-            cwd=str(integration_env["project_root"]),
+            "project_root": integration_env["project_root"],
+            "state": integration_env["claude_recall_state"],
+        }
+
+    def test_installed_cli_imports_work(self, installed_env):
+        """Verify CLI can import all required modules when installed."""
+        result = subprocess.run(
+            ["python3", str(installed_env["base"] / "cli.py"), "inject", "1"],
+            capture_output=True,
+            text=True,
+            env=installed_env["env"],
+            cwd=str(installed_env["project_root"]),
         )
 
         # Should not fail with import errors
         assert "ModuleNotFoundError" not in result.stderr, f"Import error: {result.stderr}"
         assert "ImportError" not in result.stderr, f"Import error: {result.stderr}"
+
+    def test_installed_cli_watch_summary(self, installed_env):
+        """Verify watch --summary works when installed (tests TUI imports).
+
+        This is a regression test for the bug where 'from core.tui.log_reader'
+        failed in installed mode because there's no core/ package.
+        """
+        result = subprocess.run(
+            ["python3", str(installed_env["base"] / "cli.py"), "watch", "--summary"],
+            capture_output=True,
+            text=True,
+            env=installed_env["env"],
+            cwd=str(installed_env["project_root"]),
+        )
+
+        # Should not fail with import errors
+        assert "ModuleNotFoundError" not in result.stderr, f"Import error: {result.stderr}"
+        assert "ImportError" not in result.stderr, f"Import error: {result.stderr}"
+        # Should produce some output (even if empty stats)
+        assert result.returncode == 0, f"watch --summary failed: {result.stderr}"
+
+    def test_installed_cli_watch_tail(self, installed_env):
+        """Verify watch --tail works when installed (tests TUI imports)."""
+        result = subprocess.run(
+            ["python3", str(installed_env["base"] / "cli.py"), "watch", "--tail", "-n", "5"],
+            capture_output=True,
+            text=True,
+            env=installed_env["env"],
+            cwd=str(installed_env["project_root"]),
+        )
+
+        # Should not fail with import errors
+        assert "ModuleNotFoundError" not in result.stderr, f"Import error: {result.stderr}"
+        assert "ImportError" not in result.stderr, f"Import error: {result.stderr}"
+        assert result.returncode == 0, f"watch --tail failed: {result.stderr}"
+
+    def test_installed_cli_debug_command(self, installed_env):
+        """Verify debug command works when installed (tests debug_logger import).
+
+        This is a regression test for the bug where 'from core.debug_logger'
+        failed in installed mode.
+        """
+        result = subprocess.run(
+            ["python3", str(installed_env["base"] / "cli.py"), "debug", "hook-start", "inject", "--trigger", "test"],
+            capture_output=True,
+            text=True,
+            env={
+                **installed_env["env"],
+                "CLAUDE_RECALL_DEBUG": "1",  # Enable debug logging
+            },
+            cwd=str(installed_env["project_root"]),
+        )
+
+        # Should not fail with import errors
+        assert "ModuleNotFoundError" not in result.stderr, f"Import error: {result.stderr}"
+        assert "ImportError" not in result.stderr, f"Import error: {result.stderr}"
+        assert result.returncode == 0, f"debug command failed: {result.stderr}"
 
 
 class TestAutoHandoffCreation:
