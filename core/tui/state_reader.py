@@ -11,7 +11,20 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
+
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+
+# Data directory names in order of precedence
+DATA_DIRS: Tuple[str, ...] = (".claude-recall", ".recall", ".coding-agent-lessons")
+
+# Standard filenames
+LESSONS_FILENAME = "LESSONS.md"
+HANDOFFS_FILENAME = "HANDOFFS.md"
+LEGACY_HANDOFFS_FILENAME = "APPROACHES.md"
+DECAY_STATE_FILENAME = "decay_state"
 
 try:
     from core.tui.models import DecayInfo, HandoffSummary, LessonSummary
@@ -136,46 +149,76 @@ class StateReader:
     @property
     def system_lessons_file(self) -> Path:
         """Path to system lessons file."""
-        return self.state_dir / "LESSONS.md"
+        return self.state_dir / LESSONS_FILENAME
 
     @property
     def project_lessons_file(self) -> Optional[Path]:
         """Path to project lessons file, or None if no project root."""
         if self.project_root is None:
             return None
-
-        # Check for data directory in order of precedence
-        for dir_name in [".claude-recall", ".recall", ".coding-agent-lessons"]:
-            data_dir = self.project_root / dir_name
-            lessons_file = data_dir / "LESSONS.md"
-            if lessons_file.exists():
-                return lessons_file
-
-        # Default to .claude-recall if no existing file
-        return self.project_root / ".claude-recall" / "LESSONS.md"
+        return self._find_lessons_file(self.project_root)
 
     @property
     def project_handoffs_file(self) -> Optional[Path]:
         """Path to project handoffs file, or None if no project root."""
         if self.project_root is None:
             return None
-
-        # Check for data directory in order of precedence
-        for dir_name in [".claude-recall", ".recall", ".coding-agent-lessons"]:
-            data_dir = self.project_root / dir_name
-            # Check for new HANDOFFS.md first, then legacy APPROACHES.md
-            for filename in ["HANDOFFS.md", "APPROACHES.md"]:
-                handoffs_file = data_dir / filename
-                if handoffs_file.exists():
-                    return handoffs_file
-
-        # Default to .claude-recall/HANDOFFS.md if no existing file
-        return self.project_root / ".claude-recall" / "HANDOFFS.md"
+        return self._find_handoffs_file(self.project_root)
 
     @property
     def decay_state_file(self) -> Path:
         """Path to decay state file."""
-        return self.state_dir / "decay_state"
+        return self.state_dir / DECAY_STATE_FILENAME
+
+    def _find_data_dir(self, project_root: Path) -> Optional[Path]:
+        """
+        Find data directory in order of precedence.
+
+        Args:
+            project_root: Project root to search in
+
+        Returns:
+            Path to existing data directory, or None if none exists
+        """
+        for dir_name in DATA_DIRS:
+            data_dir = project_root / dir_name
+            if data_dir.exists():
+                return data_dir
+        return None
+
+    def _find_lessons_file(self, project_root: Path) -> Path:
+        """
+        Find lessons file in project, checking data dirs in precedence order.
+
+        Args:
+            project_root: Project root to search in
+
+        Returns:
+            Path to existing lessons file, or default path if none exists
+        """
+        for dir_name in DATA_DIRS:
+            lessons_file = project_root / dir_name / LESSONS_FILENAME
+            if lessons_file.exists():
+                return lessons_file
+        return project_root / DATA_DIRS[0] / LESSONS_FILENAME
+
+    def _find_handoffs_file(self, project_root: Path) -> Path:
+        """
+        Find handoffs file in project, checking data dirs and legacy names.
+
+        Args:
+            project_root: Project root to search in
+
+        Returns:
+            Path to existing handoffs file, or default path if none exists
+        """
+        for dir_name in DATA_DIRS:
+            data_dir = project_root / dir_name
+            for filename in (HANDOFFS_FILENAME, LEGACY_HANDOFFS_FILENAME):
+                handoffs_file = data_dir / filename
+                if handoffs_file.exists():
+                    return handoffs_file
+        return project_root / DATA_DIRS[0] / HANDOFFS_FILENAME
 
     def _parse_lessons_file(self, file_path: Path, level: str) -> List[LessonSummary]:
         """
@@ -315,17 +358,11 @@ class StateReader:
         lessons.extend(self._parse_lessons_file(self.system_lessons_file, "system"))
 
         # Project lessons
-        project_file = self.project_lessons_file
-        if project_root:
-            # Override project root
-            for dir_name in [".claude-recall", ".recall", ".coding-agent-lessons"]:
-                data_dir = project_root / dir_name
-                lessons_file = data_dir / "LESSONS.md"
-                if lessons_file.exists():
-                    project_file = lessons_file
-                    break
-            else:
-                project_file = project_root / ".claude-recall" / "LESSONS.md"
+        project_file = (
+            self._find_lessons_file(project_root)
+            if project_root
+            else self.project_lessons_file
+        )
 
         if project_file:
             lessons.extend(self._parse_lessons_file(project_file, "project"))
@@ -351,16 +388,11 @@ class StateReader:
         Returns:
             List of project LessonSummary objects
         """
-        project_file = self.project_lessons_file
-        if project_root:
-            for dir_name in [".claude-recall", ".recall", ".coding-agent-lessons"]:
-                data_dir = project_root / dir_name
-                lessons_file = data_dir / "LESSONS.md"
-                if lessons_file.exists():
-                    project_file = lessons_file
-                    break
-            else:
-                project_file = project_root / ".claude-recall" / "LESSONS.md"
+        project_file = (
+            self._find_lessons_file(project_root)
+            if project_root
+            else self.project_lessons_file
+        )
 
         if not project_file:
             return []
@@ -377,21 +409,11 @@ class StateReader:
         Returns:
             List of HandoffSummary objects
         """
-        handoffs_file = self.project_handoffs_file
-        if project_root:
-            found = False
-            for dir_name in [".claude-recall", ".recall", ".coding-agent-lessons"]:
-                data_dir = project_root / dir_name
-                for filename in ["HANDOFFS.md", "APPROACHES.md"]:
-                    hf = data_dir / filename
-                    if hf.exists():
-                        handoffs_file = hf
-                        found = True
-                        break
-                if found:
-                    break
-            else:
-                handoffs_file = project_root / ".claude-recall" / "HANDOFFS.md"
+        handoffs_file = (
+            self._find_handoffs_file(project_root)
+            if project_root
+            else self.project_handoffs_file
+        )
 
         if not handoffs_file:
             return []

@@ -4,6 +4,9 @@
 
 import pytest
 
+# Skip this module if textual is not installed
+pytest.importorskip("textual")
+
 from core.tui.app import make_sparkline, SPARKLINE_CHARS
 
 

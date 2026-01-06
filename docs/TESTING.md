@@ -15,26 +15,34 @@ tests/
 
 ## Running Tests
 
-```bash
-# Run all tests (420+ tests)
-python3 -m pytest tests/ -v
+Use `./run-tests.sh` - it automatically creates a venv and installs dependencies from `requirements-dev.txt`:
 
-# Run with coverage
-python3 -m pytest tests/ --cov=core --cov-report=term-missing
+```bash
+# Run all tests (500+ tests)
+./run-tests.sh
+
+# Run with verbose output
+./run-tests.sh -v --tb=short
 
 # Run specific test file
-python3 -m pytest tests/test_lessons_manager.py -v
-python3 -m pytest tests/test_handoffs.py -v
+./run-tests.sh tests/test_lessons_manager.py -v
+./run-tests.sh tests/test_handoffs.py -v
+./run-tests.sh tests/test_tui/ -v
 
 # Run specific test class
-python3 -m pytest tests/test_handoffs.py::TestPhaseDetectionFromTools -v
+./run-tests.sh tests/test_handoffs.py::TestPhaseDetectionFromTools -v
 
 # Run specific test
-python3 -m pytest tests/test_handoffs.py::TestPhaseDetectionFromTools::test_bash_pytest_is_review -v
+./run-tests.sh tests/test_handoffs.py::TestPhaseDetectionFromTools::test_bash_pytest_is_review -v
 
 # Run tests matching a pattern
-python3 -m pytest tests/ -v -k "phase"
+./run-tests.sh -v -k "phase"
+
+# Run with coverage
+./run-tests.sh --cov=core --cov-report=term-missing
 ```
+
+**Note:** TUI tests require `textual` (included in dev deps). If you run `pytest` directly without the wrapper, TUI tests will skip gracefully if textual is not installed.
 
 ## Test Categories
 
@@ -454,20 +462,16 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest pytest-cov
-
       - name: Run tests
-        run: |
-          python -m pytest tests/ -v --cov=core --cov-report=xml
+        run: ./run-tests.sh -v --cov=core --cov-report=xml
 
       - name: Upload coverage
         uses: codecov/codecov-action@v3
         with:
           file: ./coverage.xml
 ```
+
+The `run-tests.sh` script handles venv creation and dependency installation automatically.
 
 ## Test Coverage
 
@@ -480,7 +484,7 @@ Current coverage targets:
 
 Run coverage report:
 ```bash
-python3 -m pytest tests/ --cov=core --cov-report=html
+./run-tests.sh --cov=core --cov-report=html
 open htmlcov/index.html
 ```
 

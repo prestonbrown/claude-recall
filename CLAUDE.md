@@ -30,8 +30,10 @@ Stop hook → parses output, updates lessons/handoffs, tracks citations
 ## Key Commands
 
 ```bash
-# Run tests
-python3 -m pytest tests/ -v
+# Run tests (auto-manages venv and dependencies)
+./run-tests.sh                    # All tests
+./run-tests.sh -v --tb=short      # With verbose output
+./run-tests.sh tests/test_tui/    # TUI tests only
 
 # CLI usage
 python3 core/cli.py inject 5                          # Top 5 by stars
@@ -43,12 +45,14 @@ python3 core/cli.py handoff list
 
 ## Writing Tests
 
-**Read `docs/TESTING.md` before writing tests.** Key gotchas:
+**Read `docs/TESTING.md` before writing tests.** Use `./run-tests.sh` - it auto-creates a venv and installs deps from `requirements-dev.txt`.
 
+Key gotchas:
 - Use `temp_lessons_base` + `temp_state_dir` + `temp_project_root` fixtures for CLI tests
 - `add_lesson()` requires **keyword args**: `level=`, `category=`, `title=`, `content=`
 - CLI subprocess tests need `env={**os.environ, "CLAUDE_RECALL_BASE": ..., "CLAUDE_RECALL_STATE": ..., "PROJECT_DIR": ...}`
 - Dev paths (`core/...`) differ from installed paths (`~/.config/claude-recall/...`)
+- TUI tests require `textual` (included in dev deps) - they skip gracefully if missing
 
 ## Environment
 

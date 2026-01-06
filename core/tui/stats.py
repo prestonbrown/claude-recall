@@ -9,7 +9,7 @@ Computes system health metrics from buffered log events.
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 try:
     from core.tui.log_reader import LogReader, format_event_line
@@ -202,7 +202,7 @@ class StatsAggregator:
         """Force cache invalidation."""
         self._cached_stats = None
 
-    def compute_session_stats(self, session_id: str) -> Dict:
+    def compute_session_stats(self, session_id: str) -> Dict[str, Any]:
         """
         Compute statistics for a specific session.
 
@@ -242,7 +242,7 @@ class StatsAggregator:
             "project": events[0].project if events else "",
         }
 
-    def compute_project_stats(self, project: str) -> Dict:
+    def compute_project_stats(self, project: str) -> Dict[str, Any]:
         """
         Compute statistics for a specific project.
 
@@ -289,7 +289,7 @@ class StatsAggregator:
         errors = [e for e in self.log_reader.iter_events() if e.is_error]
         return list(reversed(errors[-limit:]))
 
-    def get_timing_summary(self, stats: Optional[SystemStats] = None) -> Dict[str, Dict]:
+    def get_timing_summary(self, stats: Optional[SystemStats] = None) -> Dict[str, Dict[str, float]]:
         """
         Get timing summary by hook/operation.
 
