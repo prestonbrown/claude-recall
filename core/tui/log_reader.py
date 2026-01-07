@@ -89,6 +89,12 @@ def format_event_line(event: DebugEvent, color: bool = True) -> str:
         total_ms = raw.get("total_ms", 0)
         details = f"{hook}: {total_ms:.0f}ms"
 
+    elif event.event == "hook_phase":
+        hook = raw.get("hook", "")
+        phase = raw.get("phase", "")
+        ms = raw.get("ms", 0)
+        details = f"{hook}.{phase}: {ms:.0f}ms"
+
     elif event.event == "handoff_created":
         hid = raw.get("handoff_id", "")
         title = raw.get("title", "")[:30]

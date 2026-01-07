@@ -344,6 +344,98 @@ class TestLogReader:
         assert count2 == 1  # Only new event
         assert reader.buffer_size == 2
 
+    def test_new_events_at_buffer_tail(self, temp_log_dir: Path):
+        """New events are appended at the end of the buffer."""
+        log_path = temp_log_dir / "debug.log"
+
+        # Write initial events
+        initial_events = [
+            {"event": "initial-1", "level": "info", "timestamp": "", "session_id": "", "pid": 0, "project": ""},
+            {"event": "initial-2", "level": "info", "timestamp": "", "session_id": "", "pid": 0, "project": ""},
+            {"event": "initial-3", "level": "info", "timestamp": "", "session_id": "", "pid": 0, "project": ""},
+        ]
+        log_path.write_text("\n".join(json.dumps(e) for e in initial_events) + "\n")
+
+        reader = LogReader(log_path=log_path)
+        reader.load_buffer()
+        initial_tail = list(reader._buffer)[-1].event
+
+        # Add new events
+        with open(log_path, "a") as f:
+            f.write(json.dumps({"event": "new-1", "level": "info", "timestamp": "", "session_id": "", "pid": 0, "project": ""}) + "\n")
+            f.write(json.dumps({"event": "new-2", "level": "info", "timestamp": "", "session_id": "", "pid": 0, "project": ""}) + "\n")
+
+        new_count = reader.load_buffer()
+        assert new_count == 2
+
+        # New events should be at the tail
+        buffer = list(reader._buffer)
+        assert buffer[-1].event == "new-2"
+        assert buffer[-2].event == "new-1"
+        assert buffer[-3].event == "initial-3"
+
+    def test_buffer_slice_gets_new_events(self, temp_log_dir: Path):
+        """Slicing buffer[-count:] after load_buffer() returns exactly the new events."""
+        log_path = temp_log_dir / "debug.log"
+
+        # Write initial events
+        initial_events = [
+            {"event": f"old-{i}", "level": "info", "timestamp": "", "session_id": "", "pid": 0, "project": ""}
+            for i in range(5)
+        ]
+        log_path.write_text("\n".join(json.dumps(e) for e in initial_events) + "\n")
+
+        reader = LogReader(log_path=log_path)
+        reader.load_buffer()
+
+        # Add new events with distinct marker
+        with open(log_path, "a") as f:
+            for i in range(3):
+                f.write(json.dumps({"event": f"NEW-{i}", "level": "info", "timestamp": "", "session_id": "", "pid": 0, "project": ""}) + "\n")
+
+        new_count = reader.load_buffer()
+        assert new_count == 3
+
+        # Slice should get exactly the new events
+        buffer = list(reader._buffer)
+        sliced = buffer[-new_count:]
+        assert len(sliced) == 3
+        assert sliced[0].event == "NEW-0"
+        assert sliced[1].event == "NEW-1"
+        assert sliced[2].event == "NEW-2"
+
+    def test_buffer_slice_with_rotation(self, temp_log_dir: Path):
+        """Buffer slicing works correctly even when buffer is at capacity."""
+        log_path = temp_log_dir / "debug.log"
+
+        # Fill buffer to capacity (using small max for test)
+        initial_events = [
+            {"event": f"old-{i}", "level": "info", "timestamp": "", "session_id": "", "pid": 0, "project": ""}
+            for i in range(10)
+        ]
+        log_path.write_text("\n".join(json.dumps(e) for e in initial_events) + "\n")
+
+        reader = LogReader(log_path=log_path, max_buffer=10)
+        reader.load_buffer()
+        assert reader.buffer_size == 10
+
+        # Add new events (will push out old ones)
+        with open(log_path, "a") as f:
+            for i in range(3):
+                f.write(json.dumps({"event": f"NEW-{i}", "level": "info", "timestamp": "", "session_id": "", "pid": 0, "project": ""}) + "\n")
+
+        new_count = reader.load_buffer()
+        assert new_count == 3
+        assert reader.buffer_size == 10  # Still at capacity
+
+        # Slice should still get the new events
+        buffer = list(reader._buffer)
+        sliced = buffer[-new_count:]
+        assert len(sliced) == 3
+        assert sliced[0].event == "NEW-0"
+        assert sliced[1].event == "NEW-1"
+        assert sliced[2].event == "NEW-2"
+
 
 # --- Tests for format_event_line ---
 
@@ -448,6 +540,26 @@ class TestFormatEventLine:
         assert "decay_result" in line
         assert "5 uses" in line
         assert "3 velocity" in line
+
+    def test_format_event_line_hook_phase(self):
+        """Format hook_phase event shows hook.phase: duration."""
+        event_data = {
+            "event": "hook_phase",
+            "level": "debug",
+            "timestamp": "2025-01-05T10:35:30Z",
+            "session_id": "sess-xyz",
+            "pid": 12345,
+            "project": "test-project",
+            "hook": "stop",
+            "phase": "process_lessons",
+            "ms": 42.5,
+        }
+        event = parse_event(json.dumps(event_data))
+        line = format_event_line(event, color=False)
+
+        assert "hook_phase" in line
+        assert "stop.process_lessons" in line
+        assert "42ms" in line or "43ms" in line  # Rounded
 
     def test_format_event_line_generic_event(self):
         """Format generic event shows first interesting key."""

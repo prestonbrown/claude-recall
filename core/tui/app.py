@@ -183,6 +183,12 @@ def _format_event_details(event: DebugEvent) -> str:
         level = raw.get("lesson_level", "")
         return f"{lid} ({level})"
 
+    elif event.event == "hook_phase":
+        hook = raw.get("hook", "")
+        phase = raw.get("phase", "")
+        ms = raw.get("ms", 0)
+        return f"{hook}.{phase}: {ms:.0f}ms"
+
     else:
         # Generic: show first interesting key
         skip_keys = {"event", "level", "timestamp", "session_id", "pid", "project"}
