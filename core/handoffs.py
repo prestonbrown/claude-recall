@@ -591,6 +591,43 @@ class HandoffsMixin:
         hash_hex = hashlib.sha256(seed.encode()).hexdigest()[:7]
         return f"hf-{hash_hex}"
 
+    def _find_active_handoff_by_title(
+        self, title: str, stealth: bool = False
+    ) -> Optional[Handoff]:
+        """
+        Find an active (non-completed) handoff with the same title.
+
+        Used for duplicate detection - if a handoff with the same title
+        already exists and is not completed, return it instead of creating
+        a new one.
+
+        Args:
+            title: The title to search for (case-insensitive)
+            stealth: Whether to search stealth handoffs
+
+        Returns:
+            The existing handoff if found, None otherwise
+        """
+        title_lower = title.lower().strip()
+
+        # Check the appropriate file based on stealth flag
+        if stealth:
+            if not self.project_stealth_handoffs_file.exists():
+                return None
+            handoffs = self._parse_handoffs_file(
+                self.project_stealth_handoffs_file, stealth=True
+            )
+        else:
+            if not self.project_handoffs_file.exists():
+                return None
+            handoffs = self._parse_handoffs_file(self.project_handoffs_file)
+
+        for h in handoffs:
+            if h.status != "completed" and h.title.lower().strip() == title_lower:
+                return h
+
+        return None
+
     def _get_next_handoff_id(self) -> str:
         """Get the next available handoff ID (legacy sequential format)."""
         max_id = 0
@@ -649,6 +686,11 @@ class HandoffsMixin:
             raise ValueError(f"Invalid phase: {phase}")
         if agent not in self.VALID_AGENTS:
             raise ValueError(f"Invalid agent: {agent}")
+
+        # Check for duplicate - return existing handoff if active one with same title exists
+        existing = self._find_active_handoff_by_title(title, stealth)
+        if existing:
+            return existing.id
 
         # refs takes precedence, files is for backward compat
         ref_list = refs if refs is not None else (files or [])

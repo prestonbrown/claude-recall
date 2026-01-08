@@ -220,6 +220,90 @@ class TestHandoffAdd:
 
 
 # =============================================================================
+# Duplicate Detection
+# =============================================================================
+
+
+class TestHandoffDuplicateDetection:
+    """Tests for handoff duplicate detection."""
+
+    def test_handoff_add_duplicate_returns_existing_id(self, manager: "LessonsManager"):
+        """Adding a handoff with the same title returns the existing ID."""
+        # Create first handoff
+        id1 = manager.handoff_add(title="Implement feature X")
+
+        # Try to create duplicate with same title
+        id2 = manager.handoff_add(title="Implement feature X")
+
+        # Should return the same ID
+        assert id1 == id2
+
+        # Only one handoff should exist
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 1
+        assert handoffs[0].id == id1
+
+    def test_handoff_add_duplicate_case_insensitive(self, manager: "LessonsManager"):
+        """Duplicate detection should be case-insensitive."""
+        id1 = manager.handoff_add(title="Fix Bug in Parser")
+        id2 = manager.handoff_add(title="fix bug in parser")
+        id3 = manager.handoff_add(title="FIX BUG IN PARSER")
+
+        assert id1 == id2 == id3
+
+    def test_handoff_add_duplicate_ignores_whitespace(self, manager: "LessonsManager"):
+        """Duplicate detection should ignore leading/trailing whitespace."""
+        id1 = manager.handoff_add(title="Add new endpoint")
+        id2 = manager.handoff_add(title="  Add new endpoint  ")
+
+        assert id1 == id2
+
+    def test_handoff_add_different_titles_creates_new(self, manager: "LessonsManager"):
+        """Different titles should create separate handoffs."""
+        id1 = manager.handoff_add(title="Implement feature A")
+        id2 = manager.handoff_add(title="Implement feature B")
+
+        assert id1 != id2
+
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 2
+
+    def test_handoff_add_duplicate_completed_creates_new(self, manager: "LessonsManager"):
+        """Adding a handoff with same title as completed one should create new."""
+        # Create and complete first handoff
+        id1 = manager.handoff_add(title="Deploy version 1.0")
+        manager.handoff_complete(id1)
+
+        # Now add another with same title - should create new since first is completed
+        id2 = manager.handoff_add(title="Deploy version 1.0")
+
+        assert id1 != id2
+
+        # Should have one completed and one active
+        all_handoffs = manager.handoff_list(include_completed=True)
+        assert len(all_handoffs) == 2
+
+    def test_handoff_add_duplicate_stealth_separate_from_regular(
+        self, manager: "LessonsManager"
+    ):
+        """Stealth and regular handoffs with same title are kept separate."""
+        id1 = manager.handoff_add(title="Secret task", stealth=False)
+        id2 = manager.handoff_add(title="Secret task", stealth=True)
+
+        # Should be different IDs since they're in different files
+        assert id1 != id2
+
+    def test_handoff_duplicate_detection_within_stealth(
+        self, manager: "LessonsManager"
+    ):
+        """Duplicate detection works within stealth handoffs."""
+        id1 = manager.handoff_add(title="Private work", stealth=True)
+        id2 = manager.handoff_add(title="Private work", stealth=True)
+
+        assert id1 == id2
+
+
+# =============================================================================
 # Updating Handoffs
 # =============================================================================
 
@@ -3771,17 +3855,28 @@ class TestHashBasedIds:
         # Should be valid hex characters
         assert all(c in "0123456789abcdef" for c in hash_part)
 
-    def test_hash_ids_are_unique(self, manager: "LessonsManager"):
-        """Two handoffs with same title should get different IDs due to timestamp."""
-        import time
-
-        id1 = manager.handoff_add(title="Same title")
-        time.sleep(0.01)  # Small delay to ensure different timestamp
-        id2 = manager.handoff_add(title="Same title")
+    def test_hash_ids_are_unique_for_different_titles(self, manager: "LessonsManager"):
+        """Two handoffs with different titles should get different IDs."""
+        id1 = manager.handoff_add(title="First title")
+        id2 = manager.handoff_add(title="Second title")
 
         assert id1 != id2
         assert id1.startswith("hf-")
         assert id2.startswith("hf-")
+
+    def test_same_title_returns_same_id_due_to_duplicate_detection(
+        self, manager: "LessonsManager"
+    ):
+        """Two handoffs with same title return same ID due to duplicate detection."""
+        import time
+
+        id1 = manager.handoff_add(title="Same title")
+        time.sleep(0.01)  # Small delay
+        id2 = manager.handoff_add(title="Same title")
+
+        # Due to duplicate detection, same title returns same ID
+        assert id1 == id2
+        assert id1.startswith("hf-")
 
     def test_old_ids_still_parsed(self, manager: "LessonsManager"):
         """Old A### format IDs should still be parseable."""

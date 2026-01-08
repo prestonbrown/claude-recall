@@ -43,9 +43,18 @@ is_enabled() {
     }
 }
 
+find_project_root() {
+    local dir="${1:-$(pwd)}"
+    while [[ "$dir" != "/" ]]; do
+        [[ -d "$dir/.git" ]] && { echo "$dir"; return 0; }
+        dir=$(dirname "$dir")
+    done
+    echo "$1"
+}
+
 log_debug() {
     if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-        PROJECT_DIR="${cwd:-$(pwd)}" python3 "$PYTHON_MANAGER" debug log "$1" 2>/dev/null || true
+        PROJECT_DIR="${project_root:-${cwd:-$(pwd)}}" python3 "$PYTHON_MANAGER" debug log "$1" 2>/dev/null || true
     fi
 }
 
@@ -58,6 +67,9 @@ if [[ -z "$cwd" ]]; then
     log_debug "post-exitplanmode: no cwd in input"
     exit 0
 fi
+
+# Find actual project root (walk up to .git)
+project_root=$(find_project_root "$cwd")
 
 # Check if enabled
 if ! is_enabled; then
@@ -91,7 +103,7 @@ log_debug "post-exitplanmode: creating handoff from plan '$title'"
 
 # Create handoff with phase=implementing
 if [[ -f "$PYTHON_MANAGER" ]]; then
-    PROJECT_DIR="$cwd" python3 "$PYTHON_MANAGER" approach add "$title" --phase implementing 2>/dev/null || {
+    PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" approach add "$title" --phase implementing 2>/dev/null || {
         log_debug "post-exitplanmode: failed to create handoff"
     }
 fi
