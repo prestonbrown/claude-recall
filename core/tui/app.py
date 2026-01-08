@@ -16,7 +16,7 @@ import platform
 import subprocess
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
@@ -50,8 +50,10 @@ def _get_time_format() -> str:
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.widgets import (
+    Button,
     DataTable,
     Footer,
     Header,
@@ -69,13 +71,13 @@ except ImportError:
 
 try:
     from core.tui.log_reader import LogReader, format_event_line
-    from core.tui.models import DebugEvent
+    from core.tui.models import DebugEvent, HandoffSummary
     from core.tui.state_reader import StateReader
     from core.tui.stats import StatsAggregator
     from core.tui.transcript_reader import TranscriptReader, TranscriptSummary
 except ImportError:
     from .log_reader import LogReader, format_event_line
-    from .models import DebugEvent
+    from .models import DebugEvent, HandoffSummary
     from .state_reader import StateReader
     from .stats import StatsAggregator
     from .transcript_reader import TranscriptReader, TranscriptSummary
@@ -317,6 +319,157 @@ def _compute_session_status(last_event_time: Optional[datetime]) -> str:
     return "Active" if age_minutes < SESSION_ACTIVE_THRESHOLD_MINUTES else "Idle"
 
 
+def _find_matching_handoff(
+    session_date: date, handoffs: List[HandoffSummary]
+) -> Optional[HandoffSummary]:
+    """Find handoff that was active during the session.
+
+    Matches handoffs where session_date is between handoff.created and handoff.updated.
+    If multiple match, returns the most recently updated one.
+
+    Args:
+        session_date: The date of the session
+        handoffs: List of handoffs to search
+
+    Returns:
+        Matching HandoffSummary, or None if no match
+    """
+    matches = []
+    for hf in handoffs:
+        # Parse dates (format: YYYY-MM-DD)
+        try:
+            if not hf.created or not hf.updated:
+                continue
+            created = date.fromisoformat(hf.created)
+            updated = date.fromisoformat(hf.updated)
+            if created <= session_date <= updated:
+                matches.append((hf, updated))
+        except ValueError:
+            continue
+
+    if not matches:
+        return None
+
+    # Return the most recently updated match
+    return max(matches, key=lambda x: x[1])[0]
+
+
+def _decode_project_path(session_path: Path) -> Optional[Path]:
+    """Decode project path from Claude's encoded directory naming.
+
+    Claude encodes project paths like:
+    /Users/test/code/myproject -> -Users-test-code-myproject
+
+    Args:
+        session_path: Path to session JSONL file
+
+    Returns:
+        Decoded project path, or None if can't decode
+    """
+    # Get the project directory name (parent of the session file)
+    project_dir_name = session_path.parent.name
+    if not project_dir_name.startswith("-"):
+        return None
+
+    # Decode: replace - with / (but handle -- for . in paths)
+    # First, protect double-dashes (which represent .)
+    decoded = project_dir_name.replace("--", "\x00")
+    # Then replace single dashes with /
+    decoded = decoded.replace("-", "/")
+    # Restore dots
+    decoded = decoded.replace("\x00", "/.")
+
+    # The decoded path should start with /
+    if not decoded.startswith("/"):
+        return None
+
+    return Path(decoded)
+
+
+class SessionDetailModal(ModalScreen):
+    """Modal screen showing expanded session details.
+
+    Displays full session information without truncation:
+    - Session ID and project
+    - Full topic (first user prompt)
+    - Start and last activity times
+    - Message count and token usage
+    - Tool breakdown
+    - Lesson citations
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+    ]
+
+    def __init__(self, session_id: str, session_data: "TranscriptSummary") -> None:
+        """Initialize with session data.
+
+        Args:
+            session_id: The session identifier
+            session_data: TranscriptSummary containing session details
+        """
+        super().__init__()
+        self.session_id = session_id
+        self.session_data = session_data
+
+    def compose(self) -> ComposeResult:
+        """Compose the modal content."""
+        summary = self.session_data
+
+        with Vertical(id="session-detail-modal"):
+            yield Static("[bold]Session Details[/bold]", classes="modal-title")
+
+            with VerticalScroll(id="session-detail-content"):
+                # Session ID
+                yield Static(f"[bold]Session ID:[/bold] {self.session_id}")
+
+                # Project
+                yield Static(f"[bold]Project:[/bold] {summary.project}")
+
+                # Full topic (no truncation)
+                topic = summary.first_prompt.replace("\n", " ")
+                yield Static(f"[bold]Topic:[/bold] {topic}")
+
+                # Times
+                yield Static(
+                    f"[bold]Started:[/bold] {_format_session_time(summary.start_time)}"
+                )
+                yield Static(
+                    f"[bold]Last Activity:[/bold] {_format_session_time(summary.last_activity)}"
+                )
+
+                # Message count
+                yield Static(f"[bold]Messages:[/bold] {summary.message_count}")
+
+                # Token usage
+                yield Static(f"[bold]Tokens:[/bold] {_format_tokens(summary.total_tokens)}")
+
+                # Tool breakdown
+                if summary.tool_breakdown:
+                    tool_parts = [
+                        f"{name}({count})"
+                        for name, count in sorted(
+                            summary.tool_breakdown.items(), key=lambda x: -x[1]
+                        )
+                    ]
+                    yield Static(f"[bold]Tools:[/bold] {' '.join(tool_parts)}")
+                else:
+                    yield Static("[bold]Tools:[/bold] None")
+
+                # Lesson citations
+                if summary.lesson_citations:
+                    citations_str = ", ".join(summary.lesson_citations)
+                    yield Static(f"[bold]Lessons Cited:[/bold] {citations_str}")
+
+            yield Button("Close", id="close-modal", variant="primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button press events."""
+        if event.button.id == "close-modal":
+            self.dismiss()
+
+
 class RecallMonitorApp(App):
     """
     Main Textual application for claude-recall monitoring.
@@ -338,6 +491,7 @@ class RecallMonitorApp(App):
         Binding("p", "toggle_pause", "Pause"),
         Binding("r", "refresh", "Refresh"),
         Binding("a", "toggle_all", "All"),
+        Binding("e", "expand_session", "Expand"),
         Binding("ctrl+c", "copy_session", "Copy", priority=True),
     ]
 
@@ -783,6 +937,19 @@ class RecallMonitorApp(App):
         session_log.write(f"[bold]Topic:[/bold] {topic}")
         session_log.write("")
 
+        # Handoff correlation - find handoffs active during this session
+        project_root = _decode_project_path(summary.path)
+        if project_root and summary.start_time:
+            handoffs = self.state_reader.get_handoffs(project_root)
+            if handoffs:
+                session_date = summary.start_time.date()
+                matching_handoff = _find_matching_handoff(session_date, handoffs)
+                if matching_handoff:
+                    session_log.write(
+                        f"[bold]Handoff:[/bold] {matching_handoff.id} ({matching_handoff.phase})"
+                    )
+                    session_log.write("")
+
         # Tool breakdown line
         if summary.tool_breakdown:
             tool_parts = [f"{name}({count})" for name, count in sorted(summary.tool_breakdown.items(), key=lambda x: -x[1])]
@@ -983,6 +1150,37 @@ class RecallMonitorApp(App):
         else:
             self.notify("Showing current project, non-empty sessions")
         self._refresh_session_list()
+
+    def action_expand_session(self) -> None:
+        """Open modal with expanded session details for the highlighted row."""
+        try:
+            session_table = self.query_one("#session-list", DataTable)
+        except Exception:
+            return
+
+        # Get highlighted row key
+        if session_table.cursor_row is None:
+            self.notify("No session selected", severity="warning")
+            return
+
+        # Get the session_id from row key
+        try:
+            row_key_obj = list(session_table.rows.keys())[session_table.cursor_row]
+            session_id = row_key_obj.value
+        except (IndexError, AttributeError):
+            self.notify("Could not get session ID", severity="error")
+            return
+
+        if not session_id or session_id not in self._session_data:
+            self.notify("Session data not found", severity="error")
+            return
+
+        # Get session data and open modal
+        summary = self._session_data[session_id]
+        if isinstance(summary, TranscriptSummary):
+            self.push_screen(SessionDetailModal(session_id, summary))
+        else:
+            self.notify("Invalid session data format", severity="error")
 
     def action_copy_session(self) -> None:
         """Copy highlighted session data to clipboard."""

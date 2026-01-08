@@ -159,13 +159,15 @@ class HandoffSummary:
         title: Handoff title
         status: Current status (not_started, in_progress, blocked, ready_for_review, completed)
         phase: Current phase (research, planning, implementing, review)
-        updated: Last updated date as ISO string
+        created: Creation date as ISO string (YYYY-MM-DD)
+        updated: Last updated date as ISO string (YYYY-MM-DD)
     """
 
     id: str
     title: str
     status: str
     phase: str
+    created: str
     updated: str
 
     @property

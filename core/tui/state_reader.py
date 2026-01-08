@@ -128,7 +128,7 @@ class StateReader:
         r"\s*\|\s*\*\*Phase\*\*:\s*([\w-]+)"
     )
     HANDOFF_DATES_PATTERN = re.compile(
-        r"\*\*Updated\*\*:\s*(\d{4}-\d{2}-\d{2})"
+        r"\*\*Created\*\*:\s*(\d{4}-\d{2}-\d{2})\s*\|\s*\*\*Updated\*\*:\s*(\d{4}-\d{2}-\d{2})"
     )
 
     def __init__(
@@ -315,6 +315,7 @@ class StateReader:
             # Parse status line
             status = "unknown"
             phase = "unknown"
+            created = ""
             updated = ""
 
             if idx + 1 < len(lines):
@@ -323,11 +324,12 @@ class StateReader:
                     status = status_match.group(1)
                     phase = status_match.group(2)
 
-            # Look for updated date in nearby lines
+            # Look for created and updated dates in nearby lines
             for i in range(idx + 1, min(idx + 4, len(lines))):
                 dates_match = self.HANDOFF_DATES_PATTERN.search(lines[i])
                 if dates_match:
-                    updated = dates_match.group(1)
+                    created = dates_match.group(1)
+                    updated = dates_match.group(2)
                     break
 
             handoffs.append(HandoffSummary(
@@ -335,6 +337,7 @@ class StateReader:
                 title=title,
                 status=status,
                 phase=phase,
+                created=created,
                 updated=updated,
             ))
 

@@ -258,3 +258,41 @@ LoadingIndicator {
     height: 100%;
     border: solid $primary-darken-2;
 }
+
+/* Session Detail Modal */
+SessionDetailModal {
+    align: center middle;
+}
+
+#session-detail-modal {
+    width: 80;
+    height: auto;
+    max-height: 80%;
+    border: solid $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#session-detail-content {
+    height: auto;
+    max-height: 20;
+    padding: 1 0;
+}
+
+#session-detail-content Static {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.modal-title {
+    text-style: bold;
+    text-align: center;
+    padding: 0 0 1 0;
+    border-bottom: solid $primary-darken-2;
+    margin-bottom: 1;
+}
+
+#close-modal {
+    width: 100%;
+    margin-top: 1;
+}

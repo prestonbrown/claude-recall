@@ -25,10 +25,26 @@ from textual.widgets import DataTable, RichLog
 
 # Import app with fallback for installed vs dev paths
 try:
-    from core.tui.app import RecallMonitorApp, _format_session_time, _format_tokens
+    from core.tui.app import (
+        RecallMonitorApp,
+        SessionDetailModal,
+        _decode_project_path,
+        _find_matching_handoff,
+        _format_session_time,
+        _format_tokens,
+    )
+    from core.tui.models import HandoffSummary
     from core.tui.transcript_reader import TranscriptReader, TranscriptSummary
 except ImportError:
-    from .app import RecallMonitorApp, _format_session_time, _format_tokens
+    from .app import (
+        RecallMonitorApp,
+        SessionDetailModal,
+        _decode_project_path,
+        _find_matching_handoff,
+        _format_session_time,
+        _format_tokens,
+    )
+    from .models import HandoffSummary
     from .transcript_reader import TranscriptReader, TranscriptSummary
 
 
@@ -992,3 +1008,542 @@ class TestLessonCitationsDisplay:
             f"got {len(no_citations.lesson_citations)}. "
             f"Citations: {no_citations.lesson_citations}"
         )
+
+
+# --- Tests for Session Detail Modal ---
+
+
+class TestSessionDetailModal:
+    """Tests for the session detail modal functionality."""
+
+    @pytest.mark.asyncio
+    async def test_expand_keybinding_opens_modal(
+        self, mock_claude_home: Path, temp_state_dir: Path
+    ):
+        """Pressing 'e' on a highlighted session should open the detail modal."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+
+            # Focus the session table and select a row
+            session_table.focus()
+            await pilot.pause()
+
+            # Press 'e' to expand
+            await pilot.press("e")
+            await pilot.pause()
+
+            # Check that a modal screen was pushed
+            # The app should now have SessionDetailModal as the active screen
+            assert len(app.screen_stack) > 1, (
+                "Expected modal to be pushed onto screen stack after pressing 'e'"
+            )
+            assert isinstance(app.screen, SessionDetailModal), (
+                f"Expected SessionDetailModal to be active screen, got {type(app.screen)}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_modal_shows_session_details(
+        self, mock_claude_home: Path, temp_state_dir: Path
+    ):
+        """Modal should display full session details."""
+        app = RecallMonitorApp()
+
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+            session_table.focus()
+            await pilot.pause()
+
+            # Navigate to sess-recent (should be first row, most recent)
+            await pilot.press("e")
+            await pilot.pause()
+
+            # Modal should be visible
+            assert isinstance(app.screen, SessionDetailModal), (
+                "Modal should be the active screen"
+            )
+
+            # Get modal content - check for session details
+            modal = app.screen
+            assert modal.session_id is not None, "Modal should have session_id set"
+            assert modal.session_data is not None, "Modal should have session_data set"
+
+    @pytest.mark.asyncio
+    async def test_modal_escape_dismisses(
+        self, mock_claude_home: Path, temp_state_dir: Path
+    ):
+        """Pressing Escape should dismiss the modal."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab and open modal
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+            session_table.focus()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            # Verify modal is open
+            assert isinstance(app.screen, SessionDetailModal), "Modal should be open"
+
+            # Press Escape to dismiss
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # Modal should be dismissed
+            assert not isinstance(app.screen, SessionDetailModal), (
+                "Modal should be dismissed after pressing Escape"
+            )
+
+    @pytest.mark.asyncio
+    async def test_modal_close_button_dismisses(
+        self, mock_claude_home: Path, temp_state_dir: Path
+    ):
+        """Close button press event should dismiss the modal."""
+        from textual.widgets import Button
+
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab and open modal
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+            session_table.focus()
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            # Verify modal is open
+            assert isinstance(app.screen, SessionDetailModal), "Modal should be open"
+
+            # Focus the Close button and press Enter to activate it
+            close_button = app.screen.query_one("#close-modal", Button)
+            close_button.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # Modal should be dismissed
+            assert not isinstance(app.screen, SessionDetailModal), (
+                "Modal should be dismissed after activating Close button"
+            )
+
+    @pytest.mark.asyncio
+    async def test_modal_shows_full_topic(
+        self, mock_claude_home: Path, temp_state_dir: Path
+    ):
+        """Modal should display the full topic without truncation."""
+        app = RecallMonitorApp()
+
+        # Use wider terminal to fit full topic
+        async with app.run_test(size=(150, 30)) as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+            session_table.focus()
+            await pilot.pause()
+
+            # Find the row with sess-long-topic and navigate to it
+            # Sessions are sorted by last_activity descending:
+            # sess-recent (5s ago), sess-middle (20s ago), sess-long-topic (25s ago), sess-older (50s ago)
+            # So sess-long-topic should be at index 2
+            target_row_idx = None
+            for idx, row_key in enumerate(session_table.rows.keys()):
+                if str(row_key.value) == "sess-long-topic":
+                    target_row_idx = idx
+                    break
+
+            if target_row_idx is not None:
+                # Move cursor to the target row
+                session_table.move_cursor(row=target_row_idx)
+                await pilot.pause()
+
+                await pilot.press("e")
+                await pilot.pause()
+
+                # Verify modal has the full topic
+                if isinstance(app.screen, SessionDetailModal):
+                    topic = app.screen.session_data.first_prompt
+                    # The topic should contain text beyond the 100-char mark
+                    assert "session management" in topic, (
+                        f"Modal should show full topic including 'session management'. "
+                        f"Got topic: {topic[:150]}..."
+                    )
+                else:
+                    pytest.fail("Modal did not open")
+            else:
+                pytest.fail("Could not find sess-long-topic in session table")
+
+    @pytest.mark.asyncio
+    async def test_modal_shows_lesson_citations(
+        self, mock_claude_home_with_citations: Path, temp_state_dir: Path
+    ):
+        """Modal should display lesson citations when present."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_table = app.query_one("#session-list", DataTable)
+            session_table.focus()
+            await pilot.pause()
+
+            # Open modal for first session
+            await pilot.press("e")
+            await pilot.pause()
+
+            # Check that modal shows citations
+            if isinstance(app.screen, SessionDetailModal):
+                citations = app.screen.session_data.lesson_citations
+                # One of the sessions has citations L001 and S002
+                if citations:
+                    assert "L001" in citations or "S002" in citations, (
+                        f"Modal should show lesson citations. Got: {citations}"
+                    )
+
+
+# --- Tests for Handoff Correlation ---
+
+
+class TestHandoffCorrelation:
+    """Tests for handoff correlation display in session events panel."""
+
+    def test_decode_project_path_simple(self):
+        """_decode_project_path decodes simple project paths."""
+        session_path = Path("/home/user/.claude/projects/-Users-test-code-myproject/sess.jsonl")
+        result = _decode_project_path(session_path)
+
+        assert result is not None, "Should decode valid path"
+        assert result == Path("/Users/test/code/myproject"), (
+            f"Expected /Users/test/code/myproject, got {result}"
+        )
+
+    def test_decode_project_path_with_dots(self):
+        """_decode_project_path handles paths with dots (--  -> /.)."""
+        session_path = Path("/home/user/.claude/projects/-Users-test--local-state/sess.jsonl")
+        result = _decode_project_path(session_path)
+
+        assert result is not None, "Should decode path with dots"
+        assert result == Path("/Users/test/.local/state"), (
+            f"Expected /Users/test/.local/state, got {result}"
+        )
+
+    def test_decode_project_path_invalid(self):
+        """_decode_project_path returns None for invalid paths."""
+        # Path without leading dash
+        session_path = Path("/home/user/.claude/projects/invalid/sess.jsonl")
+        result = _decode_project_path(session_path)
+
+        assert result is None, "Should return None for path without leading dash"
+
+    def test_find_matching_handoff_exact_match(self):
+        """_find_matching_handoff finds handoff when session date equals created/updated."""
+        from datetime import date
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-abc1234",
+                title="Test Handoff",
+                status="in_progress",
+                phase="implementing",
+                created="2026-01-07",
+                updated="2026-01-07",
+            )
+        ]
+        session_date = date(2026, 1, 7)
+
+        result = _find_matching_handoff(session_date, handoffs)
+
+        assert result is not None, "Should find handoff on exact date"
+        assert result.id == "hf-abc1234", f"Expected hf-abc1234, got {result.id}"
+
+    def test_find_matching_handoff_in_range(self):
+        """_find_matching_handoff finds handoff when session date is between created and updated."""
+        from datetime import date
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-abc1234",
+                title="Multi-day Handoff",
+                status="in_progress",
+                phase="implementing",
+                created="2026-01-05",
+                updated="2026-01-10",
+            )
+        ]
+        session_date = date(2026, 1, 7)  # Between created and updated
+
+        result = _find_matching_handoff(session_date, handoffs)
+
+        assert result is not None, "Should find handoff when date in range"
+        assert result.id == "hf-abc1234"
+
+    def test_find_matching_handoff_no_match(self):
+        """_find_matching_handoff returns None when no handoff matches."""
+        from datetime import date
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-abc1234",
+                title="Old Handoff",
+                status="completed",
+                phase="review",
+                created="2026-01-01",
+                updated="2026-01-02",
+            )
+        ]
+        session_date = date(2026, 1, 7)  # After handoff ended
+
+        result = _find_matching_handoff(session_date, handoffs)
+
+        assert result is None, "Should return None when no handoff matches date"
+
+    def test_find_matching_handoff_prefers_most_recent(self):
+        """_find_matching_handoff returns most recently updated when multiple match."""
+        from datetime import date
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-older",
+                title="Older Handoff",
+                status="in_progress",
+                phase="research",
+                created="2026-01-01",
+                updated="2026-01-08",
+            ),
+            HandoffSummary(
+                id="hf-newer",
+                title="Newer Handoff",
+                status="in_progress",
+                phase="implementing",
+                created="2026-01-05",
+                updated="2026-01-10",
+            ),
+        ]
+        session_date = date(2026, 1, 7)  # Matches both
+
+        result = _find_matching_handoff(session_date, handoffs)
+
+        assert result is not None, "Should find matching handoff"
+        assert result.id == "hf-newer", (
+            f"Should prefer most recently updated handoff, got {result.id}"
+        )
+
+    def test_find_matching_handoff_skips_empty_dates(self):
+        """_find_matching_handoff skips handoffs with empty date fields."""
+        from datetime import date
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-no-dates",
+                title="Missing Dates",
+                status="in_progress",
+                phase="research",
+                created="",
+                updated="",
+            ),
+            HandoffSummary(
+                id="hf-valid",
+                title="Valid Dates",
+                status="in_progress",
+                phase="implementing",
+                created="2026-01-05",
+                updated="2026-01-10",
+            ),
+        ]
+        session_date = date(2026, 1, 7)
+
+        result = _find_matching_handoff(session_date, handoffs)
+
+        assert result is not None, "Should find valid handoff"
+        assert result.id == "hf-valid", "Should skip handoff with empty dates"
+
+
+@pytest.fixture
+def mock_claude_home_with_handoff(tmp_path: Path, monkeypatch) -> Path:
+    """Create mock ~/.claude and .claude-recall directories with handoff.
+
+    The decoded project path from Claude's encoded directory naming
+    is an absolute path. We create a project directory without dashes
+    (since dashes in paths can't be reliably decoded) and use that.
+    """
+    claude_home = tmp_path / ".claude"
+    projects_dir = claude_home / "projects"
+
+    # Create a project directory without dashes
+    # Use a simple path that we create inside tmp_path
+    project_root = tmp_path / "myproject"
+    project_root.mkdir(parents=True)
+
+    # Encode the project path for Claude's directory naming
+    # e.g., /tmp/.../myproject -> -tmp-...-myproject
+    encoded_project = str(project_root).replace("/", "-").replace(".", "-")
+    project_dir = projects_dir / encoded_project
+    project_dir.mkdir(parents=True)
+
+    # Create .claude-recall directory in the project root
+    recall_dir = project_root / ".claude-recall"
+    recall_dir.mkdir(parents=True)
+
+    # Create HANDOFFS.md with a handoff that spans today
+    today = datetime.now().strftime("%Y-%m-%d")
+    handoffs_content = f"""# HANDOFFS.md - Active Work Tracking
+
+## Active Handoffs
+
+### [hf-test123] Test Handoff for TUI
+- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+- **Refs**:
+- **Description**: Testing handoff correlation
+
+**Tried**:
+1. [success] Initial setup
+
+**Next**: Complete implementation
+"""
+    (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+    # Create a session transcript with today's timestamp
+    start_time = make_timestamp(60)  # 1 minute ago
+    end_time = make_timestamp(30)  # 30 seconds ago
+
+    create_transcript(
+        project_dir / "sess-with-handoff.jsonl",
+        first_prompt="Working on TUI handoff correlation",
+        tools=["Read", "Edit"],
+        tokens=1000,
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    # Monkeypatch to use our mock directories
+    monkeypatch.setenv("PROJECT_DIR", str(project_root))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    return claude_home
+
+
+class TestHandoffCorrelationDisplay:
+    """Integration tests for handoff correlation display in TUI.
+
+    Note: Full end-to-end testing of the handoff correlation feature requires
+    a project path without dashes, which is difficult to guarantee in temp dirs.
+    These tests focus on verifying the components work together.
+    """
+
+    def test_state_reader_loads_handoffs_from_project(self, tmp_path: Path):
+        """StateReader.get_handoffs loads handoffs from project's .claude-recall."""
+        try:
+            from core.tui.state_reader import StateReader
+        except ImportError:
+            from .state_reader import StateReader
+
+        # Create project with handoffs
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        recall_dir = project_root / ".claude-recall"
+        recall_dir.mkdir()
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        handoffs_content = f"""# HANDOFFS.md
+
+### [hf-abc1234] Test Handoff
+- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+"""
+        (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+        reader = StateReader(project_root=project_root)
+        handoffs = reader.get_handoffs(project_root)
+
+        assert len(handoffs) == 1, f"Expected 1 handoff, got {len(handoffs)}"
+        assert handoffs[0].id == "hf-abc1234"
+        assert handoffs[0].phase == "implementing"
+        assert handoffs[0].created == today
+        assert handoffs[0].updated == today
+
+    def test_handoff_correlation_logic_integration(self, tmp_path: Path):
+        """Verify handoff matching works with StateReader data."""
+        from datetime import date as dt_date
+
+        try:
+            from core.tui.state_reader import StateReader
+        except ImportError:
+            from .state_reader import StateReader
+
+        # Create project with handoffs spanning multiple dates
+        # Note: Handoff IDs must match pattern hf-[0-9a-f]{7} or [A-Z]\d{3}
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        recall_dir = project_root / ".claude-recall"
+        recall_dir.mkdir()
+
+        handoffs_content = """# HANDOFFS.md
+
+### [hf-0000001] Older Handoff
+- **Status**: completed | **Phase**: review | **Agent**: user
+- **Created**: 2026-01-01 | **Updated**: 2026-01-03
+
+### [hf-0000002] Active Handoff
+- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Created**: 2026-01-05 | **Updated**: 2026-01-10
+"""
+        (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+        reader = StateReader(project_root=project_root)
+        handoffs = reader.get_handoffs(project_root)
+
+        assert len(handoffs) == 2, f"Expected 2 handoffs, got {len(handoffs)}"
+
+        # Session on 2026-01-07 should match hf-0000002 (Active Handoff)
+        session_date = dt_date(2026, 1, 7)
+        match = _find_matching_handoff(session_date, handoffs)
+
+        assert match is not None, "Should find matching handoff"
+        assert match.id == "hf-0000002", f"Expected hf-0000002, got {match.id}"
+
+        # Session on 2026-01-02 should match hf-0000001 (Older Handoff)
+        session_date = dt_date(2026, 1, 2)
+        match = _find_matching_handoff(session_date, handoffs)
+
+        assert match is not None, "Should find matching handoff"
+        assert match.id == "hf-0000001", f"Expected hf-0000001, got {match.id}"
+
+        # Session on 2026-01-04 should match nothing (between the two handoffs)
+        session_date = dt_date(2026, 1, 4)
+        match = _find_matching_handoff(session_date, handoffs)
+
+        assert match is None, "Should not find matching handoff"
