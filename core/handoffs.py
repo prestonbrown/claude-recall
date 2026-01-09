@@ -1771,14 +1771,36 @@ Consider extracting lessons about:
         in_progress = [t for t in todos if t.get("status") == "in_progress"]
         pending = [t for t in todos if t.get("status") == "pending"]
 
-        # Find or create a handoff
-        active_handoffs = self.handoff_list(include_completed=False)
+        # Extract explicit handoff IDs from todo content (e.g., "[hf-8136b12] Task name")
+        # This allows targeting specific handoffs when multiple are active
+        explicit_handoff_ids = set()
+        handoff_pattern = re.compile(r'\[hf-([0-9a-f]{7})\]')
+        for todo in todos:
+            content = todo.get("content", "")
+            match = handoff_pattern.search(content)
+            if match:
+                explicit_handoff_ids.add(f"hf-{match.group(1)}")
 
-        if active_handoffs:
-            # Use the most recently updated active handoff
-            handoff = max(active_handoffs, key=lambda h: h.updated)
-            handoff_id = handoff.id
-        elif len(todos) >= 3:
+        # Find or create a handoff
+        handoff_id = None
+
+        # First, try to use explicitly referenced handoff
+        if explicit_handoff_ids:
+            for hid in explicit_handoff_ids:
+                handoff = self.handoff_get(hid)
+                if handoff and handoff.status != "completed":
+                    handoff_id = hid
+                    break
+
+        # Fall back to most recently updated active handoff
+        if not handoff_id:
+            active_handoffs = self.handoff_list(include_completed=False)
+            if active_handoffs:
+                handoff = max(active_handoffs, key=lambda h: h.updated)
+                handoff_id = handoff.id
+
+        # Create new handoff if none found and enough todos
+        if not handoff_id and len(todos) >= 3:
             # Only auto-create handoff if 3+ todos (avoid noise for small tasks)
             first_todo = todos[0].get("content", "Work in progress")
             # Truncate title to 50 chars
@@ -1799,8 +1821,9 @@ Consider extracting lessons about:
 
             handoff_id = self.handoff_add(title=title, phase=phase)
             # handoff_add already logs creation via debug_logger
-        else:
-            # Less than 3 todos and no active handoff - skip to avoid noise
+
+        # If still no handoff (< 3 todos and no active handoff), skip
+        if not handoff_id:
             return None
 
         # Sync completed todos as tried entries (success)

@@ -643,6 +643,7 @@ class RecallMonitorApp(App):
         if not self._paused:
             self._refresh_events()
             self._refresh_session_list()
+            self._refresh_handoff_list()
 
     @work(exclusive=True)
     async def _refresh_events(self) -> None:
@@ -1382,6 +1383,7 @@ class RecallMonitorApp(App):
         self._update_health()
         self._update_state()
         self._refresh_session_list()
+        self._refresh_handoff_list()
         self._update_charts()
         self.notify("Refreshed")
 

@@ -6039,5 +6039,97 @@ class TestOrphanHandoffAutoCompletion:
         assert h2 in completed
 
 
+class TestExplicitHandoffIdInTodos:
+    """Tests for explicit handoff ID targeting via [hf-XXXXXXX] prefix in todos."""
+
+    def test_todo_with_explicit_handoff_id_syncs_to_that_handoff(
+        self, manager: LessonsManager
+    ) -> None:
+        """Todos with [hf-XXXXXXX] prefix sync to that specific handoff."""
+        # Create two handoffs
+        handoff_a = manager.handoff_add(title="Handoff A")
+        handoff_b = manager.handoff_add(title="Handoff B")
+
+        # Sync todos that explicitly reference handoff_a
+        todos = [
+            {"content": f"[{handoff_a}] Task 1", "status": "completed", "activeForm": "Task 1"},
+            {"content": f"[{handoff_a}] Task 2", "status": "in_progress", "activeForm": "Task 2"},
+            {"content": f"[{handoff_a}] Task 3", "status": "pending", "activeForm": "Task 3"},
+        ]
+        result = manager.handoff_sync_todos(todos)
+
+        # Should sync to handoff_a despite handoff_b being more recently updated
+        assert result == handoff_a
+
+        # Verify handoff_a was updated
+        handoff = manager.handoff_get(handoff_a)
+        assert handoff.status == "in_progress"
+        assert len(handoff.tried) >= 1
+
+    def test_todo_without_explicit_id_uses_most_recent(
+        self, manager: LessonsManager
+    ) -> None:
+        """Todos without explicit handoff ID use most recently updated handoff."""
+        # Create two handoffs
+        handoff_a = manager.handoff_add(title="Handoff A")
+        handoff_b = manager.handoff_add(title="Handoff B")
+
+        # Sync some work to handoff_a to make it more recently updated
+        manager.handoff_update_checkpoint(handoff_a, "Working on A")
+
+        # Sync todos without explicit ID - should go to handoff_a (most recent)
+        todos = [
+            {"content": "Generic task 1", "status": "completed", "activeForm": "Task 1"},
+            {"content": "Generic task 2", "status": "pending", "activeForm": "Task 2"},
+            {"content": "Generic task 3", "status": "pending", "activeForm": "Task 3"},
+        ]
+        result = manager.handoff_sync_todos(todos)
+
+        # Should sync to most recently updated (handoff_a)
+        assert result == handoff_a
+
+    def test_explicit_id_overrides_most_recent(self, manager: LessonsManager) -> None:
+        """Explicit handoff ID takes precedence over most recently updated."""
+        # Create handoffs and update them in order
+        handoff_old = manager.handoff_add(title="Old Handoff")
+        handoff_new = manager.handoff_add(title="New Handoff")
+
+        # Update new to make it most recently updated
+        manager.handoff_update_checkpoint(handoff_new, "Very recent work")
+
+        # Sync todos that explicitly target the old handoff
+        todos = [
+            {"content": f"[{handoff_old}] Target old", "status": "in_progress", "activeForm": "Target old"},
+            {"content": "Task 2", "status": "pending", "activeForm": "Task 2"},
+            {"content": "Task 3", "status": "pending", "activeForm": "Task 3"},
+        ]
+        result = manager.handoff_sync_todos(todos)
+
+        # Should sync to explicitly referenced handoff, not most recent
+        assert result == handoff_old
+
+    def test_ignores_completed_handoff_in_explicit_id(
+        self, manager: LessonsManager
+    ) -> None:
+        """Explicit ID referencing completed handoff falls back to most recent."""
+        # Create a handoff and mark it completed
+        completed_handoff = manager.handoff_add(title="Completed Work")
+        manager.handoff_update_status(completed_handoff, "completed")
+
+        # Create another active handoff
+        active_handoff = manager.handoff_add(title="Active Work")
+
+        # Sync todos that reference the completed handoff
+        todos = [
+            {"content": f"[{completed_handoff}] Task 1", "status": "in_progress", "activeForm": "Task 1"},
+            {"content": "Task 2", "status": "pending", "activeForm": "Task 2"},
+            {"content": "Task 3", "status": "pending", "activeForm": "Task 3"},
+        ]
+        result = manager.handoff_sync_todos(todos)
+
+        # Should fall back to active handoff since referenced one is completed
+        assert result == active_handoff
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
