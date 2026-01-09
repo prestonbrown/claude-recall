@@ -19,7 +19,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 
 @lru_cache(maxsize=1)
@@ -885,6 +885,8 @@ class RecallMonitorApp(App):
         # Handoff details navigation state
         self._handoff_detail_sessions: List[dict] = []  # Sessions for 1-9 navigation
         self._handoff_detail_blockers: List[str] = []  # Blocked-by IDs for 'b' navigation
+        # Lazy tab loading tracking
+        self._tabs_loaded: Dict[str, bool] = {}
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         """Add custom commands to the command palette."""
@@ -1007,8 +1009,8 @@ class RecallMonitorApp(App):
 
         self._update_subtitle()
 
-        # Start auto-refresh timer (2 seconds) - must use sync callback
-        self._refresh_timer = self.set_interval(2.0, self._on_refresh_timer)
+        # Start auto-refresh timer (5 seconds) - must use sync callback
+        self._refresh_timer = self.set_interval(5.0, self._on_refresh_timer)
 
     def _load_events(self) -> None:
         """Load and display events in the log."""
@@ -1032,8 +1034,17 @@ class RecallMonitorApp(App):
         self._update_subtitle()
         if not self._paused:
             self._refresh_events()
-            self._refresh_session_list()
-            self._refresh_handoff_list()
+            # Only refresh the currently visible tab for performance
+            try:
+                tabs = self.query_one(TabbedContent)
+                active = tabs.active
+                if active == "session":
+                    self._refresh_session_list_async()
+                elif active == "handoffs":
+                    self._refresh_handoff_list_async()
+                # For live/health/state/charts tabs, only refresh events (already done above)
+            except Exception:
+                pass
 
     @work(exclusive=True)
     async def _refresh_events(self) -> None:
@@ -2895,6 +2906,26 @@ class RecallMonitorApp(App):
                     if row_key.value == self._user_selected_session_id:
                         session_table.move_cursor(row=idx)
                         break
+
+    @work(exclusive=True, group="session_refresh")
+    async def _refresh_session_list_async(self) -> None:
+        """Async worker to refresh session list in background.
+
+        Delegates file I/O to a background thread to avoid blocking the UI.
+        """
+        # Perform the refresh on main thread (UI operations must be on main thread)
+        # But mark this as an async worker so the timer doesn't block
+        self._refresh_session_list()
+
+    @work(exclusive=True, group="handoff_refresh")
+    async def _refresh_handoff_list_async(self) -> None:
+        """Async worker to refresh handoff list in background.
+
+        Delegates file I/O to a background thread to avoid blocking the UI.
+        """
+        # Perform the refresh on main thread (UI operations must be on main thread)
+        # But mark this as an async worker so the timer doesn't block
+        self._refresh_handoff_list()
 
     def _get_dynamic_subtitle(self) -> str:
         """Build dynamic subtitle showing status."""

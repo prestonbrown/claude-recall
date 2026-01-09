@@ -10,11 +10,12 @@ providing structured access to session messages, tool usage, and statistics.
 import json
 import os
 import re
+import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 CITATION_PATTERN = re.compile(r'\[([LS]\d{3})\]')
 
@@ -256,6 +257,14 @@ class TranscriptReader:
             claude_home = Path.home() / ".claude"
         self.claude_home = Path(claude_home)
         self.projects_dir = self.claude_home / "projects"
+        # Cache for session summaries: path -> (mtime, summary)
+        self._session_cache: Dict[Path, Tuple[float, TranscriptSummary]] = {}
+        self._cache_lock = threading.Lock()
+
+    def clear_cache(self) -> None:
+        """Clear the session summary cache, forcing re-parsing on next access."""
+        with self._cache_lock:
+            self._session_cache.clear()
 
     def encode_project_path(self, project_path: str) -> str:
         """
@@ -304,10 +313,23 @@ class TranscriptReader:
         return encoded_path
 
     def _load_session_summary(self, session_path: Path, project_name: str) -> Optional[TranscriptSummary]:
-        """Load a session and return its summary."""
+        """Load a session and return its summary, using cache if available."""
         if not session_path.exists():
             return None
 
+        # Check cache with mtime validation
+        try:
+            current_mtime = session_path.stat().st_mtime
+        except OSError:
+            return None
+
+        with self._cache_lock:
+            if session_path in self._session_cache:
+                cached_mtime, cached_summary = self._session_cache[session_path]
+                if cached_mtime == current_mtime:
+                    return cached_summary
+
+        # Cache miss or stale - parse the file
         session_id = session_path.stem
         first_prompt = ""
         message_count = 0
@@ -378,15 +400,11 @@ class TranscriptReader:
 
         if start_time is None:
             # Use file mtime as fallback for sessions with no user/assistant messages
-            try:
-                mtime = session_path.stat().st_mtime
-                start_time = datetime.fromtimestamp(mtime, tz=timezone.utc)
-            except OSError:
-                start_time = datetime.now(timezone.utc)
+            start_time = datetime.fromtimestamp(current_mtime, tz=timezone.utc)
         if last_activity is None:
             last_activity = start_time
 
-        return TranscriptSummary(
+        summary = TranscriptSummary(
             session_id=session_id,
             path=session_path,
             project=project_name,
@@ -402,6 +420,12 @@ class TranscriptReader:
             lesson_citations=sorted(citations),
             origin=detect_origin(first_prompt),
         )
+
+        # Update cache
+        with self._cache_lock:
+            self._session_cache[session_path] = (current_mtime, summary)
+
+        return summary
 
     def list_sessions(
         self, project_path: str, limit: int = 50, include_empty: bool = False
@@ -476,6 +500,63 @@ class TranscriptReader:
                     # Filter out empty sessions unless include_empty is True
                     if include_empty or summary.message_count > 0:
                         sessions.append(summary)
+
+        # Sort by last_activity descending
+        sessions.sort(key=lambda s: s.last_activity, reverse=True)
+
+        # Link parent-child relationships before slicing
+        _link_parent_child_sessions(sessions)
+
+        return sessions[:limit]
+
+    def list_all_sessions_fast(
+        self,
+        limit: int = 20,
+        max_age_hours: int = 24,
+        include_empty: bool = False,
+    ) -> List[TranscriptSummary]:
+        """
+        Fast session listing that only scans recently modified files.
+
+        Uses file mtime to skip files older than max_age_hours, providing
+        much faster initial load while still showing recent sessions.
+
+        Args:
+            limit: Maximum number of sessions to return (default 20)
+            max_age_hours: Only include files modified within this many hours (default 24)
+            include_empty: If False (default), filter out sessions with 0 messages
+
+        Returns:
+            List of TranscriptSummary objects, sorted by most recent first
+        """
+        import time
+
+        if not self.projects_dir.exists():
+            return []
+
+        sessions = []
+        cutoff_time = time.time() - (max_age_hours * 3600)
+
+        for project_dir in self.projects_dir.iterdir():
+            if not project_dir.is_dir() or project_dir.is_symlink():
+                continue
+
+            project_name = self._get_project_name(project_dir.name)
+
+            for session_file in project_dir.glob("*.jsonl"):
+                if session_file.is_symlink():
+                    continue
+
+                # Skip old files based on mtime
+                try:
+                    if session_file.stat().st_mtime < cutoff_time:
+                        continue
+                except OSError:
+                    continue
+
+                summary = self._load_session_summary(session_file, project_name)
+                if summary and (include_empty or summary.message_count > 0):
+                    sessions.append(summary)
 
         # Sort by last_activity descending
         sessions.sort(key=lambda s: s.last_activity, reverse=True)

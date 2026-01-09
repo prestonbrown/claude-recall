@@ -1464,3 +1464,326 @@ class TestTokenCountingBackwardCompatibility:
         session = next(s for s in sessions if s.session_id == "eb3513a8-77ea-41c9-94fd-e8cdf700a4dd")
         # total_tokens should still return a positive value for sessions with usage data
         assert session.total_tokens > 0
+
+
+# ============================================================================
+# Session Cache Tests (Performance Optimization)
+# ============================================================================
+
+
+class TestSessionCaching:
+    """Test mtime-based caching for session summaries to improve performance."""
+
+    def test_cache_hit_returns_same_summary_without_reparsing(self, temp_claude_home):
+        """Second call with unchanged file should return cached result without re-reading file."""
+        from core.tui.transcript_reader import TranscriptReader
+        from unittest.mock import patch
+        import builtins
+
+        reader = TranscriptReader(claude_home=temp_claude_home)
+
+        # First call - should parse file
+        sessions1 = reader.list_sessions("/Users/test/code/myproject")
+        assert len(sessions1) == 2
+
+        # Track how many times open() is called for JSONL files
+        original_open = builtins.open
+        open_calls = []
+
+        def tracking_open(path, *args, **kwargs):
+            if str(path).endswith(".jsonl"):
+                open_calls.append(path)
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(builtins, "open", tracking_open):
+            # Second call - should use cache, not re-open files
+            sessions2 = reader.list_sessions("/Users/test/code/myproject")
+
+        # Should return same number of sessions
+        assert len(sessions2) == 2
+        # Should NOT have opened any JSONL files (cache hit)
+        assert len(open_calls) == 0, f"Expected no file opens, but got {len(open_calls)}: {open_calls}"
+
+    def test_cache_invalidates_when_file_modified(self, temp_claude_home):
+        """Modified file should trigger re-parse and return updated content."""
+        from core.tui.transcript_reader import TranscriptReader
+        import time
+
+        reader = TranscriptReader(claude_home=temp_claude_home)
+
+        # First call - should parse file
+        sessions1 = reader.list_sessions("/Users/test/code/myproject")
+        original_session = next(s for s in sessions1 if s.session_id == "eb3513a8-77ea-41c9-94fd-e8cdf700a4dd")
+        original_count = original_session.message_count
+
+        # Modify the file - add another message
+        project_dir = temp_claude_home / "projects" / "-Users-test-code-myproject"
+        transcript_path = project_dir / "eb3513a8-77ea-41c9-94fd-e8cdf700a4dd.jsonl"
+
+        # Wait a bit to ensure mtime changes
+        time.sleep(0.1)
+
+        # Append a new message
+        new_message = {
+            "type": "user",
+            "uuid": "msg-user-new",
+            "parentUuid": "msg-asst-002",
+            "timestamp": "2026-01-07T10:16:00.000Z",
+            "sessionId": "eb3513a8-77ea-41c9-94fd-e8cdf700a4dd",
+            "message": {"role": "user", "content": "Follow-up question."},
+            "userType": "external"
+        }
+        with open(transcript_path, "a") as f:
+            f.write(json.dumps(new_message) + "\n")
+
+        # Second call - should detect mtime change and re-parse
+        sessions2 = reader.list_sessions("/Users/test/code/myproject")
+        updated_session = next(s for s in sessions2 if s.session_id == "eb3513a8-77ea-41c9-94fd-e8cdf700a4dd")
+
+        # Message count should have increased
+        assert updated_session.message_count == original_count + 1
+
+    def test_cache_is_thread_safe(self, temp_claude_home):
+        """Concurrent access should not corrupt cache or raise exceptions."""
+        from core.tui.transcript_reader import TranscriptReader
+        import threading
+        import concurrent.futures
+
+        reader = TranscriptReader(claude_home=temp_claude_home)
+        results = []
+        errors = []
+
+        def read_sessions():
+            try:
+                sessions = reader.list_sessions("/Users/test/code/myproject")
+                results.append(len(sessions))
+            except Exception as e:
+                errors.append(e)
+
+        # Run multiple concurrent reads
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(read_sessions) for _ in range(20)]
+            concurrent.futures.wait(futures)
+
+        # Should have no errors
+        assert len(errors) == 0, f"Got errors: {errors}"
+        # All results should be consistent
+        assert all(r == 2 for r in results), f"Inconsistent results: {results}"
+
+    def test_clear_cache_forces_reparse(self, temp_claude_home):
+        """clear_cache() should force re-reading files on next call."""
+        from core.tui.transcript_reader import TranscriptReader
+        from unittest.mock import patch
+        import builtins
+
+        reader = TranscriptReader(claude_home=temp_claude_home)
+
+        # First call - populate cache
+        reader.list_sessions("/Users/test/code/myproject")
+
+        # Clear the cache
+        reader.clear_cache()
+
+        # Track file opens
+        original_open = builtins.open
+        open_calls = []
+
+        def tracking_open(path, *args, **kwargs):
+            if str(path).endswith(".jsonl"):
+                open_calls.append(path)
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(builtins, "open", tracking_open):
+            # This should re-read files since cache was cleared
+            reader.list_sessions("/Users/test/code/myproject")
+
+        # Should have opened JSONL files
+        assert len(open_calls) >= 2, f"Expected file opens after cache clear, got {len(open_calls)}"
+
+    def test_cache_works_for_list_all_sessions(self, temp_claude_home):
+        """Cache should also work for list_all_sessions()."""
+        from core.tui.transcript_reader import TranscriptReader
+        from unittest.mock import patch
+        import builtins
+
+        reader = TranscriptReader(claude_home=temp_claude_home)
+
+        # First call - should parse files
+        sessions1 = reader.list_all_sessions()
+        assert len(sessions1) == 3
+
+        # Track file opens
+        original_open = builtins.open
+        open_calls = []
+
+        def tracking_open(path, *args, **kwargs):
+            if str(path).endswith(".jsonl"):
+                open_calls.append(path)
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(builtins, "open", tracking_open):
+            # Second call - should use cache
+            sessions2 = reader.list_all_sessions()
+
+        assert len(sessions2) == 3
+        # Should not have opened any files
+        assert len(open_calls) == 0, f"Expected no file opens, but got {len(open_calls)}"
+
+
+# ============================================================================
+# Fast Initial Load Tests (Performance Optimization)
+# ============================================================================
+
+
+@pytest.fixture
+def temp_claude_home_with_age_variety(tmp_path):
+    """Create a temporary ~/.claude structure with files of varying ages."""
+    import time
+
+    claude_home = tmp_path / ".claude"
+    projects_dir = claude_home / "projects"
+    project_dir = projects_dir / "-Users-test-code-myproject"
+    project_dir.mkdir(parents=True)
+
+    # Create recent session (modified now)
+    recent_transcript = project_dir / "recent-session.jsonl"
+    recent_msg = {
+        "type": "user",
+        "timestamp": "2026-01-09T10:00:00.000Z",
+        "sessionId": "recent-session",
+        "message": {"role": "user", "content": "Recent session"},
+    }
+    with open(recent_transcript, "w") as f:
+        f.write(json.dumps(recent_msg) + "\n")
+        f.write(json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-01-09T10:01:00.000Z",
+            "sessionId": "recent-session",
+            "message": {
+                "role": "assistant",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+                "content": [{"type": "text", "text": "Response"}]
+            }
+        }) + "\n")
+
+    # Create old session (modified 48 hours ago)
+    old_transcript = project_dir / "old-session.jsonl"
+    old_msg = {
+        "type": "user",
+        "timestamp": "2026-01-07T10:00:00.000Z",
+        "sessionId": "old-session",
+        "message": {"role": "user", "content": "Old session from 2 days ago"},
+    }
+    with open(old_transcript, "w") as f:
+        f.write(json.dumps(old_msg) + "\n")
+        f.write(json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-01-07T10:01:00.000Z",
+            "sessionId": "old-session",
+            "message": {
+                "role": "assistant",
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+                "content": [{"type": "text", "text": "Old response"}]
+            }
+        }) + "\n")
+
+    # Set old file's mtime to 48 hours ago
+    old_mtime = time.time() - (48 * 3600)
+    os.utime(old_transcript, (old_mtime, old_mtime))
+
+    return claude_home
+
+
+class TestFastInitialLoad:
+    """Test fast initial load that skips old files based on mtime."""
+
+    def test_list_all_sessions_fast_method_exists(self, temp_claude_home):
+        """TranscriptReader should have list_all_sessions_fast() method."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home)
+
+        assert hasattr(reader, "list_all_sessions_fast"), (
+            "TranscriptReader should have list_all_sessions_fast() method for fast loading. "
+            "Add: def list_all_sessions_fast(self, limit: int = 20, max_age_hours: int = 24) -> List[TranscriptSummary]"
+        )
+
+    def test_fast_load_skips_old_files(self, temp_claude_home_with_age_variety):
+        """list_all_sessions_fast() should skip files older than max_age_hours."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_age_variety)
+
+        # With 24 hour cutoff, should only return recent session
+        sessions = reader.list_all_sessions_fast(max_age_hours=24)
+
+        session_ids = [s.session_id for s in sessions]
+        assert "recent-session" in session_ids, "Recent session should be included"
+        assert "old-session" not in session_ids, (
+            "Old session (48h ago) should be skipped when max_age_hours=24"
+        )
+
+    def test_fast_load_includes_all_with_large_max_age(self, temp_claude_home_with_age_variety):
+        """list_all_sessions_fast() with large max_age should include all files."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_age_variety)
+
+        # With 72 hour cutoff, should return both sessions
+        sessions = reader.list_all_sessions_fast(max_age_hours=72)
+
+        session_ids = [s.session_id for s in sessions]
+        assert "recent-session" in session_ids, "Recent session should be included"
+        assert "old-session" in session_ids, "Old session should be included with 72h cutoff"
+
+    def test_fast_load_respects_limit(self, temp_claude_home):
+        """list_all_sessions_fast() should respect the limit parameter."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home)
+
+        # Limit to 1 session
+        sessions = reader.list_all_sessions_fast(limit=1, max_age_hours=9999)
+
+        assert len(sessions) <= 1, f"Should return at most 1 session, got {len(sessions)}"
+
+    def test_fast_load_sorts_by_recency(self, temp_claude_home_with_age_variety):
+        """list_all_sessions_fast() should return most recent sessions first."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_age_variety)
+
+        # Get all sessions with large max_age
+        sessions = reader.list_all_sessions_fast(max_age_hours=9999)
+
+        if len(sessions) >= 2:
+            # First session should have more recent last_activity
+            assert sessions[0].last_activity >= sessions[1].last_activity, (
+                "Sessions should be sorted by recency (most recent first)"
+            )
+
+    def test_fast_load_uses_cache(self, temp_claude_home):
+        """list_all_sessions_fast() should use the session cache."""
+        from core.tui.transcript_reader import TranscriptReader
+        from unittest.mock import patch
+        import builtins
+
+        reader = TranscriptReader(claude_home=temp_claude_home)
+
+        # First call - populate cache
+        reader.list_all_sessions_fast(max_age_hours=9999)
+
+        # Track file opens
+        original_open = builtins.open
+        open_calls = []
+
+        def tracking_open(path, *args, **kwargs):
+            if str(path).endswith(".jsonl"):
+                open_calls.append(path)
+            return original_open(path, *args, **kwargs)
+
+        with patch.object(builtins, "open", tracking_open):
+            # Second call - should use cache
+            reader.list_all_sessions_fast(max_age_hours=9999)
+
+        assert len(open_calls) == 0, f"Expected cache hit, but files were opened: {open_calls}"

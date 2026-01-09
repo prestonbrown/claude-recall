@@ -342,7 +342,7 @@ async def test_auto_refresh_updates_subtitle(temp_log_with_events: Path):
     Verify the subtitle time updates automatically via the timer.
 
     CRITICAL: This test verifies that the timer callback is actually firing.
-    The subtitle contains a timestamp that should change every 2 seconds.
+    The subtitle contains a timestamp that should change every 5 seconds.
     """
     app = RecallMonitorApp(log_path=temp_log_with_events)
 
@@ -351,13 +351,13 @@ async def test_auto_refresh_updates_subtitle(temp_log_with_events: Path):
 
         initial_subtitle = app.sub_title
 
-        # Wait longer than the 2-second timer interval
-        await pilot.pause(delay=2.5)
+        # Wait longer than the 5-second timer interval (performance optimization)
+        await pilot.pause(delay=5.5)
 
         # Subtitle should have updated (contains timestamp that changes)
         assert app.sub_title != initial_subtitle, (
             f"Subtitle should auto-update via timer. "
-            f"Initial: {initial_subtitle}, After 2.5s: {app.sub_title}. "
+            f"Initial: {initial_subtitle}, After 5.5s: {app.sub_title}. "
             "This proves the timer callback is NOT firing."
         )
 
@@ -389,12 +389,13 @@ async def test_auto_refresh_shows_new_events_without_keypress(temp_log_with_even
         with open(temp_log_with_events, "a") as f:
             f.write(json.dumps(new_event) + "\n")
 
-        # Wait for auto-refresh (>2 seconds) WITHOUT pressing any keys
-        await pilot.pause(delay=3.0)
+        # Wait for auto-refresh (>5 seconds) WITHOUT pressing any keys
+        # Timer interval was increased from 2s to 5s for performance
+        await pilot.pause(delay=6.0)
 
         # New events should appear automatically
         assert len(event_log.lines) > initial_count, (
             f"New events should appear via auto-refresh. "
-            f"Initial: {initial_count}, After 3s: {len(event_log.lines)}. "
+            f"Initial: {initial_count}, After 6s: {len(event_log.lines)}. "
             "This proves auto-refresh is NOT working."
         )
