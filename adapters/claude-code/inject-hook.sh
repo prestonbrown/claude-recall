@@ -264,13 +264,17 @@ Consider creating a handoff if continuing this work."
 
         # Add lesson review duty if there are handoffs ready for review
         if [[ -n "$review_ids" ]]; then
+            # Format each ID on its own line (stop-hook regex only matches ONE ID per line)
+            local complete_cmds
+            complete_cmds=$(echo "$review_ids" | tr ' ' '\n' | sed 's/^/      HANDOFF COMPLETE /')
             summary="$summary
 
 LESSON REVIEW DUTY: Handoff(s) [$review_ids] completed all work.
   1. Review the tried steps above with the user
   2. ASK: \"Any lessons to extract from this work? Patterns, gotchas, or decisions worth recording?\"
   3. Record any lessons the user wants to keep
-  4. Then output: HANDOFF COMPLETE $review_ids"
+  4. Then output (one per line):
+$complete_cmds"
         fi
 
         # Add lesson duty reminder

@@ -687,3 +687,68 @@ summary: Previous session worked on integration tests.""")
         handoff = manager.handoff_get(handoff_id)
         assert handoff is not None
         assert handoff.phase == "research"
+
+    def test_inject_outputs_separate_lines_for_multiple_ready_handoffs(self, integration_env, hook_env):
+        """Inject hook should output HANDOFF COMPLETE on separate lines for each ready_for_review handoff.
+
+        This is critical because the stop-hook regex only matches ONE ID per line.
+        If multiple IDs are on the same line, HANDOFF COMPLETE fails silently.
+        """
+        from core import LessonsManager
+
+        project_root = integration_env["project_root"]
+        manager = LessonsManager(
+            lessons_base=str(integration_env["claude_recall_base"]),
+            project_root=str(project_root)
+        )
+
+        # Create two handoffs in ready_for_review status
+        hf1 = manager.handoff_add(title="First task", desc="First description")
+        hf2 = manager.handoff_add(title="Second task", desc="Second description")
+
+        manager.handoff_update_status(hf1, "ready_for_review")
+        manager.handoff_update_status(hf2, "ready_for_review")
+
+        # Run inject hook
+        hook = integration_env["hooks_dir"] / "inject-hook.sh"
+        result = run_hook(hook, {"cwd": str(project_root)}, hook_env)
+
+        assert result.returncode == 0
+
+        # Parse the JSON output to get hookSpecificOutput
+        output_lines = result.stdout.strip().split('\n')
+        json_output = None
+        for line in output_lines:
+            if line.startswith('{'):
+                try:
+                    json_output = json.loads(line)
+                    break
+                except json.JSONDecodeError:
+                    continue
+
+        assert json_output is not None, f"Expected JSON output, got: {result.stdout}"
+
+        # The LESSON REVIEW DUTY should have each HANDOFF COMPLETE on its own line
+        hook_specific = json_output.get("hookSpecificOutput", {})
+        # hookSpecificOutput may be a dict with additionalContext key
+        if isinstance(hook_specific, dict):
+            hook_output = hook_specific.get("additionalContext", "")
+        else:
+            hook_output = str(hook_specific)
+
+        # Should NOT have multiple IDs on same line (this is the bug)
+        # Bad: "HANDOFF COMPLETE hf-xxx hf-yyy"
+        # Good: "HANDOFF COMPLETE hf-xxx\n      HANDOFF COMPLETE hf-yyy"
+        import re
+        # Find all HANDOFF COMPLETE commands
+        complete_lines = re.findall(r'HANDOFF COMPLETE\s+\S+', hook_output)
+
+        # There should be exactly 2 separate HANDOFF COMPLETE commands
+        assert len(complete_lines) == 2, \
+            f"Expected 2 separate HANDOFF COMPLETE lines, got {len(complete_lines)}. Output:\n{hook_output}"
+
+        # Each should only have ONE ID
+        for line in complete_lines:
+            parts = line.split()
+            assert len(parts) == 3, \
+                f"Expected 'HANDOFF COMPLETE <one-id>', got: {line}"
