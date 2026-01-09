@@ -19,7 +19,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 
 @lru_cache(maxsize=1)
@@ -48,10 +48,10 @@ def _get_time_format() -> str:
 
     return "%r"  # Default to 12h AM/PM on macOS
 
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
     DataTable,
@@ -819,6 +819,17 @@ class RecallMonitorApp(App):
         Binding("t", "toggle_timeline", "Timeline", show=True),
         Binding("ctrl+c", "copy_session", "Copy", priority=True),
         Binding("h", "goto_handoff", "Handoff", show=False),
+        # Handoff details navigation (hidden, context-specific)
+        Binding("b", "goto_blocker", "Blocker", show=False),
+        Binding("1", "goto_session_1", show=False),
+        Binding("2", "goto_session_2", show=False),
+        Binding("3", "goto_session_3", show=False),
+        Binding("4", "goto_session_4", show=False),
+        Binding("5", "goto_session_5", show=False),
+        Binding("6", "goto_session_6", show=False),
+        Binding("7", "goto_session_7", show=False),
+        Binding("8", "goto_session_8", show=False),
+        Binding("9", "goto_session_9", show=False),
     ]
 
     def __init__(
@@ -865,10 +876,44 @@ class RecallMonitorApp(App):
         self._user_selected_session_id: Optional[str] = None  # Track user's row selection
         # Handoff tab refresh state
         self._user_selected_handoff_id: Optional[str] = None  # Track user's handoff row selection
+        # Live activity tab scroll state - tracks if user scrolled away from bottom
+        self._live_activity_user_scrolled: bool = False
         # System sessions toggle - False = hide System/Warmup, True = show all
         self._show_system_sessions: bool = False
         # Timeline view toggle - False = list view, True = timeline view
         self._timeline_view: bool = False
+        # Handoff details navigation state
+        self._handoff_detail_sessions: List[dict] = []  # Sessions for 1-9 navigation
+        self._handoff_detail_blockers: List[str] = []  # Blocked-by IDs for 'b' navigation
+
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        """Add custom commands to the command palette."""
+        yield from super().get_system_commands(screen)
+        yield SystemCommand(
+            "Refresh",
+            "Refresh all views (events, health, state, sessions)",
+            self.action_refresh,
+        )
+        yield SystemCommand(
+            "Toggle Pause",
+            "Pause or resume auto-refresh",
+            self.action_toggle_pause,
+        )
+        yield SystemCommand(
+            "Toggle All Projects",
+            "Switch between current project and all projects",
+            self.action_toggle_all,
+        )
+        yield SystemCommand(
+            "Toggle Completed Handoffs",
+            "Show or hide completed handoffs",
+            self.action_toggle_completed,
+        )
+        yield SystemCommand(
+            "Toggle System Sessions",
+            "Show or hide system/warmup sessions",
+            self.action_toggle_system_sessions,
+        )
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -998,8 +1043,27 @@ class RecallMonitorApp(App):
             self._append_new_events(new_count)
 
     def _append_new_events(self, count: int) -> None:
-        """Append only the new events (last 'count' from buffer)."""
+        """Append only the new events (last 'count' from buffer).
+
+        Preserves scroll position if user has scrolled away from the bottom.
+        """
         event_log = self.query_one("#event-log", RichLog)
+
+        # Check if user is at/near the bottom before appending
+        # Allow small threshold (2 lines) for rounding
+        at_bottom = event_log.scroll_y >= event_log.max_scroll_y - 2
+
+        # Update tracking based on scroll position
+        if at_bottom:
+            # User scrolled back to bottom - resume auto-scroll
+            self._live_activity_user_scrolled = False
+            event_log.auto_scroll = True
+        else:
+            # User scrolled away - preserve their position
+            self._live_activity_user_scrolled = True
+
+        # Save scroll position if user has scrolled away
+        saved_scroll_y = event_log.scroll_y if self._live_activity_user_scrolled else None
 
         # Access buffer directly - don't use read_recent() which calls load_buffer() again
         buffer = list(self.log_reader._buffer)
@@ -1009,8 +1073,16 @@ class RecallMonitorApp(App):
         if self.project_filter:
             events = [e for e in events if e.project.lower() == self.project_filter.lower()]
 
+        # Temporarily disable auto_scroll if user has scrolled away
+        if self._live_activity_user_scrolled:
+            event_log.auto_scroll = False
+
         for event in events:
             event_log.write(format_event_rich(event))
+
+        # Restore scroll position if user had scrolled away
+        if saved_scroll_y is not None:
+            event_log.scroll_y = saved_scroll_y
 
     def _update_health(self) -> None:
         """Update health statistics display."""
@@ -1407,6 +1479,19 @@ class RecallMonitorApp(App):
                     self._refresh_handoff_list()
                     event.prevent_default()
                     event.stop()
+            except Exception:
+                pass
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Handle tab activation to reset scroll state for live activity tab."""
+        if event.pane.id == "live":
+            # Reset auto-scroll when switching to live tab
+            self._live_activity_user_scrolled = False
+            try:
+                event_log = self.query_one("#event-log", RichLog)
+                event_log.auto_scroll = True
+                # Scroll to bottom to show latest events
+                self.call_after_refresh(event_log.scroll_end)
             except Exception:
                 pass
 
@@ -1895,6 +1980,10 @@ class RecallMonitorApp(App):
         details_log = self.query_one("#handoff-details", RichLog)
         details_log.clear()
 
+        # Clear navigation state
+        self._handoff_detail_sessions = []
+        self._handoff_detail_blockers = []
+
         handoff = self._handoff_data.get(handoff_id)
         if handoff is None:
             details_log.write("[dim]No handoff data available[/dim]")
@@ -1904,7 +1993,7 @@ class RecallMonitorApp(App):
         details_log.write(f"[bold cyan]{handoff.id}[/bold cyan] {handoff.title}")
         details_log.write("")
 
-        # Status line
+        # Combined status/phase line
         status_colors = {
             "not_started": "dim",
             "in_progress": "green",
@@ -1914,28 +2003,43 @@ class RecallMonitorApp(App):
         }
         status_color = status_colors.get(handoff.status, "white")
         details_log.write(
-            f"[bold]Status:[/bold] [{status_color}]{handoff.status}[/{status_color}] | "
-            f"[bold]Phase:[/bold] {handoff.phase} | "
-            f"[bold]Agent:[/bold] {handoff.agent}"
+            f"[{status_color}]{handoff.status}[/{status_color}] ({handoff.phase}) | "
+            f"Agent: {handoff.agent}"
         )
 
-        # Dates
+        # Get sessions early for time tracking
+        sessions = self._get_sessions_for_handoff(handoff_id)
+        session_count = len(sessions) if sessions else 0
+
+        # Time tracking: sessions and duration
+        duration_str = f"{handoff.age_days}d" if handoff.age_days > 0 else "today"
         details_log.write(
             f"[bold]Created:[/bold] {handoff.created} | "
-            f"[bold]Updated:[/bold] {handoff.updated} | "
-            f"[bold]Age:[/bold] {handoff.age_days} days"
+            f"[bold]Updated:[/bold] {handoff.updated}"
+        )
+        details_log.write(
+            f"[bold]Time:[/bold] {session_count} session{'s' if session_count != 1 else ''} "
+            f"over {duration_str}"
         )
         details_log.write("")
 
-        # Project (new field)
+        # Completion summary (prominent for completed handoffs)
+        if handoff.status == "completed" and handoff.handoff and handoff.handoff.summary:
+            details_log.write("[bold green]Completion Summary[/bold green]")
+            details_log.write(f"  {handoff.handoff.summary}")
+            details_log.write("")
+
+        # Project
         if handoff.project:
             details_log.write(f"[bold]Project:[/bold] {handoff.project}")
             details_log.write("")
 
-        # Blocked by (new field)
+        # Blocked by (store for navigation)
         if handoff.blocked_by:
+            self._handoff_detail_blockers = list(handoff.blocked_by)
             details_log.write(
-                f"[bold red]Blocked By:[/bold red] {', '.join(handoff.blocked_by)}"
+                f"[bold red]Blocked By:[/bold red] {', '.join(handoff.blocked_by)} "
+                f"[dim](press 'b' to view)[/dim]"
             )
             details_log.write("")
 
@@ -1944,13 +2048,25 @@ class RecallMonitorApp(App):
             details_log.write(f"[bold]Description:[/bold] {handoff.description}")
             details_log.write("")
 
-        # Tried steps (completed todos)
+        # Tried steps with summary counts and icons
         if handoff.tried_steps:
-            details_log.write(f"[bold]Completed ({len(handoff.tried_steps)}):[/bold]")
+            success_count = sum(1 for s in handoff.tried_steps if s.outcome == "success")
+            fail_count = sum(1 for s in handoff.tried_steps if s.outcome == "fail")
+            partial_count = sum(1 for s in handoff.tried_steps if s.outcome == "partial")
+
+            header = f"[bold]Tried ({len(handoff.tried_steps)}):[/bold]"
+            if success_count:
+                header += f" [green]{success_count}[/green]"
+            if fail_count:
+                header += f" [red]{fail_count}[/red]"
+            if partial_count:
+                header += f" [yellow]{partial_count}~[/yellow]"
+
+            details_log.write(header)
             for i, step in enumerate(handoff.tried_steps, 1):
-                outcome_colors = {"success": "green", "fail": "red", "partial": "yellow"}
-                color = outcome_colors.get(step.outcome, "white")
-                details_log.write(f"  {i}. [{color}]{step.outcome}[/{color}] {step.description}")
+                outcome_icons = {"success": "[green][/green]", "fail": "[red][/red]", "partial": "[yellow]~[/yellow]"}
+                icon = outcome_icons.get(step.outcome, "?")
+                details_log.write(f"  {i}. {icon} {step.description}")
             details_log.write("")
 
         # Current progress (in-progress todo)
@@ -1958,68 +2074,94 @@ class RecallMonitorApp(App):
             details_log.write(f"[bold cyan]In Progress:[/bold cyan] {handoff.checkpoint}")
             details_log.write("")
 
-        # Next steps (pending todos)
+        # Next steps (pending todos) - filter bogus items
         if handoff.next_steps:
-            details_log.write(f"[bold]Pending ({len(handoff.next_steps)}):[/bold]")
-            for item in handoff.next_steps:
-                details_log.write(f"  ○ {item}")
-            details_log.write("")
+            valid_next_steps = [
+                item for item in handoff.next_steps
+                if item and item.strip() and item.strip() not in ("-", "--", "---")
+            ]
+            if valid_next_steps:
+                details_log.write(f"[bold]Pending ({len(valid_next_steps)}):[/bold]")
+                for item in valid_next_steps:
+                    details_log.write(f"  [dim]○[/dim] {item}")
+                details_log.write("")
 
         # Refs
         if handoff.refs:
             details_log.write(f"[bold]Refs:[/bold] {', '.join(handoff.refs)}")
             details_log.write("")
 
-        # Handoff Context section (new fields)
+        # Handoff Context section
         if handoff.handoff:
             ctx = handoff.handoff
-            details_log.write("[bold cyan]Handoff Context[/bold cyan]")
+            # Only show section header if we have content (and not already shown completion summary)
+            has_context = (
+                ctx.git_ref or
+                (ctx.summary and handoff.status != "completed") or
+                ctx.critical_files or ctx.recent_changes or
+                ctx.learnings or ctx.blockers
+            )
+            if has_context:
+                details_log.write("[bold cyan]Handoff Context[/bold cyan]")
 
-            # Git ref (abbreviated to 8 chars)
-            if ctx.git_ref:
-                short_ref = ctx.git_ref[:8] if len(ctx.git_ref) >= 8 else ctx.git_ref
-                details_log.write(f"  [bold]Git:[/bold] {short_ref}")
+                # Git ref (abbreviated to 8 chars)
+                if ctx.git_ref:
+                    short_ref = ctx.git_ref[:8] if len(ctx.git_ref) >= 8 else ctx.git_ref
+                    details_log.write(f"  [bold]Git:[/bold] {short_ref}")
 
-            # Summary
-            if ctx.summary:
-                details_log.write(f"  [bold]Summary:[/bold] {ctx.summary}")
+                # Summary (only if not completed - already shown above)
+                if ctx.summary and handoff.status != "completed":
+                    details_log.write(f"  [bold]Summary:[/bold] {ctx.summary}")
 
-            # Critical files
-            if ctx.critical_files:
-                details_log.write(
-                    f"  [bold]Critical Files:[/bold] {', '.join(ctx.critical_files)}"
-                )
+                # Critical files
+                if ctx.critical_files:
+                    details_log.write(
+                        f"  [bold]Critical Files:[/bold] {', '.join(ctx.critical_files)}"
+                    )
 
-            # Recent changes
-            if ctx.recent_changes:
-                details_log.write(f"  [bold]Recent Changes:[/bold]")
-                for change in ctx.recent_changes:
-                    details_log.write(f"    - {change}")
+                # Recent changes (git changes)
+                if ctx.recent_changes:
+                    details_log.write(f"  [bold]Git Changes ({len(ctx.recent_changes)}):[/bold]")
+                    for change in ctx.recent_changes[:10]:
+                        details_log.write(f"    [dim]•[/dim] {change}")
+                    if len(ctx.recent_changes) > 10:
+                        details_log.write(f"    [dim]... and {len(ctx.recent_changes) - 10} more[/dim]")
 
-            # Learnings
-            if ctx.learnings:
-                details_log.write(f"  [bold]Learnings:[/bold]")
-                for learning in ctx.learnings:
-                    details_log.write(f"    - {learning}")
+                # Learnings with icons
+                if ctx.learnings:
+                    details_log.write(f"  [bold]Learnings:[/bold]")
+                    for learning in ctx.learnings:
+                        # Check if it looks like a lesson citation [L001] or [S001]
+                        stripped = learning.strip()
+                        if stripped.startswith("[L") or stripped.startswith("[S"):
+                            details_log.write(f"    [blue][/blue] {learning}")
+                        else:
+                            details_log.write(f"    [yellow][/yellow] {learning}")
 
-            # Blockers
-            if ctx.blockers:
-                details_log.write(f"  [bold red]Blockers:[/bold red]")
-                for blocker in ctx.blockers:
-                    details_log.write(f"    - {blocker}")
+                # Blockers
+                if ctx.blockers:
+                    details_log.write(f"  [bold red]Blockers:[/bold red]")
+                    for blocker in ctx.blockers:
+                        details_log.write(f"    [red][/red] {blocker}")
 
-        # Sessions section - show linked sessions from session-handoffs.json
-        sessions = self._get_sessions_for_handoff(handoff_id)
+                details_log.write("")
+
+        # Sessions section with numbered navigation
         if sessions:
-            details_log.write("")
-            details_log.write("[bold cyan]Sessions[/bold cyan]")
-            for session in sessions:
+            self._handoff_detail_sessions = sessions
+            details_log.write(f"[bold cyan]Sessions ({len(sessions)})[/bold cyan] [dim](press 1-9 to navigate)[/dim]")
+            for i, session in enumerate(sessions[:9], 1):  # Limit to 9 for single-digit nav
                 session_id = session.get("session_id", "")
                 created = session.get("created", "")
-                # Format the created timestamp (show date only)
+                # Format the created timestamp (show full datetime)
                 if created and "T" in created:
-                    created = created.split("T")[0]
-                details_log.write(f"  {session_id} ({created})")
+                    # Convert ISO format to readable datetime
+                    created_display = created.replace("T", " ").split(".")[0]
+                else:
+                    created_display = created
+                details_log.write(f"  [{i}] {session_id[:12]}... ({created_display})")
+            if len(sessions) > 9:
+                details_log.write(f"  [dim]... and {len(sessions) - 9} more[/dim]")
 
         # Scroll to top
         self.call_after_refresh(details_log.scroll_home)
@@ -2147,6 +2289,76 @@ class RecallMonitorApp(App):
                             return
 
             self.notify("No linked handoff found for this session")
+
+    def action_goto_blocker(self) -> None:
+        """Navigate to the first blocking handoff from handoff details."""
+        # Only active when viewing handoff details with blockers
+        try:
+            tabs = self.query_one(TabbedContent)
+            if tabs.active != "handoffs":
+                return
+        except Exception:
+            return
+
+        if not self._handoff_detail_blockers:
+            return
+
+        # Navigate to first blocker
+        blocker_id = self._handoff_detail_blockers[0]
+        self._navigate_to_handoff(blocker_id)
+
+    def _action_goto_session(self, index: int) -> None:
+        """Navigate to session by index (0-based) from handoff details."""
+        # Only active when viewing handoff details with sessions
+        try:
+            tabs = self.query_one(TabbedContent)
+            if tabs.active != "handoffs":
+                return
+        except Exception:
+            return
+
+        if not self._handoff_detail_sessions or index >= len(self._handoff_detail_sessions):
+            return
+
+        session_id = self._handoff_detail_sessions[index].get("session_id", "")
+        if session_id:
+            self._navigate_to_session(session_id)
+
+    def action_goto_session_1(self) -> None:
+        """Navigate to session 1 from handoff details."""
+        self._action_goto_session(0)
+
+    def action_goto_session_2(self) -> None:
+        """Navigate to session 2 from handoff details."""
+        self._action_goto_session(1)
+
+    def action_goto_session_3(self) -> None:
+        """Navigate to session 3 from handoff details."""
+        self._action_goto_session(2)
+
+    def action_goto_session_4(self) -> None:
+        """Navigate to session 4 from handoff details."""
+        self._action_goto_session(3)
+
+    def action_goto_session_5(self) -> None:
+        """Navigate to session 5 from handoff details."""
+        self._action_goto_session(4)
+
+    def action_goto_session_6(self) -> None:
+        """Navigate to session 6 from handoff details."""
+        self._action_goto_session(5)
+
+    def action_goto_session_7(self) -> None:
+        """Navigate to session 7 from handoff details."""
+        self._action_goto_session(6)
+
+    def action_goto_session_8(self) -> None:
+        """Navigate to session 8 from handoff details."""
+        self._action_goto_session(7)
+
+    def action_goto_session_9(self) -> None:
+        """Navigate to session 9 from handoff details."""
+        self._action_goto_session(8)
 
     def _refresh_handoff_list(self) -> None:
         """Refresh the handoffs list with current filter settings.
