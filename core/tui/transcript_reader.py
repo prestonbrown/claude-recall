@@ -19,6 +19,20 @@ from typing import Dict, List, Optional
 CITATION_PATTERN = re.compile(r'\[([LS]\d{3})\]')
 
 
+# System patterns - these are hook/warmup sessions
+SYSTEM_PATTERNS = [
+    "analyze this conversation",
+    "score each lesson's relevance",
+    "score the relevance of each lesson",
+    "summarize the key points",
+]
+
+# User indicators - these are real user sessions
+USER_INDICATORS = [
+    "<local-command-caveat>",  # This is a user command!
+]
+
+
 def detect_origin(first_prompt: str) -> str:
     """
     Classify session type based on the first prompt pattern.
@@ -27,16 +41,24 @@ def detect_origin(first_prompt: str) -> str:
         first_prompt: The first user message content
 
     Returns:
-        One of: "Unknown", "Warmup", "Explore", "Plan", "General", "User"
+        One of: "Unknown", "System", "Warmup", "Explore", "Plan", "General", "User"
     """
-    # Handle unknown/system cases first
+    # Handle empty/very short prompts
     if not first_prompt or len(first_prompt) < 3:
-        return "Unknown"
-    if "<local-command-caveat>" in first_prompt:
         return "Unknown"
 
     # Normalize for case-insensitive matching
     lower_prompt = first_prompt.lower()
+
+    # Check for system patterns first (hook-triggered sessions)
+    for pattern in SYSTEM_PATTERNS:
+        if pattern in lower_prompt:
+            return "System"
+
+    # Check for user indicators (these are real user sessions)
+    for indicator in USER_INDICATORS:
+        if indicator in first_prompt:
+            return "User"
 
     # Check for warmup sessions (Claude Code pre-warming sub-agents)
     if lower_prompt.startswith("warmup"):
@@ -99,7 +121,10 @@ class TranscriptSummary:
         first_prompt: First user message content (truncated to ~200 chars)
         message_count: Total number of user and assistant messages
         tool_breakdown: Dict mapping tool names to usage counts
-        total_tokens: Total output tokens from assistant messages
+        input_tokens: Total input tokens from assistant messages
+        output_tokens: Total output tokens from assistant messages
+        cache_read_tokens: Total cache_read_input_tokens from assistant messages
+        cache_creation_tokens: Total cache_creation_input_tokens from assistant messages
         start_time: Timestamp of first message
         last_activity: Timestamp of last message
         lesson_citations: List of lesson IDs cited in the session
@@ -114,13 +139,21 @@ class TranscriptSummary:
     first_prompt: str
     message_count: int
     tool_breakdown: Dict[str, int] = field(default_factory=dict)
-    total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
     start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_activity: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     lesson_citations: List[str] = field(default_factory=list)
     origin: str = "User"
     parent_session_id: Optional[str] = None
     child_session_ids: List[str] = field(default_factory=list)
+
+    @property
+    def total_tokens(self) -> int:
+        """Combined token count (input + output) for display."""
+        return self.input_tokens + self.output_tokens
 
 
 def _parse_timestamp(ts_str: str) -> datetime:
@@ -279,7 +312,10 @@ class TranscriptReader:
         first_prompt = ""
         message_count = 0
         tool_breakdown: Dict[str, int] = defaultdict(int)
-        total_tokens = 0
+        input_tokens = 0
+        output_tokens = 0
+        cache_read_tokens = 0
+        cache_creation_tokens = 0
         start_time: Optional[datetime] = None
         last_activity: Optional[datetime] = None
         citations: set = set()
@@ -325,11 +361,12 @@ class TranscriptReader:
                         for tool in _extract_tools(content):
                             tool_breakdown[tool] += 1
 
-                        # Extract token usage
+                        # Extract token usage (all types)
                         usage = message.get("usage", {})
-                        output_tokens = usage.get("output_tokens", 0)
-                        if output_tokens:
-                            total_tokens += output_tokens
+                        input_tokens += usage.get("input_tokens", 0)
+                        output_tokens += usage.get("output_tokens", 0)
+                        cache_read_tokens += usage.get("cache_read_input_tokens", 0)
+                        cache_creation_tokens += usage.get("cache_creation_input_tokens", 0)
 
                         # Extract lesson citations from assistant messages
                         text_content = _extract_text_content(content)
@@ -356,7 +393,10 @@ class TranscriptReader:
             first_prompt=first_prompt,
             message_count=message_count,
             tool_breakdown=dict(tool_breakdown),
-            total_tokens=total_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
             start_time=start_time,
             last_activity=last_activity,
             lesson_citations=sorted(citations),

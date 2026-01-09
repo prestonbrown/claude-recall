@@ -297,6 +297,34 @@ SessionDetailModal {
     margin-top: 1;
 }
 
+/* Handoff Action Modal */
+HandoffActionScreen {
+    align: center middle;
+}
+
+#handoff-action-modal {
+    width: 40;
+    height: auto;
+    max-height: 80%;
+    border: solid $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+/* Status/Phase/Agent Select Modals */
+StatusSelectScreen, PhaseSelectScreen, AgentSelectScreen {
+    align: center middle;
+}
+
+#status-select-modal, #phase-select-modal, #agent-select-modal {
+    width: 35;
+    height: auto;
+    max-height: 60%;
+    border: solid $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
 /* Handoffs tab */
 #handoff-list {
     height: 50%;

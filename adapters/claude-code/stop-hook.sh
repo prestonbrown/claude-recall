@@ -733,6 +733,13 @@ main() {
 
     (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
 
+    # Add transcript to linked handoff if session has one
+    local session_id=$(echo "$input" | jq -r '.session_id // empty')
+    if [[ -n "$session_id" && -n "$transcript_path" ]]; then
+        PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" \
+            handoff add-transcript "$session_id" "$transcript_path" 2>/dev/null || true
+    fi
+
     # Log timing summary
     log_hook_end
     exit 0

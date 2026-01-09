@@ -1743,7 +1743,11 @@ Consider extracting lessons about:
 
         return "\n".join(lines)
 
-    def handoff_sync_todos(self, todos: List[dict]) -> Optional[str]:
+    def handoff_sync_todos(
+        self,
+        todos: List[dict],
+        session_handoff: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Sync TodoWrite todos to a handoff.
 
@@ -1756,8 +1760,14 @@ Consider extracting lessons about:
         If no active handoff exists, only creates one if 3+ todos (avoids
         noise for small tasks).
 
+        Selection priority:
+        1. Session-based: If session_handoff is provided and handoff is active
+        2. Explicit prefix: If todos contain [hf-XXXXXXX]
+        3. Most recent: Fall back to most recently updated active handoff
+
         Args:
             todos: List of todo dicts with 'content', 'status', 'activeForm'
+            session_handoff: Optional handoff ID from session lookup (highest priority)
 
         Returns:
             Handoff ID that was updated/created, or None if no todos or
@@ -1784,15 +1794,21 @@ Consider extracting lessons about:
         # Find or create a handoff
         handoff_id = None
 
-        # First, try to use explicitly referenced handoff
-        if explicit_handoff_ids:
+        # Priority 1: Session-based handoff (from session_id lookup)
+        if session_handoff:
+            handoff = self.handoff_get(session_handoff)
+            if handoff and handoff.status != "completed":
+                handoff_id = session_handoff
+
+        # Priority 2: Explicitly referenced handoff in todo content
+        if not handoff_id and explicit_handoff_ids:
             for hid in explicit_handoff_ids:
                 handoff = self.handoff_get(hid)
                 if handoff and handoff.status != "completed":
                     handoff_id = hid
                     break
 
-        # Fall back to most recently updated active handoff
+        # Priority 3: Most recently updated active handoff
         if not handoff_id:
             active_handoffs = self.handoff_list(include_completed=False)
             if active_handoffs:
@@ -2108,3 +2124,163 @@ Consider extracting lessons about:
             validation=validation,
             context=context,
         )
+
+    # -------------------------------------------------------------------------
+    # Session-to-Handoff Linking (for automatic todo sync)
+    # -------------------------------------------------------------------------
+
+    def _get_session_handoffs_file(self) -> Path:
+        """Get the path to the session-handoffs.json file (in state dir)."""
+        # Use the state dir from environment or default
+        import os
+        state_dir = os.environ.get("CLAUDE_RECALL_STATE")
+        if state_dir:
+            return Path(state_dir) / "session-handoffs.json"
+        return Path.home() / ".local" / "state" / "claude-recall" / "session-handoffs.json"
+
+    def _load_session_handoffs(self) -> dict:
+        """Load session-handoffs mapping from JSON file."""
+        import json as json_mod
+        file_path = self._get_session_handoffs_file()
+        if not file_path.exists():
+            return {}
+        try:
+            return json_mod.loads(file_path.read_text())
+        except (json_mod.JSONDecodeError, OSError):
+            return {}
+
+    def _save_session_handoffs(self, data: dict) -> None:
+        """Save session-handoffs mapping to JSON file with auto-cleanup."""
+        import json as json_mod
+        from datetime import datetime, timedelta
+
+        # Auto-cleanup entries older than 24 hours
+        cutoff = datetime.now() - timedelta(hours=24)
+        cleaned = {}
+        for session_id, entry in data.items():
+            if isinstance(entry, dict) and "created" in entry:
+                try:
+                    created = datetime.fromisoformat(entry["created"])
+                    if created > cutoff:
+                        cleaned[session_id] = entry
+                except (ValueError, TypeError):
+                    # Invalid date format, skip entry
+                    pass
+            else:
+                # Legacy format or missing created, skip
+                pass
+
+        file_path = self._get_session_handoffs_file()
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(json_mod.dumps(cleaned, indent=2))
+
+    def handoff_set_session(
+        self,
+        handoff_id: str,
+        session_id: str,
+        transcript_path: Optional[str] = None,
+    ) -> None:
+        """
+        Store session -> handoff mapping.
+
+        Called by post-exitplanmode-hook.sh when creating a handoff,
+        to link the session that created the handoff.
+
+        Args:
+            handoff_id: The handoff ID (e.g., 'hf-abc1234')
+            session_id: The Claude session ID from hook input
+            transcript_path: Optional path to the session transcript file
+        """
+        from datetime import datetime
+
+        data = self._load_session_handoffs()
+        data[session_id] = {
+            "handoff_id": handoff_id,
+            "created": datetime.now().isoformat(),
+            "transcript_path": transcript_path,
+        }
+        self._save_session_handoffs(data)
+
+        logger = get_logger()
+        logger.mutation("set_session", session_id, {
+            "handoff_id": handoff_id,
+            "has_transcript": bool(transcript_path),
+        })
+
+    def handoff_get_by_session(self, session_id: str) -> Optional[str]:
+        """
+        Get active handoff ID for a session.
+
+        Called by post-todowrite-hook.sh to find which handoff
+        to sync todos to based on the current session.
+
+        Args:
+            session_id: The Claude session ID from hook input
+
+        Returns:
+            Handoff ID if found and still active, None otherwise
+        """
+        data = self._load_session_handoffs()
+        entry = data.get(session_id)
+        if not entry:
+            return None
+
+        handoff_id = entry.get("handoff_id")
+        if not handoff_id:
+            return None
+
+        # Verify handoff is still active (not completed)
+        handoff = self.handoff_get(handoff_id)
+        if handoff is None or handoff.status == "completed":
+            return None
+
+        return handoff_id
+
+    def handoff_add_transcript(
+        self,
+        session_id: str,
+        transcript_path: str,
+        agent_type: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Add a transcript file reference to the handoff linked to this session.
+
+        Called by stop-hook.sh on session end to record transcript paths.
+        Handles both main sessions and sub-agent sessions.
+
+        Args:
+            session_id: The Claude session ID from hook input
+            transcript_path: Path to the transcript .jsonl file
+            agent_type: Optional agent type (e.g., 'Explore', 'general-purpose')
+                        If None, this is the main session transcript
+
+        Returns:
+            Handoff ID if transcript was added, None if no linked handoff
+        """
+        # First, check if this session directly has a linked handoff
+        handoff_id = self.handoff_get_by_session(session_id)
+
+        if not handoff_id:
+            # This might be a sub-agent session - we don't have parent linking yet
+            # For now, sub-agents won't add transcripts automatically
+            return None
+
+        # Get handoff and update its transcripts in the handoff context
+        handoff = self.handoff_get(handoff_id)
+        if not handoff:
+            return None
+
+        # Build or update the handoff context with transcript info
+        # Store transcripts in a format that can be displayed in HANDOFFS.md
+        # We'll store in the context.critical_files for now (they're file refs)
+        # In the future, we may add a dedicated transcripts field
+
+        # For now, log the transcript addition
+        logger = get_logger()
+        logger.mutation("add_transcript", handoff_id, {
+            "session_id": session_id,
+            "transcript_path": transcript_path,
+            "agent_type": agent_type,
+        })
+
+        return handoff_id

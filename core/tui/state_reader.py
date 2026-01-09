@@ -27,9 +27,21 @@ LEGACY_HANDOFFS_FILENAME = "APPROACHES.md"
 DECAY_STATE_FILENAME = "decay_state"
 
 try:
-    from core.tui.models import DecayInfo, HandoffSummary, LessonSummary, TriedStep
+    from core.tui.models import (
+        DecayInfo,
+        HandoffContextSummary,
+        HandoffSummary,
+        LessonSummary,
+        TriedStep,
+    )
 except ImportError:
-    from .models import DecayInfo, HandoffSummary, LessonSummary, TriedStep
+    from .models import (
+        DecayInfo,
+        HandoffContextSummary,
+        HandoffSummary,
+        LessonSummary,
+        TriedStep,
+    )
 
 
 def get_state_dir() -> Path:
@@ -141,6 +153,23 @@ class StateReader:
     HANDOFF_NEXT_STEP_PATTERN = re.compile(r"^\s*-\s*(.+)$")
     HANDOFF_REFS_PATTERN = re.compile(r"^\*\*Refs\*\*:\s*(.*)$")
     HANDOFF_CHECKPOINT_PATTERN = re.compile(r"^\*\*Checkpoint\*\*:\s*(.+)$")
+    HANDOFF_BLOCKED_BY_PATTERN = re.compile(r"^\s*-\s*\*\*Blocked By\*\*:\s*(.+)$")
+    # Handoff Context section patterns
+    HANDOFF_CONTEXT_HEADER_PATTERN = re.compile(r"^\*\*Handoff Context\*\*:")
+    HANDOFF_CONTEXT_GIT_REF_PATTERN = re.compile(r"^\s*-\s*\*\*Git Ref\*\*:\s*(.+)$")
+    HANDOFF_CONTEXT_SUMMARY_PATTERN = re.compile(r"^\s*-\s*\*\*Summary\*\*:\s*(.+)$")
+    HANDOFF_CONTEXT_CRITICAL_FILES_PATTERN = re.compile(
+        r"^\s*-\s*\*\*Critical Files\*\*:\s*(.*)$"
+    )
+    HANDOFF_CONTEXT_RECENT_CHANGES_PATTERN = re.compile(
+        r"^\s*-\s*\*\*Recent Changes\*\*:\s*(.*)$"
+    )
+    HANDOFF_CONTEXT_LEARNINGS_PATTERN = re.compile(
+        r"^\s*-\s*\*\*Learnings\*\*:\s*(.*)$"
+    )
+    HANDOFF_CONTEXT_BLOCKERS_PATTERN = re.compile(
+        r"^\s*-\s*\*\*Blockers\*\*:\s*(.*)$"
+    )
 
     def __init__(
         self,
@@ -337,6 +366,16 @@ class StateReader:
             next_steps: List[str] = []
             refs: List[str] = []
             checkpoint = ""
+            blocked_by: List[str] = []
+
+            # Handoff context fields
+            in_context_section = False
+            context_git_ref = ""
+            context_summary = ""
+            context_critical_files: List[str] = []
+            context_recent_changes: List[str] = []
+            context_learnings: List[str] = []
+            context_blockers: List[str] = []
 
             # Current parsing section
             in_tried_section = False
@@ -360,6 +399,7 @@ class StateReader:
                         agent = status_match.group(3)
                     in_tried_section = False
                     in_next_section = False
+                    in_context_section = False
                     scan_idx += 1
                     continue
 
@@ -371,12 +411,24 @@ class StateReader:
                     scan_idx += 1
                     continue
 
+                # Parse blocked_by
+                blocked_by_match = self.HANDOFF_BLOCKED_BY_PATTERN.match(line)
+                if blocked_by_match:
+                    blocked_by_str = blocked_by_match.group(1).strip()
+                    if blocked_by_str:
+                        blocked_by = [
+                            b.strip() for b in blocked_by_str.split(",") if b.strip()
+                        ]
+                    scan_idx += 1
+                    continue
+
                 # Parse description
                 desc_match = self.HANDOFF_DESCRIPTION_PATTERN.match(line)
                 if desc_match:
                     description = desc_match.group(1).strip()
                     in_tried_section = False
                     in_next_section = False
+                    in_context_section = False
                     scan_idx += 1
                     continue
 
@@ -384,6 +436,7 @@ class StateReader:
                 if self.HANDOFF_TRIED_HEADER_PATTERN.match(line):
                     in_tried_section = True
                     in_next_section = False
+                    in_context_section = False
                     scan_idx += 1
                     continue
 
@@ -405,6 +458,7 @@ class StateReader:
                 if self.HANDOFF_NEXT_HEADER_PATTERN.match(line):
                     in_tried_section = False
                     in_next_section = True
+                    in_context_section = False
                     scan_idx += 1
                     continue
 
@@ -428,6 +482,7 @@ class StateReader:
                         refs = [r.strip() for r in refs_str.split(",") if r.strip()]
                     in_tried_section = False
                     in_next_section = False
+                    in_context_section = False
                     scan_idx += 1
                     continue
 
@@ -437,10 +492,95 @@ class StateReader:
                     checkpoint = chk_match.group(1).strip()
                     in_tried_section = False
                     in_next_section = False
+                    in_context_section = False
                     scan_idx += 1
                     continue
 
+                # Parse Handoff Context header
+                if self.HANDOFF_CONTEXT_HEADER_PATTERN.match(line):
+                    in_tried_section = False
+                    in_next_section = False
+                    in_context_section = True
+                    scan_idx += 1
+                    continue
+
+                # Parse Handoff Context fields when in context section
+                if in_context_section:
+                    # Git Ref
+                    git_ref_match = self.HANDOFF_CONTEXT_GIT_REF_PATTERN.match(line)
+                    if git_ref_match:
+                        context_git_ref = git_ref_match.group(1).strip()
+                        scan_idx += 1
+                        continue
+
+                    # Summary
+                    summary_match = self.HANDOFF_CONTEXT_SUMMARY_PATTERN.match(line)
+                    if summary_match:
+                        context_summary = summary_match.group(1).strip()
+                        scan_idx += 1
+                        continue
+
+                    # Critical Files
+                    cf_match = self.HANDOFF_CONTEXT_CRITICAL_FILES_PATTERN.match(line)
+                    if cf_match:
+                        cf_str = cf_match.group(1).strip()
+                        if cf_str:
+                            context_critical_files = [
+                                f.strip() for f in cf_str.split(",") if f.strip()
+                            ]
+                        scan_idx += 1
+                        continue
+
+                    # Recent Changes
+                    rc_match = self.HANDOFF_CONTEXT_RECENT_CHANGES_PATTERN.match(line)
+                    if rc_match:
+                        rc_str = rc_match.group(1).strip()
+                        if rc_str:
+                            context_recent_changes = [
+                                c.strip() for c in rc_str.split(",") if c.strip()
+                            ]
+                        scan_idx += 1
+                        continue
+
+                    # Learnings
+                    learn_match = self.HANDOFF_CONTEXT_LEARNINGS_PATTERN.match(line)
+                    if learn_match:
+                        learn_str = learn_match.group(1).strip()
+                        if learn_str:
+                            context_learnings = [
+                                l.strip() for l in learn_str.split(",") if l.strip()
+                            ]
+                        scan_idx += 1
+                        continue
+
+                    # Blockers (within context)
+                    blk_match = self.HANDOFF_CONTEXT_BLOCKERS_PATTERN.match(line)
+                    if blk_match:
+                        blk_str = blk_match.group(1).strip()
+                        if blk_str:
+                            context_blockers = [
+                                b.strip() for b in blk_str.split(",") if b.strip()
+                            ]
+                        scan_idx += 1
+                        continue
+
+                    # Non-context line ends context section
+                    if line.strip() and not line.startswith(" ") and not line.startswith("-"):
+                        in_context_section = False
+
                 scan_idx += 1
+
+            # Build HandoffContext if we have any context data
+            handoff_context: Optional[HandoffContextSummary] = None
+            if context_git_ref or context_summary:
+                handoff_context = HandoffContextSummary(
+                    summary=context_summary,
+                    critical_files=context_critical_files,
+                    recent_changes=context_recent_changes,
+                    learnings=context_learnings,
+                    blockers=context_blockers,
+                    git_ref=context_git_ref,
+                )
 
             handoffs.append(HandoffSummary(
                 id=handoff_id,
@@ -456,6 +596,8 @@ class StateReader:
                 next_steps=next_steps,
                 refs=refs,
                 checkpoint=checkpoint,
+                blocked_by=blocked_by,
+                handoff=handoff_context,
             ))
 
             idx = scan_idx

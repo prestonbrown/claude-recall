@@ -156,6 +156,30 @@ class TriedStep:
 
 
 @dataclass
+class HandoffContextSummary:
+    """
+    Rich context for session handoffs in TUI.
+
+    Mirrors the HandoffContext from core.models for display purposes.
+
+    Attributes:
+        summary: 1-2 sentence progress summary
+        critical_files: 2-3 most important file:line refs
+        recent_changes: What was modified this session
+        learnings: Discoveries/patterns found
+        blockers: What's blocking progress
+        git_ref: Commit hash at handoff time
+    """
+
+    summary: str
+    critical_files: List[str]
+    recent_changes: List[str]
+    learnings: List[str]
+    blockers: List[str]
+    git_ref: str
+
+
+@dataclass
 class HandoffSummary:
     """
     Compact summary of a handoff for state overview.
@@ -176,6 +200,8 @@ class HandoffSummary:
         next_steps: List of next steps to take
         refs: List of file:line references
         checkpoint: Current progress summary
+        blocked_by: List of handoff IDs this depends on
+        handoff: Rich context for session handoffs (HandoffContextSummary)
     """
 
     id: str
@@ -191,6 +217,8 @@ class HandoffSummary:
     next_steps: List[str] = field(default_factory=list)
     refs: List[str] = field(default_factory=list)
     checkpoint: str = ""
+    blocked_by: List[str] = field(default_factory=list)
+    handoff: Optional[HandoffContextSummary] = None
 
     @property
     def is_active(self) -> bool:

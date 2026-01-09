@@ -815,10 +815,32 @@ class TestOriginDetectionFunction:
         from core.tui.transcript_reader import detect_origin
         assert detect_origin("Review the pull request changes") == "General"
 
-    def test_detect_unknown_local_command_caveat(self):
-        """Prompts containing '<local-command-caveat>' should return 'Unknown'."""
+    def test_detect_user_local_command_caveat(self):
+        """Prompts containing '<local-command-caveat>' should return 'User' (these are user commands)."""
         from core.tui.transcript_reader import detect_origin
-        assert detect_origin("<local-command-caveat>Some system message</local-command-caveat>") == "Unknown"
+        assert detect_origin("<local-command-caveat>User ran a local command</local-command-caveat>") == "User"
+
+    def test_detect_system_analyze_conversation(self):
+        """Prompts starting with 'Analyze this conversation' should return 'System'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Analyze this conversation and extract key information") == "System"
+
+    def test_detect_system_score_relevance(self):
+        """Prompts about scoring lesson relevance should return 'System'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Score each lesson's relevance to the current task") == "System"
+        assert detect_origin("Score the relevance of each lesson below") == "System"
+
+    def test_detect_system_summarize_key_points(self):
+        """Prompts starting with 'Summarize the key points' should return 'System'."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("Summarize the key points from this session") == "System"
+
+    def test_detect_system_case_insensitive(self):
+        """System pattern detection should be case-insensitive."""
+        from core.tui.transcript_reader import detect_origin
+        assert detect_origin("ANALYZE THIS CONVERSATION for patterns") == "System"
+        assert detect_origin("analyze this conversation for patterns") == "System"
 
     def test_detect_warmup(self):
         """Prompts starting with 'Warmup' should return 'Warmup'."""
@@ -911,15 +933,15 @@ class TestOriginFieldInSummary:
         session = next(s for s in sessions if s.session_id == "user-session-id")
         assert session.origin == "User"
 
-    def test_unknown_session_detected(self, temp_claude_home_with_origins):
-        """System/unknown session should have origin='Unknown'."""
+    def test_local_command_caveat_session_detected_as_user(self, temp_claude_home_with_origins):
+        """Session with <local-command-caveat> should have origin='User' (user commands)."""
         from core.tui.transcript_reader import TranscriptReader
 
         reader = TranscriptReader(claude_home=temp_claude_home_with_origins)
         sessions = reader.list_sessions("/Users/test/code/myproject")
 
         session = next(s for s in sessions if s.session_id == "unknown-session-id")
-        assert session.origin == "Unknown"
+        assert session.origin == "User"
 
 
 # ============================================================================
@@ -1194,3 +1216,251 @@ class TestParentChildLinking:
 
         parent = next(s for s in sessions if s.session_id == "parent-session-id")
         assert "independent-session-id" not in parent.child_session_ids
+
+
+# ============================================================================
+# Token Counting Tests
+# ============================================================================
+
+# Sample transcript data with detailed token usage
+TOKEN_SESSION_USER = {
+    "type": "user",
+    "uuid": "msg-token-user-001",
+    "parentUuid": None,
+    "timestamp": "2026-01-08T10:00:00.000Z",
+    "sessionId": "token-test-session-id",
+    "cwd": "/Users/test/code/myproject",
+    "message": {
+        "role": "user",
+        "content": "Help me understand token counting."
+    },
+    "userType": "external"
+}
+
+TOKEN_SESSION_ASSISTANT_1 = {
+    "type": "assistant",
+    "uuid": "msg-token-asst-001",
+    "parentUuid": "msg-token-user-001",
+    "timestamp": "2026-01-08T10:00:05.000Z",
+    "sessionId": "token-test-session-id",
+    "message": {
+        "role": "assistant",
+        "id": "msg_token_001",
+        "model": "claude-opus-4-5-20251101",
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 5000,
+            "output_tokens": 500,
+            "cache_creation_input_tokens": 3000,
+            "cache_read_input_tokens": 1500
+        },
+        "content": [{"type": "text", "text": "I'll explain token counting."}]
+    }
+}
+
+TOKEN_SESSION_ASSISTANT_2 = {
+    "type": "assistant",
+    "uuid": "msg-token-asst-002",
+    "parentUuid": "msg-token-asst-001",
+    "timestamp": "2026-01-08T10:00:10.000Z",
+    "sessionId": "token-test-session-id",
+    "message": {
+        "role": "assistant",
+        "id": "msg_token_002",
+        "model": "claude-opus-4-5-20251101",
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 6000,
+            "output_tokens": 800,
+            "cache_creation_input_tokens": 500,
+            "cache_read_input_tokens": 4000
+        },
+        "content": [{"type": "text", "text": "Here's more detail on tokens."}]
+    }
+}
+
+# Session without cache tokens (older format or no caching)
+TOKEN_SESSION_NO_CACHE = {
+    "type": "assistant",
+    "uuid": "msg-token-nocache-001",
+    "parentUuid": "msg-token-user-001",
+    "timestamp": "2026-01-08T10:01:00.000Z",
+    "sessionId": "token-no-cache-session-id",
+    "message": {
+        "role": "assistant",
+        "id": "msg_nocache_001",
+        "model": "claude-opus-4-5-20251101",
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 1000,
+            "output_tokens": 200
+            # No cache fields
+        },
+        "content": [{"type": "text", "text": "Response without cache tokens."}]
+    }
+}
+
+
+@pytest.fixture
+def temp_claude_home_with_tokens(tmp_path):
+    """Create a temporary ~/.claude structure with token-rich transcripts."""
+    claude_home = tmp_path / ".claude"
+    projects_dir = claude_home / "projects"
+
+    project_dir = projects_dir / "-Users-test-code-myproject"
+    project_dir.mkdir(parents=True)
+
+    # Create transcript with full token usage
+    token_transcript = project_dir / "token-test-session-id.jsonl"
+    with open(token_transcript, "w") as f:
+        f.write(json.dumps(TOKEN_SESSION_USER) + "\n")
+        f.write(json.dumps(TOKEN_SESSION_ASSISTANT_1) + "\n")
+        f.write(json.dumps(TOKEN_SESSION_ASSISTANT_2) + "\n")
+
+    # Create transcript without cache tokens
+    user_msg = TOKEN_SESSION_USER.copy()
+    user_msg["sessionId"] = "token-no-cache-session-id"
+    no_cache_transcript = project_dir / "token-no-cache-session-id.jsonl"
+    with open(no_cache_transcript, "w") as f:
+        f.write(json.dumps(user_msg) + "\n")
+        f.write(json.dumps(TOKEN_SESSION_NO_CACHE) + "\n")
+
+    return claude_home
+
+
+class TestTokenCountingFields:
+    """Test that TranscriptSummary has separate token counting fields."""
+
+    def test_summary_has_input_tokens_field(self, temp_claude_home_with_tokens):
+        """TranscriptSummary should have input_tokens field."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        assert all(hasattr(s, "input_tokens") for s in sessions)
+
+    def test_summary_has_output_tokens_field(self, temp_claude_home_with_tokens):
+        """TranscriptSummary should have output_tokens field."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        assert all(hasattr(s, "output_tokens") for s in sessions)
+
+    def test_summary_has_cache_read_tokens_field(self, temp_claude_home_with_tokens):
+        """TranscriptSummary should have cache_read_tokens field."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        assert all(hasattr(s, "cache_read_tokens") for s in sessions)
+
+    def test_summary_has_cache_creation_tokens_field(self, temp_claude_home_with_tokens):
+        """TranscriptSummary should have cache_creation_tokens field."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        assert all(hasattr(s, "cache_creation_tokens") for s in sessions)
+
+
+class TestTokenCounting:
+    """Test token counting aggregation from transcripts."""
+
+    def test_input_tokens_summed_correctly(self, temp_claude_home_with_tokens):
+        """Input tokens should be summed across all assistant messages."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "token-test-session-id")
+        # 5000 + 6000 = 11000
+        assert session.input_tokens == 11000
+
+    def test_output_tokens_summed_correctly(self, temp_claude_home_with_tokens):
+        """Output tokens should be summed across all assistant messages."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "token-test-session-id")
+        # 500 + 800 = 1300
+        assert session.output_tokens == 1300
+
+    def test_cache_read_tokens_summed_correctly(self, temp_claude_home_with_tokens):
+        """Cache read tokens should be summed across all assistant messages."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "token-test-session-id")
+        # 1500 + 4000 = 5500
+        assert session.cache_read_tokens == 5500
+
+    def test_cache_creation_tokens_summed_correctly(self, temp_claude_home_with_tokens):
+        """Cache creation tokens should be summed across all assistant messages."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "token-test-session-id")
+        # 3000 + 500 = 3500
+        assert session.cache_creation_tokens == 3500
+
+    def test_total_tokens_is_input_plus_output(self, temp_claude_home_with_tokens):
+        """total_tokens should be input_tokens + output_tokens."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "token-test-session-id")
+        # input (11000) + output (1300) = 12300
+        assert session.total_tokens == session.input_tokens + session.output_tokens
+        assert session.total_tokens == 12300
+
+    def test_missing_cache_fields_default_to_zero(self, temp_claude_home_with_tokens):
+        """Missing cache token fields should default to 0."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "token-no-cache-session-id")
+        assert session.cache_read_tokens == 0
+        assert session.cache_creation_tokens == 0
+
+    def test_tokens_counted_with_missing_cache(self, temp_claude_home_with_tokens):
+        """Input and output tokens should still be counted when cache fields missing."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home_with_tokens)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "token-no-cache-session-id")
+        assert session.input_tokens == 1000
+        assert session.output_tokens == 200
+        assert session.total_tokens == 1200
+
+
+class TestTokenCountingBackwardCompatibility:
+    """Test that token counting maintains backward compatibility."""
+
+    def test_existing_total_tokens_behavior(self, temp_claude_home):
+        """Existing tests using total_tokens should continue to work."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        reader = TranscriptReader(claude_home=temp_claude_home)
+        sessions = reader.list_sessions("/Users/test/code/myproject")
+
+        session = next(s for s in sessions if s.session_id == "eb3513a8-77ea-41c9-94fd-e8cdf700a4dd")
+        # total_tokens should still return a positive value for sessions with usage data
+        assert session.total_tokens > 0

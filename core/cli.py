@@ -202,6 +202,7 @@ def main():
         help="Sync TodoWrite todos to handoff (called by stop-hook)"
     )
     sync_todos_parser.add_argument("todos_json", help="JSON array of todos from TodoWrite")
+    sync_todos_parser.add_argument("--session-handoff", help="Handoff ID from session lookup (highest priority)")
 
     # handoff inject-todos (format handoffs as todo suggestions)
     handoff_subparsers.add_parser(
@@ -234,6 +235,31 @@ def main():
         help="Resume a handoff with validation of codebase state"
     )
     resume_parser.add_argument("id", help="Handoff ID (e.g., A001 or hf-abc1234)")
+
+    # handoff set-session (link session to handoff)
+    set_session_parser = handoff_subparsers.add_parser(
+        "set-session",
+        help="Store session -> handoff mapping"
+    )
+    set_session_parser.add_argument("handoff_id", help="Handoff ID (e.g., hf-abc1234)")
+    set_session_parser.add_argument("session_id", help="Claude session ID")
+    set_session_parser.add_argument("--transcript", help="Path to transcript file")
+
+    # handoff get-session-handoff (lookup handoff for session)
+    get_session_handoff_parser = handoff_subparsers.add_parser(
+        "get-session-handoff",
+        help="Lookup handoff for session"
+    )
+    get_session_handoff_parser.add_argument("session_id", help="Claude session ID")
+
+    # handoff add-transcript (add transcript to linked handoff)
+    add_transcript_parser = handoff_subparsers.add_parser(
+        "add-transcript",
+        help="Add transcript to linked handoff"
+    )
+    add_transcript_parser.add_argument("session_id", help="Claude session ID")
+    add_transcript_parser.add_argument("transcript_path", help="Path to transcript file")
+    add_transcript_parser.add_argument("--agent-type", help="Agent type (e.g., 'Explore')")
 
     # watch command - TUI debug viewer
     watch_parser = subparsers.add_parser("watch", help="Launch debug TUI viewer")
@@ -528,7 +554,8 @@ def main():
                     if not isinstance(todos, list):
                         print("Error: todos_json must be a JSON array", file=sys.stderr)
                         sys.exit(1)
-                    result = manager.handoff_sync_todos(todos)
+                    session_handoff = getattr(args, 'session_handoff', None)
+                    result = manager.handoff_sync_todos(todos, session_handoff=session_handoff)
                     if result:
                         print(f"Synced {len(todos)} todo(s) to handoff {result}")
                 except json_module.JSONDecodeError as e:
@@ -581,6 +608,26 @@ def main():
             elif args.handoff_command == "resume":
                 result = manager.handoff_resume(args.id)
                 print(result.format())
+
+            elif args.handoff_command == "set-session":
+                transcript = getattr(args, 'transcript', None)
+                manager.handoff_set_session(args.handoff_id, args.session_id, transcript_path=transcript)
+                print(f"Linked session {args.session_id} to handoff {args.handoff_id}")
+
+            elif args.handoff_command == "get-session-handoff":
+                handoff_id = manager.handoff_get_by_session(args.session_id)
+                if handoff_id:
+                    print(handoff_id)
+                # If not found, print nothing (exit code 0)
+
+            elif args.handoff_command == "add-transcript":
+                agent_type = getattr(args, 'agent_type', None)
+                result = manager.handoff_add_transcript(args.session_id, args.transcript_path, agent_type=agent_type)
+                if result:
+                    print(f"Added transcript to handoff {result}")
+                else:
+                    print("No linked handoff found for session", file=sys.stderr)
+                    sys.exit(1)
 
         elif args.command == "watch":
             try:

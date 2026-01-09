@@ -142,6 +142,13 @@ if [[ -f "$PYTHON_MANAGER" ]]; then
     handoff_id=$(echo "$output" | grep -oE 'hf-[0-9a-f]{7}' | head -1)
 
     if [[ -n "$handoff_id" ]]; then
+        # Extract session_id and store session -> handoff mapping
+        session_id=$(echo "$input" | jq -r '.session_id // empty')
+        if [[ -n "$session_id" ]]; then
+            PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" \
+                handoff set-session "$handoff_id" "$session_id" 2>/dev/null || true
+        fi
+
         # Output explicit, actionable message for the agent
         cat <<EOF
 

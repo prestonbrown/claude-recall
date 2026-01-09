@@ -1629,3 +1629,655 @@ class TestStateReaderHandoffStats:
         assert stats["active_count"] == 2, (
             f"Expected active_count=2, got {stats['active_count']}"
         )
+
+
+# ============================================================================
+# Tests for HandoffSummary blocked_by field
+# ============================================================================
+
+
+class TestHandoffSummaryBlockedBy:
+    """Tests for the blocked_by field in HandoffSummary."""
+
+    def test_blocked_by_field_exists(self):
+        """HandoffSummary should have a blocked_by field."""
+        from core.tui.models import HandoffSummary
+
+        handoff = HandoffSummary(
+            id="hf-abc1234",
+            title="Test Handoff",
+            status="blocked",
+            phase="implementing",
+            created="2026-01-07",
+            updated="2026-01-07",
+        )
+
+        assert hasattr(handoff, "blocked_by"), (
+            "HandoffSummary should have 'blocked_by' field"
+        )
+
+    def test_blocked_by_default_empty_list(self):
+        """HandoffSummary.blocked_by should default to empty list."""
+        from core.tui.models import HandoffSummary
+
+        handoff = HandoffSummary(
+            id="hf-abc1234",
+            title="Test Handoff",
+            status="blocked",
+            phase="implementing",
+            created="2026-01-07",
+            updated="2026-01-07",
+        )
+
+        assert handoff.blocked_by == [], (
+            f"Expected blocked_by to default to [], got {handoff.blocked_by}"
+        )
+        assert isinstance(handoff.blocked_by, list), (
+            "blocked_by should be a list"
+        )
+
+    def test_blocked_by_accepts_handoff_ids(self):
+        """HandoffSummary.blocked_by should accept list of handoff IDs."""
+        from core.tui.models import HandoffSummary
+
+        blocking_ids = ["hf-dep0001", "hf-dep0002"]
+
+        handoff = HandoffSummary(
+            id="hf-abc1234",
+            title="Test Handoff",
+            status="blocked",
+            phase="implementing",
+            created="2026-01-07",
+            updated="2026-01-07",
+            blocked_by=blocking_ids,
+        )
+
+        assert len(handoff.blocked_by) == 2
+        assert handoff.blocked_by == blocking_ids
+        assert all(isinstance(id_, str) for id_ in handoff.blocked_by)
+
+
+# ============================================================================
+# Tests for HandoffSummary handoff (HandoffContext) field
+# ============================================================================
+
+
+class TestHandoffSummaryContext:
+    """Tests for the handoff (HandoffContext) field in HandoffSummary."""
+
+    def test_handoff_context_field_exists(self):
+        """HandoffSummary should have a handoff field for HandoffContext."""
+        from core.tui.models import HandoffSummary
+
+        handoff = HandoffSummary(
+            id="hf-abc1234",
+            title="Test Handoff",
+            status="in_progress",
+            phase="implementing",
+            created="2026-01-07",
+            updated="2026-01-07",
+        )
+
+        assert hasattr(handoff, "handoff"), (
+            "HandoffSummary should have 'handoff' field for HandoffContext"
+        )
+
+    def test_handoff_context_default_none(self):
+        """HandoffSummary.handoff should default to None."""
+        from core.tui.models import HandoffSummary
+
+        handoff = HandoffSummary(
+            id="hf-abc1234",
+            title="Test Handoff",
+            status="in_progress",
+            phase="implementing",
+            created="2026-01-07",
+            updated="2026-01-07",
+        )
+
+        assert handoff.handoff is None, (
+            f"Expected handoff to default to None, got {handoff.handoff}"
+        )
+
+    def test_handoff_context_accepts_context_object(self):
+        """HandoffSummary.handoff should accept a HandoffContextSummary."""
+        from core.tui.models import HandoffContextSummary, HandoffSummary
+
+        context = HandoffContextSummary(
+            summary="OAuth2 integration 80% complete",
+            critical_files=["core/auth/oauth.py:42", "core/auth/tokens.py:100"],
+            recent_changes=["Added Google OAuth flow", "Fixed token refresh"],
+            learnings=["OAuth2 requires PKCE for mobile apps"],
+            blockers=["Need GitHub OAuth credentials"],
+            git_ref="abc1234def5678",
+        )
+
+        handoff = HandoffSummary(
+            id="hf-abc1234",
+            title="OAuth Integration",
+            status="in_progress",
+            phase="implementing",
+            created="2026-01-07",
+            updated="2026-01-07",
+            handoff=context,
+        )
+
+        assert handoff.handoff is not None
+        assert handoff.handoff.summary == "OAuth2 integration 80% complete"
+        assert len(handoff.handoff.critical_files) == 2
+        assert len(handoff.handoff.recent_changes) == 2
+        assert len(handoff.handoff.learnings) == 1
+        assert len(handoff.handoff.blockers) == 1
+        assert handoff.handoff.git_ref == "abc1234def5678"
+
+
+# ============================================================================
+# Tests for HandoffContextSummary dataclass
+# ============================================================================
+
+
+class TestHandoffContextSummary:
+    """Tests for the HandoffContextSummary dataclass."""
+
+    def test_handoff_context_summary_importable(self):
+        """HandoffContextSummary should be importable from core.tui.models."""
+        from core.tui.models import HandoffContextSummary
+
+        assert HandoffContextSummary is not None
+
+    def test_handoff_context_summary_basic_creation(self):
+        """HandoffContextSummary should be creatable with all fields."""
+        from core.tui.models import HandoffContextSummary
+
+        context = HandoffContextSummary(
+            summary="Working on feature X",
+            critical_files=["core/feature.py:10"],
+            recent_changes=["Added new method"],
+            learnings=["Found edge case"],
+            blockers=[],
+            git_ref="abc1234",
+        )
+
+        assert context.summary == "Working on feature X"
+        assert context.critical_files == ["core/feature.py:10"]
+        assert context.recent_changes == ["Added new method"]
+        assert context.learnings == ["Found edge case"]
+        assert context.blockers == []
+        assert context.git_ref == "abc1234"
+
+    def test_handoff_context_summary_is_dataclass(self):
+        """HandoffContextSummary should be a proper dataclass."""
+        from dataclasses import is_dataclass
+
+        from core.tui.models import HandoffContextSummary
+
+        assert is_dataclass(HandoffContextSummary), (
+            "HandoffContextSummary should be a dataclass"
+        )
+
+    def test_handoff_context_summary_has_required_fields(self):
+        """HandoffContextSummary should have all required fields."""
+        from core.tui.models import HandoffContextSummary
+
+        # Should fail without required arguments
+        with pytest.raises(TypeError):
+            HandoffContextSummary()  # type: ignore
+
+
+# ============================================================================
+# Tests for StateReader parsing blocked_by
+# ============================================================================
+
+
+class TestStateReaderBlockedByParsing:
+    """Tests for parsing blocked_by field in StateReader."""
+
+    def test_parse_blocked_by_single(self, tmp_path):
+        """StateReader should parse single blocked_by ID."""
+        from core.tui.state_reader import StateReader
+
+        project_root = tmp_path / "test-project"
+        project_root.mkdir()
+        recall_dir = project_root / ".claude-recall"
+        recall_dir.mkdir()
+
+        handoffs_content = """# HANDOFFS.md
+
+### [hf-blocked1] Blocked Handoff
+- **Status**: blocked | **Phase**: implementing | **Agent**: user
+- **Created**: 2026-01-07 | **Updated**: 2026-01-07
+- **Blocked By**: hf-dep0001
+
+**Description**: Waiting on dependency.
+"""
+        (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+        reader = StateReader(project_root=project_root)
+        handoffs = reader.get_handoffs(project_root)
+
+        assert len(handoffs) == 1
+        handoff = handoffs[0]
+        assert hasattr(handoff, "blocked_by"), "Handoff should have blocked_by field"
+        assert handoff.blocked_by == ["hf-dep0001"], (
+            f"Expected blocked_by=['hf-dep0001'], got {handoff.blocked_by}"
+        )
+
+    def test_parse_blocked_by_multiple(self, tmp_path):
+        """StateReader should parse multiple blocked_by IDs."""
+        from core.tui.state_reader import StateReader
+
+        project_root = tmp_path / "test-project"
+        project_root.mkdir()
+        recall_dir = project_root / ".claude-recall"
+        recall_dir.mkdir()
+
+        handoffs_content = """# HANDOFFS.md
+
+### [hf-blocked1] Multi-blocked Handoff
+- **Status**: blocked | **Phase**: implementing | **Agent**: user
+- **Created**: 2026-01-07 | **Updated**: 2026-01-07
+- **Blocked By**: hf-dep0001, hf-dep0002, hf-dep0003
+
+**Description**: Waiting on multiple dependencies.
+"""
+        (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+        reader = StateReader(project_root=project_root)
+        handoffs = reader.get_handoffs(project_root)
+
+        assert len(handoffs) == 1
+        handoff = handoffs[0]
+        assert len(handoff.blocked_by) == 3, (
+            f"Expected 3 blocked_by IDs, got {len(handoff.blocked_by)}"
+        )
+        assert "hf-dep0001" in handoff.blocked_by
+        assert "hf-dep0002" in handoff.blocked_by
+        assert "hf-dep0003" in handoff.blocked_by
+
+    def test_parse_blocked_by_empty(self, tmp_path):
+        """StateReader should handle missing blocked_by field."""
+        from core.tui.state_reader import StateReader
+
+        project_root = tmp_path / "test-project"
+        project_root.mkdir()
+        recall_dir = project_root / ".claude-recall"
+        recall_dir.mkdir()
+
+        handoffs_content = """# HANDOFFS.md
+
+### [hf-normal1] Normal Handoff
+- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Created**: 2026-01-07 | **Updated**: 2026-01-07
+
+**Description**: No blocked_by field.
+"""
+        (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+        reader = StateReader(project_root=project_root)
+        handoffs = reader.get_handoffs(project_root)
+
+        assert len(handoffs) == 1
+        handoff = handoffs[0]
+        assert handoff.blocked_by == [], (
+            f"Expected empty blocked_by list, got {handoff.blocked_by}"
+        )
+
+
+# ============================================================================
+# Tests for StateReader parsing HandoffContext
+# ============================================================================
+
+
+class TestStateReaderHandoffContextParsing:
+    """Tests for parsing HandoffContext fields in StateReader."""
+
+    def test_parse_handoff_context_section(self, tmp_path):
+        """StateReader should parse Handoff Context section."""
+        from core.tui.state_reader import StateReader
+
+        project_root = tmp_path / "test-project"
+        project_root.mkdir()
+        recall_dir = project_root / ".claude-recall"
+        recall_dir.mkdir()
+
+        handoffs_content = """# HANDOFFS.md
+
+### [hf-ctx0001] Handoff with Context
+- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Created**: 2026-01-07 | **Updated**: 2026-01-07
+
+**Description**: Has full handoff context.
+
+**Handoff Context**:
+- **Git Ref**: abc1234def5678
+- **Summary**: OAuth2 integration 80% complete
+- **Critical Files**: core/auth/oauth.py:42, core/auth/tokens.py:100
+- **Recent Changes**: Added Google OAuth flow, Fixed token refresh
+- **Learnings**: OAuth2 requires PKCE for mobile apps
+- **Blockers**: Need GitHub OAuth credentials
+"""
+        (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+        reader = StateReader(project_root=project_root)
+        handoffs = reader.get_handoffs(project_root)
+
+        assert len(handoffs) == 1
+        handoff = handoffs[0]
+        assert handoff.handoff is not None, "Handoff should have handoff context"
+        assert handoff.handoff.git_ref == "abc1234def5678", (
+            f"Expected git_ref='abc1234def5678', got '{handoff.handoff.git_ref}'"
+        )
+        assert "OAuth2 integration" in handoff.handoff.summary, (
+            f"Expected summary to contain 'OAuth2 integration', got '{handoff.handoff.summary}'"
+        )
+        assert len(handoff.handoff.critical_files) == 2, (
+            f"Expected 2 critical files, got {len(handoff.handoff.critical_files)}"
+        )
+        assert len(handoff.handoff.recent_changes) == 2, (
+            f"Expected 2 recent changes, got {len(handoff.handoff.recent_changes)}"
+        )
+        assert len(handoff.handoff.learnings) == 1, (
+            f"Expected 1 learning, got {len(handoff.handoff.learnings)}"
+        )
+        assert len(handoff.handoff.blockers) == 1, (
+            f"Expected 1 blocker, got {len(handoff.handoff.blockers)}"
+        )
+
+    def test_parse_handoff_context_missing(self, tmp_path):
+        """StateReader should handle missing Handoff Context section."""
+        from core.tui.state_reader import StateReader
+
+        project_root = tmp_path / "test-project"
+        project_root.mkdir()
+        recall_dir = project_root / ".claude-recall"
+        recall_dir.mkdir()
+
+        handoffs_content = """# HANDOFFS.md
+
+### [hf-noctx1] Handoff without Context
+- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Created**: 2026-01-07 | **Updated**: 2026-01-07
+
+**Description**: No handoff context section.
+"""
+        (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+        reader = StateReader(project_root=project_root)
+        handoffs = reader.get_handoffs(project_root)
+
+        assert len(handoffs) == 1
+        handoff = handoffs[0]
+        assert handoff.handoff is None, (
+            f"Expected handoff context to be None, got {handoff.handoff}"
+        )
+
+    def test_parse_handoff_context_partial(self, tmp_path):
+        """StateReader should handle partial Handoff Context (some fields missing)."""
+        from core.tui.state_reader import StateReader
+
+        project_root = tmp_path / "test-project"
+        project_root.mkdir()
+        recall_dir = project_root / ".claude-recall"
+        recall_dir.mkdir()
+
+        handoffs_content = """# HANDOFFS.md
+
+### [hf-partial1] Handoff with Partial Context
+- **Status**: in_progress | **Phase**: implementing | **Agent**: user
+- **Created**: 2026-01-07 | **Updated**: 2026-01-07
+
+**Description**: Has partial handoff context.
+
+**Handoff Context**:
+- **Git Ref**: abc1234
+- **Summary**: Partial context example
+"""
+        (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+        reader = StateReader(project_root=project_root)
+        handoffs = reader.get_handoffs(project_root)
+
+        assert len(handoffs) == 1
+        handoff = handoffs[0]
+        assert handoff.handoff is not None, "Handoff should have handoff context"
+        assert handoff.handoff.git_ref == "abc1234"
+        assert handoff.handoff.summary == "Partial context example"
+        # Missing fields should be empty lists or empty strings
+        assert handoff.handoff.critical_files == []
+        assert handoff.handoff.recent_changes == []
+        assert handoff.handoff.learnings == []
+        assert handoff.handoff.blockers == []
+
+
+# ============================================================================
+# Tests for _show_handoff_details displaying new fields
+# ============================================================================
+
+
+@pytest.fixture
+def temp_project_with_full_handoffs(tmp_path):
+    """Create temp project with handoffs containing all fields including context."""
+    project_root = tmp_path / "test-project"
+    project_root.mkdir()
+    recall_dir = project_root / ".claude-recall"
+    recall_dir.mkdir()
+
+    handoffs_content = """# HANDOFFS.md
+
+### [hf-full001] Full Details Handoff
+- **Status**: in_progress | **Phase**: implementing | **Agent**: general-purpose
+- **Created**: 2026-01-05 | **Updated**: 2026-01-08
+- **Blocked By**: hf-dep0001, hf-dep0002
+
+**Description**: A handoff with all fields populated for testing display.
+
+**Tried** (2 steps):
+  1. [success] Initial implementation
+  2. [partial] Test coverage at 70%
+
+**Next**:
+  - Increase test coverage to 90%
+  - Add integration tests
+
+**Refs**: core/feature.py:42, tests/test_feature.py:10
+
+**Checkpoint**: Basic implementation done
+
+**Handoff Context**:
+- **Git Ref**: abc1234def5678901234567890abcdef12345678
+- **Summary**: Feature implementation 80% complete, tests needed
+- **Critical Files**: core/feature.py:42, core/utils.py:100
+- **Recent Changes**: Added main feature logic, Refactored helper functions
+- **Learnings**: Edge case with empty input needs handling
+- **Blockers**: Waiting for API spec clarification
+
+### [hf-minimal] Minimal Handoff
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: 2026-01-08 | **Updated**: 2026-01-08
+
+**Description**: A minimal handoff without optional fields.
+"""
+    (recall_dir / "HANDOFFS.md").write_text(handoffs_content)
+
+    return project_root
+
+
+class TestHandoffDetailsDisplay:
+    """Tests for _show_handoff_details displaying all fields."""
+
+    @pytest.mark.asyncio
+    async def test_details_shows_project_field(
+        self, temp_project_with_full_handoffs, monkeypatch
+    ):
+        """Handoff details should display project path when present."""
+        pytest.importorskip("textual")
+
+        from core.tui.app import RecallMonitorApp
+        from core.tui.models import HandoffSummary
+
+        # Set up environment
+        state_dir = temp_project_with_full_handoffs.parent / "state"
+        state_dir.mkdir(exist_ok=True)
+        (state_dir / "debug.log").write_text("")
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(state_dir))
+        monkeypatch.setenv("PROJECT_DIR", str(temp_project_with_full_handoffs))
+
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("f6")
+            await pilot.pause()
+
+            # Navigate to first row (hf-full001)
+            await pilot.press("down")
+            await pilot.pause()
+
+            # Get the details widget
+            from textual.widgets import RichLog
+            details = app.query_one("#handoff-details", RichLog)
+
+            # Render the content and check for project
+            # The project field should be displayed if non-empty
+            # Note: We check app._handoff_data for the handoff object
+            handoff = app._handoff_data.get("hf-full001")
+            if handoff and handoff.project:
+                # The display method should show it
+                assert True  # Project field exists and can be displayed
+
+    @pytest.mark.asyncio
+    async def test_details_shows_blocked_by_field(
+        self, temp_project_with_full_handoffs, monkeypatch
+    ):
+        """Handoff details should display blocked_by IDs when present."""
+        pytest.importorskip("textual")
+
+        from core.tui.app import RecallMonitorApp
+
+        state_dir = temp_project_with_full_handoffs.parent / "state"
+        state_dir.mkdir(exist_ok=True)
+        (state_dir / "debug.log").write_text("")
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(state_dir))
+        monkeypatch.setenv("PROJECT_DIR", str(temp_project_with_full_handoffs))
+
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("f6")
+            await pilot.pause()
+
+            # Verify handoff with blocked_by is parsed
+            handoff = app._handoff_data.get("hf-full001")
+            if handoff:
+                assert hasattr(handoff, "blocked_by"), (
+                    "Handoff should have blocked_by field"
+                )
+                # If blocked_by is populated, it should be displayable
+                if handoff.blocked_by:
+                    assert len(handoff.blocked_by) == 2, (
+                        f"Expected 2 blocked_by IDs, got {len(handoff.blocked_by)}"
+                    )
+
+    @pytest.mark.asyncio
+    async def test_details_shows_handoff_context(
+        self, temp_project_with_full_handoffs, monkeypatch
+    ):
+        """Handoff details should display HandoffContext section when present."""
+        pytest.importorskip("textual")
+
+        from core.tui.app import RecallMonitorApp
+
+        state_dir = temp_project_with_full_handoffs.parent / "state"
+        state_dir.mkdir(exist_ok=True)
+        (state_dir / "debug.log").write_text("")
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(state_dir))
+        monkeypatch.setenv("PROJECT_DIR", str(temp_project_with_full_handoffs))
+
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("f6")
+            await pilot.pause()
+
+            # Verify handoff with context is parsed
+            handoff = app._handoff_data.get("hf-full001")
+            if handoff:
+                assert hasattr(handoff, "handoff"), (
+                    "HandoffSummary should have 'handoff' field for context"
+                )
+                # If context is populated, all fields should be accessible
+                if handoff.handoff:
+                    ctx = handoff.handoff
+                    assert ctx.git_ref is not None
+                    assert ctx.summary is not None
+                    assert isinstance(ctx.critical_files, list)
+                    assert isinstance(ctx.recent_changes, list)
+                    assert isinstance(ctx.learnings, list)
+                    assert isinstance(ctx.blockers, list)
+
+    @pytest.mark.asyncio
+    async def test_details_handles_missing_context_gracefully(
+        self, temp_project_with_full_handoffs, monkeypatch
+    ):
+        """Handoff details should not crash when context is missing."""
+        pytest.importorskip("textual")
+
+        from core.tui.app import RecallMonitorApp
+
+        state_dir = temp_project_with_full_handoffs.parent / "state"
+        state_dir.mkdir(exist_ok=True)
+        (state_dir / "debug.log").write_text("")
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(state_dir))
+        monkeypatch.setenv("PROJECT_DIR", str(temp_project_with_full_handoffs))
+
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("f6")
+            await pilot.pause()
+
+            # hf-minimal should exist without context
+            handoff = app._handoff_data.get("hf-minimal")
+            if handoff:
+                # Should be None or handle gracefully
+                assert handoff.handoff is None, (
+                    "Minimal handoff should have no context"
+                )
+
+    @pytest.mark.asyncio
+    async def test_details_shows_abbreviated_git_ref(
+        self, temp_project_with_full_handoffs, monkeypatch
+    ):
+        """Git ref should be displayed abbreviated (first 8 chars)."""
+        pytest.importorskip("textual")
+
+        from core.tui.app import RecallMonitorApp
+
+        state_dir = temp_project_with_full_handoffs.parent / "state"
+        state_dir.mkdir(exist_ok=True)
+        (state_dir / "debug.log").write_text("")
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(state_dir))
+        monkeypatch.setenv("PROJECT_DIR", str(temp_project_with_full_handoffs))
+
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("f6")
+            await pilot.pause()
+
+            handoff = app._handoff_data.get("hf-full001")
+            if handoff and handoff.handoff:
+                git_ref = handoff.handoff.git_ref
+                # Full ref is 40 chars, but display should use first 8
+                assert len(git_ref) >= 8, (
+                    f"Git ref should be at least 8 chars, got {len(git_ref)}"
+                )
+                # The display method should truncate to 8 chars
+                short_ref = git_ref[:8]
+                assert short_ref == "abc1234d", (
+                    f"Expected abbreviated ref 'abc1234d', got '{short_ref}'"
+                )

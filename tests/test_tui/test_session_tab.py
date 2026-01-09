@@ -237,20 +237,26 @@ class TestTranscriptReader:
         )
 
     def test_session_summary_extracts_tokens(self, mock_claude_home: Path):
-        """TranscriptSummary should sum output_tokens from assistant messages."""
+        """TranscriptSummary should sum input + output tokens from assistant messages."""
         reader = TranscriptReader(claude_home=mock_claude_home)
         sessions = reader.list_sessions("/Users/test/code/project-a")
 
-        # Find sess-recent (5000 tokens)
+        # Find sess-recent (input_tokens=100, output_tokens=5000, total=5100)
         recent = next(s for s in sessions if s.session_id == "sess-recent")
-        assert recent.total_tokens == 5000, (
-            f"Expected 5000 tokens, got {recent.total_tokens}"
+        assert recent.input_tokens == 100, (
+            f"Expected 100 input tokens, got {recent.input_tokens}"
+        )
+        assert recent.output_tokens == 5000, (
+            f"Expected 5000 output tokens, got {recent.output_tokens}"
+        )
+        assert recent.total_tokens == 5100, (
+            f"Expected 5100 total tokens (100+5000), got {recent.total_tokens}"
         )
 
-        # Find sess-middle (0 tokens)
+        # Find sess-middle (input_tokens=100, output_tokens=0, total=100)
         middle = next(s for s in sessions if s.session_id == "sess-middle")
-        assert middle.total_tokens == 0, (
-            f"Expected 0 tokens for middle session, got {middle.total_tokens}"
+        assert middle.total_tokens == 100, (
+            f"Expected 100 total tokens for middle session, got {middle.total_tokens}"
         )
 
     def test_load_session_returns_messages(self, mock_claude_home: Path):
@@ -626,10 +632,10 @@ class TestSessionTableIntegration:
                         f"got '{tools_value}'"
                     )
 
-                    # Tokens column (index 6) should show "5.0k" for 5000
+                    # Tokens column (index 6) should show "5.1k" for 5100 (100 input + 5000 output)
                     tokens_value = str(row_data[6])
-                    assert tokens_value == "5.0k", (
-                        f"Tokens column should show '5.0k' for 5000 tokens, "
+                    assert tokens_value == "5.1k", (
+                        f"Tokens column should show '5.1k' for 5100 tokens, "
                         f"got '{tokens_value}'"
                     )
 
@@ -644,17 +650,16 @@ class TestSessionTableIntegration:
                 pytest.fail("Could not find sess-recent row in table")
 
     @pytest.mark.asyncio
-    async def test_session_selection_scrolls_to_top(
+    async def test_session_selection_scrolls_to_top_for_new_session(
         self, mock_claude_home: Path, temp_state_dir: Path
     ):
-        """Selecting a session should scroll the events panel to the top.
+        """Selecting a NEW session should scroll the events panel to the top.
 
-        Currently the RichLog auto-scrolls to end as content is written.
-        After populating events, scroll_home() should be called to show
-        the beginning (topic line) instead of the end.
+        When viewing a different session than the current one, scroll_home()
+        should be called to show the beginning (topic line).
 
-        This test verifies by checking if scroll_home() is called, or
-        by mocking the RichLog to track scroll behavior.
+        However, when viewing the SAME session again (e.g., during refresh),
+        scroll_home() should NOT be called to preserve user's scroll position.
         """
         from unittest.mock import patch, MagicMock
 
@@ -669,6 +674,10 @@ class TestSessionTableIntegration:
 
             session_events = app.query_one("#session-events", RichLog)
 
+            # First, show one session (this may have been done during mount)
+            # Then switch to a DIFFERENT session and verify scroll_home is called
+            app._current_session_id = "sess-older"  # Set to a different session
+
             # Track if scroll_home was called by patching
             scroll_home_called = False
             original_scroll_home = session_events.scroll_home
@@ -680,17 +689,14 @@ class TestSessionTableIntegration:
 
             session_events.scroll_home = tracking_scroll_home
 
-            # Call _show_session_events to populate the panel
+            # Call _show_session_events for a DIFFERENT session
             app._show_session_events("sess-recent")
             await pilot.pause()
 
-            # Verify scroll_home was called after populating events
-            # Currently it's NOT called, so this test should FAIL
+            # Verify scroll_home was called when viewing a NEW session
             assert scroll_home_called, (
-                "After populating session events, scroll_home() should be called "
-                "to scroll to the top and show the topic line first. "
-                "The fix is to add session_log.scroll_home() at the end of "
-                "_show_session_events() in core/tui/app.py"
+                "After switching to a DIFFERENT session, scroll_home() should be called "
+                "to scroll to the top and show the topic line first."
             )
 
     @pytest.mark.asyncio
@@ -1611,7 +1617,8 @@ def mock_claude_home_with_origins(tmp_path: Path, monkeypatch) -> Path:
         ("sess-plan.jsonl", "Plan the implementation of OAuth2 support"),
         ("sess-general.jsonl", "Implement the login form validation"),
         ("sess-user.jsonl", "How do I add a new feature?"),
-        ("sess-unknown.jsonl", "<local-command-caveat>System message</local-command-caveat>"),
+        ("sess-system.jsonl", "Analyze this conversation and extract key information"),
+        ("sess-local-cmd.jsonl", "<local-command-caveat>User ran a command</local-command-caveat>"),
     ]
 
     for i, (filename, prompt) in enumerate(sessions):
@@ -1668,6 +1675,10 @@ class TestOriginColumn:
             await pilot.press("f4")
             await pilot.pause()
 
+            # Toggle to show system sessions (they are hidden by default)
+            await pilot.press("w")
+            await pilot.pause()
+
             session_table = app.query_one("#session-list", DataTable)
 
             # Get the session data from the cached data
@@ -1698,10 +1709,16 @@ class TestOriginColumn:
                 f"Expected 'User' origin, got '{user_session.origin}'"
             )
 
-            unknown_session = session_data.get("sess-unknown")
-            assert unknown_session is not None, "sess-unknown should be in session data"
-            assert unknown_session.origin == "Unknown", (
-                f"Expected 'Unknown' origin, got '{unknown_session.origin}'"
+            system_session = session_data.get("sess-system")
+            assert system_session is not None, "sess-system should be in session data"
+            assert system_session.origin == "System", (
+                f"Expected 'System' origin, got '{system_session.origin}'"
+            )
+
+            local_cmd_session = session_data.get("sess-local-cmd")
+            assert local_cmd_session is not None, "sess-local-cmd should be in session data"
+            assert local_cmd_session.origin == "User", (
+                f"Expected 'User' origin for local-command-caveat, got '{local_cmd_session.origin}'"
             )
 
 

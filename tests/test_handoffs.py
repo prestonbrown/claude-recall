@@ -6039,6 +6039,185 @@ class TestOrphanHandoffAutoCompletion:
         assert h2 in completed
 
 
+class TestSessionLinking:
+    """Tests for session-to-handoff linking feature."""
+
+    def test_session_set_and_get(
+        self, manager: LessonsManager, temp_state_dir: Path
+    ) -> None:
+        """Set a session mapping, retrieve it, verify it matches."""
+        # Create a handoff
+        handoff_id = manager.handoff_add(title="Session-linked work")
+
+        # Link session to handoff
+        session_id = "test-session-12345"
+        manager.handoff_set_session(handoff_id, session_id)
+
+        # Retrieve and verify
+        result = manager.handoff_get_by_session(session_id)
+        assert result == handoff_id
+
+    def test_session_get_nonexistent(
+        self, manager: LessonsManager, temp_state_dir: Path
+    ) -> None:
+        """Get session that doesn't exist returns None."""
+        result = manager.handoff_get_by_session("nonexistent-session-xyz")
+        assert result is None
+
+    def test_session_handoff_completed_returns_none(
+        self, manager: LessonsManager, temp_state_dir: Path
+    ) -> None:
+        """If handoff is completed, get returns None."""
+        # Create a handoff and link session
+        handoff_id = manager.handoff_add(title="Work to complete")
+        session_id = "session-for-completed"
+        manager.handoff_set_session(handoff_id, session_id)
+
+        # Verify link works
+        assert manager.handoff_get_by_session(session_id) == handoff_id
+
+        # Complete the handoff
+        manager.handoff_update_status(handoff_id, "completed")
+
+        # Now get should return None (handoff is completed)
+        assert manager.handoff_get_by_session(session_id) is None
+
+    def test_session_auto_cleanup_old_entries(
+        self, manager: LessonsManager, temp_state_dir: Path
+    ) -> None:
+        """Entries older than 24h are cleaned on save."""
+        import json
+        from datetime import datetime, timedelta
+
+        # Manually create old session entry by writing directly to file
+        session_file = temp_state_dir / "session-handoffs.json"
+        old_time = (datetime.now() - timedelta(hours=25)).isoformat()
+        current_time = datetime.now().isoformat()
+
+        old_data = {
+            "old-session": {
+                "handoff_id": "hf-old1234",
+                "created": old_time,
+            },
+            "current-session": {
+                "handoff_id": "hf-new5678",
+                "created": current_time,
+            },
+        }
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        session_file.write_text(json.dumps(old_data))
+
+        # Create a new handoff and set a new session - this triggers save/cleanup
+        handoff_id = manager.handoff_add(title="New work")
+        manager.handoff_set_session(handoff_id, "brand-new-session")
+
+        # Read the file back and verify old entry was cleaned
+        saved_data = json.loads(session_file.read_text())
+
+        # Old session should be gone (older than 24h)
+        assert "old-session" not in saved_data
+        # Current session should remain
+        assert "current-session" in saved_data
+        # New session should be present
+        assert "brand-new-session" in saved_data
+
+    def test_session_priority_in_sync_todos(
+        self, manager: LessonsManager, temp_state_dir: Path
+    ) -> None:
+        """session_handoff takes priority over explicit prefix in sync_todos."""
+        # Create two handoffs
+        handoff_a = manager.handoff_add(title="Session-linked handoff")
+        handoff_b = manager.handoff_add(title="Explicitly referenced handoff")
+
+        # Link session to handoff_a
+        session_id = "priority-test-session"
+        manager.handoff_set_session(handoff_a, session_id)
+
+        # Todos explicitly reference handoff_b
+        todos = [
+            {"content": f"[{handoff_b}] Task 1", "status": "completed", "activeForm": "Task 1"},
+            {"content": f"[{handoff_b}] Task 2", "status": "in_progress", "activeForm": "Task 2"},
+            {"content": "Task 3", "status": "pending", "activeForm": "Task 3"},
+        ]
+
+        # Sync with session_handoff - should use handoff_a even though todos reference handoff_b
+        result = manager.handoff_sync_todos(todos, session_handoff=handoff_a)
+
+        # Session-based handoff takes priority
+        assert result == handoff_a
+
+        # Verify handoff_a was updated (not handoff_b)
+        handoff = manager.handoff_get(handoff_a)
+        assert handoff.status == "in_progress"
+        assert len(handoff.tried) >= 1
+
+    def test_add_transcript_to_linked_handoff(
+        self, manager: LessonsManager, temp_state_dir: Path
+    ) -> None:
+        """add_transcript returns handoff_id when linked."""
+        # Create a handoff and link session
+        handoff_id = manager.handoff_add(title="Transcript test")
+        session_id = "transcript-session-123"
+        manager.handoff_set_session(handoff_id, session_id)
+
+        # Add transcript
+        transcript_path = "/tmp/transcripts/session.jsonl"
+        result = manager.handoff_add_transcript(session_id, transcript_path)
+
+        # Should return the linked handoff_id
+        assert result == handoff_id
+
+    def test_add_transcript_no_linked_handoff(
+        self, manager: LessonsManager, temp_state_dir: Path
+    ) -> None:
+        """add_transcript returns None when no session link exists."""
+        # Try to add transcript for unlinked session
+        result = manager.handoff_add_transcript(
+            "unlinked-session",
+            "/tmp/transcripts/orphan.jsonl"
+        )
+
+        # Should return None (no linked handoff)
+        assert result is None
+
+    def test_session_set_with_transcript_path(
+        self, manager: LessonsManager, temp_state_dir: Path
+    ) -> None:
+        """handoff_set_session can store transcript_path."""
+        import json
+
+        handoff_id = manager.handoff_add(title="Work with transcript")
+        session_id = "session-with-transcript"
+        transcript_path = "/tmp/transcripts/main.jsonl"
+
+        manager.handoff_set_session(handoff_id, session_id, transcript_path=transcript_path)
+
+        # Verify transcript path was stored
+        session_file = temp_state_dir / "session-handoffs.json"
+        saved_data = json.loads(session_file.read_text())
+
+        assert saved_data[session_id]["transcript_path"] == transcript_path
+
+    def test_add_transcript_with_agent_type(
+        self, manager: LessonsManager, temp_state_dir: Path
+    ) -> None:
+        """add_transcript accepts agent_type parameter."""
+        # Create and link handoff
+        handoff_id = manager.handoff_add(title="Multi-agent work")
+        session_id = "multi-agent-session"
+        manager.handoff_set_session(handoff_id, session_id)
+
+        # Add transcript with agent type
+        result = manager.handoff_add_transcript(
+            session_id,
+            "/tmp/transcripts/explore.jsonl",
+            agent_type="Explore"
+        )
+
+        # Should still return the handoff_id
+        assert result == handoff_id
+
+
 class TestExplicitHandoffIdInTodos:
     """Tests for explicit handoff ID targeting via [hf-XXXXXXX] prefix in todos."""
 
