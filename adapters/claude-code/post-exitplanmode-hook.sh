@@ -70,6 +70,7 @@ fi
 
 # Find actual project root (walk up to .git)
 project_root=$(find_project_root "$cwd")
+project_name=$(basename "$project_root")
 
 # Check if enabled
 if ! is_enabled; then
@@ -89,6 +90,35 @@ plan_file=$(ls -t "$plans_dir"/*.md 2>/dev/null | head -1)
 if [[ -z "$plan_file" ]]; then
     log_debug "post-exitplanmode: no plan files found in $plans_dir"
     exit 0
+fi
+
+# Validate plan belongs to current project by checking file references
+# Plans often reference project files - if those files don't exist here, skip
+plan_content=$(cat "$plan_file" 2>/dev/null)
+plan_has_file_refs=false
+plan_matches_project=false
+
+# Look for file path patterns in the plan (e.g., src/foo.ts, ./bar.py, core/baz.py)
+# Extract potential file paths and check if any exist in current project
+while IFS= read -r potential_path; do
+    [[ -z "$potential_path" ]] && continue
+    plan_has_file_refs=true
+    # Check if file exists relative to project root
+    if [[ -f "$project_root/$potential_path" ]]; then
+        plan_matches_project=true
+        break
+    fi
+done < <(echo "$plan_content" | grep -oE '(src|lib|core|app|tests?|pkg|cmd)/[a-zA-Z0-9_./-]+\.[a-zA-Z]+' | head -10)
+
+# If plan has file references but none match this project, skip it
+if $plan_has_file_refs && ! $plan_matches_project; then
+    log_debug "post-exitplanmode: plan '$plan_file' has file refs but none exist in $project_name - skipping (likely wrong project)"
+    exit 0
+fi
+
+# Log when we can't validate (no file refs detected)
+if ! $plan_has_file_refs; then
+    log_debug "post-exitplanmode: plan '$plan_file' has no detectable file refs - proceeding without validation"
 fi
 
 # Extract title from first # heading
