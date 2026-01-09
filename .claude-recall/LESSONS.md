@@ -33,17 +33,17 @@
 - **Uses**: 2 | **Velocity**: 0.01 | **Learned**: 2026-01-07 | **Last**: 2026-01-07 | **Category**: pattern | **Type**: informational
 > LESSONS.md is shared across checkouts of claude-recall for common project understanding. Commit it periodically to sync lessons between machines/sessions.
 
+
 ### [L006] [*----|-----] OptionList for popup navigation
-- **Uses**: 1 | **Velocity**: 0 | **Learned**: 2026-01-09 | **Last**: 2026-01-09 | **Category**: pattern
+- **Uses**: 1 | **Velocity**: 0.0 | **Learned**: 2026-01-09 | **Last**: 2026-01-09 | **Category**: pattern | **Type**: informational
 > In Textual TUI, use OptionList widget instead of Static for modal popup menus. OptionList provides built-in arrow key navigation and Enter selection. Static widgets don't handle keyboard navigation.
 
 
 ### [L007] [*----|-----] Double-action popup trigger
-- **Uses**: 1 | **Velocity**: 0 | **Learned**: 2026-01-09 | **Last**: 2026-01-09 | **Category**: pattern
+- **Uses**: 1 | **Velocity**: 0.0 | **Learned**: 2026-01-09 | **Last**: 2026-01-09 | **Category**: pattern | **Type**: informational
 > Track confirmed selection separately from current selection (e.g., _current_handoff_id vs _user_selected_handoff_id). First action confirms selection, second action on same item opens popup. Prevents accidental popup triggers.
 
 
 ### [L008] [*----|-----] Consistent state_dir usage
-- **Uses**: 1 | **Velocity**: 0 | **Learned**: 2026-01-09 | **Last**: 2026-01-09 | **Category**: pattern
+- **Uses**: 1 | **Velocity**: 0.0 | **Learned**: 2026-01-09 | **Last**: 2026-01-09 | **Category**: pattern | **Type**: constraint
 > Always use self.state_reader.state_dir for state file paths rather than reimplementing path resolution inline. Duplicating env var checks leads to inconsistencies.
-
