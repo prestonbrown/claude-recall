@@ -286,25 +286,8 @@ install_claude() {
     cp "$SCRIPT_DIR/adapters/claude-code/post-todowrite-hook.sh" "$hooks_dir/"
     chmod +x "$hooks_dir"/*.sh
 
-    # Create /lessons command
-    cat > "$commands_dir/lessons.md" << 'EOF'
-# Claude Recall - Lessons Manager
-
-Manage the Claude Recall lessons system.
-
-**Arguments**: $ARGUMENTS
-
-Based on arguments, run the appropriate command:
-
-- No args or "list": `~/.config/claude-recall/lessons-manager.sh list`
-- "search <term>": `~/.config/claude-recall/lessons-manager.sh list --search "<term>"`
-- "category <cat>": `~/.config/claude-recall/lessons-manager.sh list --category <cat>`
-- "stale": `~/.config/claude-recall/lessons-manager.sh list --stale`
-- "edit <id> <content>": `~/.config/claude-recall/lessons-manager.sh edit <id> "<content>"`
-- "delete <id>": Show lesson, confirm, then `~/.config/claude-recall/lessons-manager.sh delete <id>`
-
-Format list output as a markdown table. Valid categories: pattern, correction, gotcha, preference, decision.
-EOF
+    # Copy all commands from repo
+    cp "$SCRIPT_DIR/adapters/claude-code/commands/"*.md "$commands_dir/"
 
     # Update settings.json with hooks (including periodic reminder and PreCompact)
     local settings_file="$claude_dir/settings.json"
@@ -428,6 +411,10 @@ uninstall() {
     rm -f "$HOME/.claude/hooks/post-exitplanmode-hook.sh"
     rm -f "$HOME/.claude/hooks/post-todowrite-hook.sh"
     rm -f "$HOME/.claude/commands/lessons.md"
+    rm -f "$HOME/.claude/commands/implement.md"
+    rm -f "$HOME/.claude/commands/delegate.md"
+    rm -f "$HOME/.claude/commands/review.md"
+    rm -f "$HOME/.claude/commands/test-first.md"
 
     # Selectively remove only Claude Recall hooks from settings.json
     # This preserves other user hooks while removing inject-hook, capture-hook, stop-hook, and reminder hooks

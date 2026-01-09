@@ -117,6 +117,11 @@ cp -r /path/to/claude-recall/adapters/opencode/* lessons-plugin/
 | `~/.claude/hooks/stop-hook.sh` | Stop hook - citation tracking |
 | `~/.claude/hooks/session-end-hook.sh` | Stop hook - captures handoff context |
 | `~/.claude/hooks/precompact-hook.sh` | PreCompact hook - saves handoff context before compaction |
+| `~/.claude/commands/lessons.md` | `/lessons` - manage lessons |
+| `~/.claude/commands/implement.md` | `/implement` - implementation protocol |
+| `~/.claude/commands/delegate.md` | `/delegate` - agent delegation rules |
+| `~/.claude/commands/review.md` | `/review` - code review checklist |
+| `~/.claude/commands/test-first.md` | `/test-first` - test-first discipline |
 | `~/.claude/settings.json` | Claude Code configuration |
 
 ### Project Files
@@ -137,6 +142,13 @@ adapters/claude-code/            → ~/.claude/hooks/
   stop-hook.sh                       stop-hook.sh
   session-end-hook.sh                session-end-hook.sh
   precompact-hook.sh                 precompact-hook.sh
+
+adapters/claude-code/commands/   → ~/.claude/commands/
+  lessons.md                         lessons.md
+  implement.md                       implement.md
+  delegate.md                        delegate.md
+  review.md                          review.md
+  test-first.md                      test-first.md
 
 core/                            → ~/.config/claude-recall/
   cli.py, manager.py, etc.           *.py files
