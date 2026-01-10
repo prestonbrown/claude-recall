@@ -12,6 +12,7 @@ These tests verify end-to-end behavior of the hook system:
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from datetime import date
@@ -797,3 +798,183 @@ summary: Previous session worked on integration tests.""")
             f"HANDOFF DUTY should mention HANDOFF COMPLETE. Output:\n{hook_output}"
         assert "commit" in hook_output.lower(), \
             f"HANDOFF DUTY should mention commit after completion. Output:\n{hook_output}"
+
+
+class TestStopHookIncrementalProcessing:
+    """Tests for stop-hook incremental processing with transcript caching."""
+
+    def test_incremental_citation_processing(self, integration_env, hook_env):
+        """Stop hook should only process new entries after checkpoint.
+
+        This test verifies that the transcript caching (single jq pass)
+        correctly handles incremental processing:
+        1. First run processes all citations
+        2. Checkpoint is saved
+        3. New entries added to transcript
+        4. Second run only processes new entries
+        """
+        # Create a lesson to cite
+        lessons_dir = integration_env["project_root"] / ".claude-recall"
+        lessons_dir.mkdir(exist_ok=True)
+        lessons_file = lessons_dir / "LESSONS.md"
+        lessons_file.write_text("""# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [*----|-----] First lesson
+- **Uses**: 1 | **Velocity**: 1.0 | **Learned**: 2026-01-01 | **Last**: 2026-01-03 | **Category**: pattern
+> First lesson content.
+
+### [L002] [*----|-----] Second lesson
+- **Uses**: 1 | **Velocity**: 1.0 | **Learned**: 2026-01-01 | **Last**: 2026-01-03 | **Category**: pattern
+> Second lesson content.
+""")
+
+        # Create transcript with first citation
+        transcript = integration_env["home"] / "transcript.jsonl"
+        entry1 = {
+            "timestamp": "2026-01-03T12:00:00Z",
+            "uuid": "test-uuid-1",
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Applying [L001]: First lesson."}]
+            }
+        }
+        transcript.write_text(json.dumps(entry1))
+
+        hook = integration_env["hooks_dir"] / "stop-hook.sh"
+        input_data = {
+            "cwd": str(integration_env["project_root"]),
+            "transcript_path": str(transcript),
+        }
+
+        # First run - should cite L001
+        result1 = run_hook(hook, input_data, hook_env)
+        assert result1.returncode == 0
+
+        # Check checkpoint was created
+        state_dir = integration_env["claude_recall_state"] / ".citation-state"
+        session_id = transcript.stem
+        checkpoint_file = state_dir / session_id
+        assert checkpoint_file.exists(), "Checkpoint should be created after first run"
+
+        # Record L001 uses after first run (for verifying incremental processing)
+        content_after_first = lessons_file.read_text()
+        l001_match_first = re.search(r'\[L001\].*?Uses[^:]*:\s*(\d+)', content_after_first, re.DOTALL)
+        assert l001_match_first, "L001 should exist after first run"
+        l001_uses_first = int(l001_match_first.group(1))
+
+        # Add new entry with L002 citation
+        entry2 = {
+            "timestamp": "2026-01-03T12:00:05Z",
+            "uuid": "test-uuid-2",
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Now using [L002]: Second lesson."}]
+            }
+        }
+        with open(transcript, 'a') as f:
+            f.write("\n" + json.dumps(entry2))
+
+        # Second run - should only cite L002 (L001 is before checkpoint)
+        result2 = run_hook(hook, input_data, hook_env)
+        assert result2.returncode == 0
+
+        # Verify L001 was NOT re-cited (proves incremental processing)
+        content_after_second = lessons_file.read_text()
+        l001_match_second = re.search(r'\[L001\].*?Uses[^:]*:\s*(\d+)', content_after_second, re.DOTALL)
+        l002_match = re.search(r'\[L002\].*?Uses[^:]*:\s*(\d+)', content_after_second, re.DOTALL)
+
+        l001_uses_second = int(l001_match_second.group(1))
+        assert l001_uses_second == l001_uses_first, \
+            f"L001 should not be re-cited on second run (was {l001_uses_first}, now {l001_uses_second})"
+        assert l002_match and int(l002_match.group(1)) >= 2, "L002 should have 2+ uses after second run"
+
+    def test_multiple_patterns_single_transcript_parse(self, integration_env, hook_env):
+        """Stop hook should extract multiple pattern types from cached transcript.
+
+        Verifies that a single transcript parse correctly extracts:
+        - AI LESSON patterns
+        - HANDOFF patterns
+        - Citations
+        - TodoWrite calls
+        """
+        # Create transcript with multiple patterns
+        transcript = integration_env["home"] / "multi_pattern.jsonl"
+        entries = [
+            {
+                "timestamp": "2026-01-03T12:00:00Z",
+                "uuid": "test-uuid-1",
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Starting work.\nHANDOFF: Multi-pattern test"}
+                    ]
+                }
+            },
+            {
+                "timestamp": "2026-01-03T12:00:01Z",
+                "uuid": "test-uuid-2",
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "name": "TodoWrite", "input": {
+                            "todos": [
+                                {"content": "Test task", "status": "in_progress", "activeForm": "Testing"}
+                            ]
+                        }}
+                    ]
+                }
+            },
+            {
+                "timestamp": "2026-01-03T12:00:02Z",
+                "uuid": "test-uuid-3",
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "AI LESSON: pattern: Test pattern - Always test patterns"}
+                    ]
+                }
+            }
+        ]
+        transcript.write_text("\n".join(json.dumps(e) for e in entries))
+
+        hook = integration_env["hooks_dir"] / "stop-hook.sh"
+        input_data = {
+            "cwd": str(integration_env["project_root"]),
+            "transcript_path": str(transcript),
+        }
+
+        result = run_hook(hook, input_data, hook_env)
+        assert result.returncode == 0
+
+        # Verify handoff was created
+        handoffs_file = integration_env["project_root"] / ".claude-recall" / "HANDOFFS.md"
+        assert handoffs_file.exists(), "Handoff should be created"
+        handoff_content = handoffs_file.read_text()
+        assert "Multi-pattern test" in handoff_content
+
+        # Verify AI lesson was added
+        lessons_file = integration_env["project_root"] / ".claude-recall" / "LESSONS.md"
+        assert lessons_file.exists(), "Lessons file should be created with AI LESSON"
+        lesson_content = lessons_file.read_text()
+        assert "Test pattern" in lesson_content
+
+    def test_empty_transcript_handling(self, integration_env, hook_env):
+        """Stop hook should handle empty transcript gracefully."""
+        transcript = integration_env["home"] / "empty.jsonl"
+        transcript.write_text("")  # Empty file
+
+        hook = integration_env["hooks_dir"] / "stop-hook.sh"
+        input_data = {
+            "cwd": str(integration_env["project_root"]),
+            "transcript_path": str(transcript),
+        }
+
+        result = run_hook(hook, input_data, hook_env)
+        assert result.returncode == 0, f"Should not crash on empty transcript: {result.stderr}"

@@ -43,6 +43,56 @@ else
 fi
 STATE_DIR="$CLAUDE_RECALL_STATE/.citation-state"
 
+# Global transcript cache (set by parse_transcript_once)
+TRANSCRIPT_CACHE=""
+
+# Parse transcript once and cache all needed data
+# This replaces 12+ separate jq invocations with a single parse
+parse_transcript_once() {
+    local transcript_path="$1"
+    local last_timestamp="$2"
+
+    # Single jq call extracts everything we need
+    # Output is a JSON object we can query cheaply with simple jq calls
+    TRANSCRIPT_CACHE=$(jq -s --arg ts "$last_timestamp" '{
+        # All assistant text content (joined for grep)
+        assistant_texts: [.[] | select(.type == "assistant") |
+            .message.content[]? | select(.type == "text") | .text],
+
+        # Text from messages after timestamp (for incremental processing)
+        assistant_texts_new: (if $ts == "" then [] else
+            [.[] | select(.type == "assistant" and .timestamp > $ts) |
+                .message.content[]? | select(.type == "text") | .text]
+        end),
+
+        # Last TodoWrite input (for sync) - from all messages
+        last_todowrite: ([.[] | select(.type == "assistant") |
+            .message.content[]? |
+            select(.type == "tool_use" and .name == "TodoWrite") |
+            .input.todos] | last // null),
+
+        # Last TodoWrite input from NEW messages only
+        last_todowrite_new: (if $ts == "" then null else
+            ([.[] | select(.type == "assistant" and .timestamp > $ts) |
+                .message.content[]? |
+                select(.type == "tool_use" and .name == "TodoWrite") |
+                .input.todos] | last // null)
+        end),
+
+        # Count unique files edited (for major work detection)
+        edit_count: ([.[] | .message.content[]? |
+            select(.type == "tool_use" and .name == "Edit") |
+            .input.file_path] | unique | length),
+
+        # Count TodoWrite calls (for major work detection)
+        todowrite_count: ([.[] | .message.content[]? |
+            select(.type == "tool_use" and .name == "TodoWrite")] | length),
+
+        # Latest timestamp for checkpoint
+        latest_timestamp: ([.[] | .timestamp // empty] | last // "")
+    }' "$transcript_path" 2>/dev/null || echo "{}")
+}
+
 # Timing helpers (bash 3.x compatible - no associative arrays)
 get_ms() {
     python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0
@@ -213,18 +263,13 @@ process_ai_lessons() {
     local last_timestamp="$3"
     local added_count=0
 
-    # Extract AI LESSON patterns from assistant messages
+    # Extract AI LESSON patterns from cached assistant texts
+    # Use cached data - select appropriate field based on timestamp
+    local texts_field="assistant_texts"
+    [[ -n "$last_timestamp" ]] && texts_field="assistant_texts_new"
     local ai_lessons=""
-    if [[ -z "$last_timestamp" ]]; then
-        ai_lessons=$(jq -r 'select(.type == "assistant") |
-            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -oE 'AI LESSON:.*' || true)
-    else
-        ai_lessons=$(jq -r --arg ts "$last_timestamp" '
-            select(.type == "assistant" and .timestamp > $ts) |
-            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -oE 'AI LESSON:.*' || true)
-    fi
+    ai_lessons=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$texts_field" '.[$f][]' 2>/dev/null | \
+        grep -oE 'AI LESSON:.*' || true)
 
     [[ -z "$ai_lessons" ]] && return 0
 
@@ -349,19 +394,13 @@ process_handoffs() {
         is_sub_agent=true
     fi
 
-    # Extract handoff patterns from assistant messages
-    # Also match PLAN MODE: pattern for plan mode integration
+    # Extract handoff patterns from cached assistant texts
+    # Use cached data - select appropriate field based on timestamp
+    local texts_field="assistant_texts"
+    [[ -n "$last_timestamp" ]] && texts_field="assistant_texts_new"
     local pattern_lines=""
-    if [[ -z "$last_timestamp" ]]; then
-        pattern_lines=$(jq -r 'select(.type == "assistant") |
-            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -E '^(HANDOFF( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
-    else
-        pattern_lines=$(jq -r --arg ts "$last_timestamp" '
-            select(.type == "assistant" and .timestamp > $ts) |
-            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -E '^(HANDOFF( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
-    fi
+    pattern_lines=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$texts_field" '.[$f][]' 2>/dev/null | \
+        grep -E '^(HANDOFF( UPDATE| COMPLETE)?|PLAN MODE):?' || true)
 
     [[ -z "$pattern_lines" ]] && return 0
 
@@ -566,24 +605,12 @@ capture_todowrite() {
     local project_root="$2"
     local last_timestamp="$3"
 
-    # Extract the LAST TodoWrite tool_use block from assistant messages
-    # We want the final state, not intermediate states
-    # NOTE: Must use jq -c (compact) not -r (raw) because -r pretty-prints arrays
-    # across multiple lines, and tail -1 would only get the closing "]"
+    # Get the LAST TodoWrite from cached data
+    # Cache already has the final state, no need for tail -1
+    local todos_field="last_todowrite"
+    [[ -n "$last_timestamp" ]] && todos_field="last_todowrite_new"
     local todo_json=""
-    if [[ -z "$last_timestamp" ]]; then
-        todo_json=$(jq -c '
-            select(.type == "assistant") |
-            .message.content[]? |
-            select(.type == "tool_use" and .name == "TodoWrite") |
-            .input.todos' "$transcript_path" 2>/dev/null | tail -1 || true)
-    else
-        todo_json=$(jq -c --arg ts "$last_timestamp" '
-            select(.type == "assistant" and .timestamp > $ts) |
-            .message.content[]? |
-            select(.type == "tool_use" and .name == "TodoWrite") |
-            .input.todos' "$transcript_path" 2>/dev/null | tail -1 || true)
-    fi
+    todo_json=$(echo "$TRANSCRIPT_CACHE" | jq -c --arg f "$todos_field" '.[$f]' 2>/dev/null || true)
 
     # Skip if no TodoWrite calls or empty/null result
     [[ -z "$todo_json" || "$todo_json" == "null" ]] && return 0
@@ -618,13 +645,12 @@ detect_and_warn_missing_handoff() {
     fi
     [[ -n "$handoff_exists" ]] && return 0
 
-    # Count unique file edits to detect major work
+    # Use cached counts for major work detection
     local edit_count
-    edit_count=$(jq -rs '[.[].message.content[]? | select(.type == "tool_use" and .name == "Edit") | .input.file_path] | unique | length' "$transcript_path" 2>/dev/null || echo "0")
+    edit_count=$(echo "$TRANSCRIPT_CACHE" | jq -r '.edit_count // 0' 2>/dev/null || echo "0")
 
-    # Count TodoWrite items
     local todo_count
-    todo_count=$(jq -s '[.[].message.content[]? | select(.type == "tool_use" and .name == "TodoWrite")] | length' "$transcript_path" 2>/dev/null || echo "0")
+    todo_count=$(echo "$TRANSCRIPT_CACHE" | jq -r '.todowrite_count // 0' 2>/dev/null || echo "0")
 
     # Warning threshold: 4+ file edits OR 3+ TodoWrite calls without handoff
     if [[ $edit_count -ge 4 || $todo_count -ge 3 ]]; then
@@ -664,8 +690,13 @@ main() {
     local last_timestamp=""
     [[ -f "$state_file" ]] && last_timestamp=$(cat "$state_file")
 
-    # Process AI LESSON: patterns (adds new AI-generated lessons)
+    # Parse transcript ONCE and cache all data (replaces 12+ jq calls)
     local phase_start=$(get_ms)
+    parse_transcript_once "$transcript_path" "$last_timestamp"
+    log_phase "parse_transcript" "$phase_start"
+
+    # Process AI LESSON: patterns (adds new AI-generated lessons)
+    phase_start=$(get_ms)
     process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
     log_phase "process_lessons" "$phase_start"
 
@@ -683,24 +714,15 @@ main() {
     # Warn if major work detected without handoff
     detect_and_warn_missing_handoff "$transcript_path" "$project_root"
 
-    # Process entries newer than checkpoint
-    # Filter by timestamp, extract citations from assistant messages
+    # Extract citations from cached assistant texts
+    local texts_field="assistant_texts"
+    [[ -n "$last_timestamp" ]] && texts_field="assistant_texts_new"
     local citations=""
-    if [[ -z "$last_timestamp" ]]; then
-        # First run: process all assistant messages
-        citations=$(jq -r 'select(.type == "assistant") |
-            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -oE '\[[LS][0-9]{3}\]' | sort -u || true)
-    else
-        # Incremental: only entries after checkpoint
-        citations=$(jq -r --arg ts "$last_timestamp" '
-            select(.type == "assistant" and .timestamp > $ts) |
-            .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null | \
-            grep -oE '\[[LS][0-9]{3}\]' | sort -u || true)
-    fi
+    citations=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$texts_field" '.[$f][]' 2>/dev/null | \
+        grep -oE '\[[LS][0-9]{3}\]' | sort -u || true)
 
-    # Get latest timestamp for checkpoint update
-    local latest_ts=$(jq -r '.timestamp // empty' "$transcript_path" 2>/dev/null | tail -1)
+    # Get latest timestamp from cache
+    local latest_ts=$(echo "$TRANSCRIPT_CACHE" | jq -r '.latest_timestamp // ""' 2>/dev/null)
 
     # Update checkpoint even if no citations (to advance the checkpoint)
     if [[ -z "$citations" ]]; then
@@ -711,8 +733,8 @@ main() {
     # Filter out lesson listings (ID followed by star rating bracket)
     # Real citations: "[L010]:" or "[L010]," (no star bracket)
     # Listings: "[L010] [*****" (ID followed by star rating)
-    # Cache all text to avoid running jq per-citation
-    local all_text=$(jq -r '.message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null || true)
+    # Use cached text (all assistant texts joined with newlines)
+    local all_text=$(echo "$TRANSCRIPT_CACHE" | jq -r '.assistant_texts[]' 2>/dev/null || true)
     local filtered_citations=""
     while IFS= read -r cite; do
         [[ -z "$cite" ]] && continue
