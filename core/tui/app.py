@@ -86,6 +86,41 @@ except ImportError:
     from .transcript_reader import TranscriptReader, TranscriptSummary
 
 
+def _get_lessons_manager():
+    """Create and return a LessonsManager instance.
+
+    Handles fallback import paths for both development (core.manager)
+    and installed (manager) contexts.
+    """
+    try:
+        from core.manager import LessonsManager
+    except ImportError:
+        from manager import LessonsManager
+
+    # Get lessons base directory
+    base_path = (
+        os.environ.get("CLAUDE_RECALL_BASE")
+        or os.environ.get("RECALL_BASE")
+        or os.environ.get("LESSONS_BASE")
+    )
+    lessons_base = Path(base_path) if base_path else Path.home() / ".config" / "claude-recall"
+
+    # Get project root from environment or find git root
+    project_root = os.environ.get("PROJECT_DIR")
+    if project_root:
+        project_root = Path(project_root)
+    else:
+        project_root = Path.cwd()
+        while project_root != project_root.parent:
+            if (project_root / ".git").exists():
+                break
+            project_root = project_root.parent
+        else:
+            project_root = Path.cwd()
+
+    return LessonsManager(lessons_base, project_root)
+
+
 # Textual Rich markup colors for event types
 EVENT_COLORS = {
     "session_start": "cyan",
@@ -647,9 +682,7 @@ class StatusSelectScreen(ModalScreen[str]):
     def _select_status(self, status: str) -> None:
         """Apply status change and dismiss."""
         try:
-            from core.lessons import LessonsManager
-
-            mgr = LessonsManager()
+            mgr = _get_lessons_manager()
             mgr.handoff_update_status(self.handoff_id, status)
             self.app.notify(f"Status updated to: {status}")
             self.dismiss(f"status:{status}")
@@ -711,9 +744,7 @@ class PhaseSelectScreen(ModalScreen[str]):
     def _select_phase(self, phase: str) -> None:
         """Apply phase change and dismiss."""
         try:
-            from core.lessons import LessonsManager
-
-            mgr = LessonsManager()
+            mgr = _get_lessons_manager()
             mgr.handoff_update_phase(self.handoff_id, phase)
             self.app.notify(f"Phase updated to: {phase}")
             self.dismiss(f"phase:{phase}")
@@ -780,9 +811,7 @@ class AgentSelectScreen(ModalScreen[str]):
     def _select_agent(self, agent: str) -> None:
         """Apply agent change and dismiss."""
         try:
-            from core.lessons import LessonsManager
-
-            mgr = LessonsManager()
+            mgr = _get_lessons_manager()
             mgr.handoff_update_agent(self.handoff_id, agent)
             self.app.notify(f"Agent updated to: {agent}")
             self.dismiss(f"agent:{agent}")
@@ -1523,8 +1552,7 @@ class RecallMonitorApp(App):
         if result == "complete":
             # Complete the handoff
             try:
-                from core.lessons import LessonsManager
-
+                LessonsManager = _get_lessons_manager()
                 mgr = LessonsManager()
                 mgr.handoff_complete(handoff_id)
                 self.notify(f"Handoff {handoff_id} completed")
@@ -1534,8 +1562,7 @@ class RecallMonitorApp(App):
         elif result == "archive":
             # Archive the handoff
             try:
-                from core.lessons import LessonsManager
-
+                LessonsManager = _get_lessons_manager()
                 mgr = LessonsManager()
                 mgr.handoff_archive(handoff_id)
                 self.notify(f"Handoff {handoff_id} archived")

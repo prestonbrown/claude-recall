@@ -764,6 +764,46 @@ class TestAgentSelection:
 # ============================================================================
 
 
+class TestLessonsManagerImport:
+    """Tests for the LessonsManager import fallback in the TUI.
+
+    The TUI needs to import LessonsManager but must work in both:
+    - Development context: `from core.manager import LessonsManager`
+    - Installed context: `from manager import LessonsManager`
+
+    This is accomplished via a helper function that handles the import
+    and instantiation with proper arguments.
+    """
+
+    def test_get_lessons_manager_helper_exists(self):
+        """The _get_lessons_manager helper function should exist."""
+        from core.tui.app import _get_lessons_manager
+
+        assert callable(_get_lessons_manager)
+
+    def test_get_lessons_manager_returns_instance(self, temp_project_with_handoffs):
+        """_get_lessons_manager should return a LessonsManager instance."""
+        from core.tui.app import _get_lessons_manager
+
+        mgr = _get_lessons_manager()
+        assert mgr is not None
+        # Verify it's a LessonsManager instance by checking for expected methods
+        assert hasattr(mgr, "handoff_complete")
+        assert hasattr(mgr, "handoff_archive")
+        assert hasattr(mgr, "handoff_update_status")
+        assert hasattr(mgr, "handoff_update_phase")
+        assert hasattr(mgr, "handoff_update_agent")
+
+    def test_get_lessons_manager_methods_callable(self, temp_project_with_handoffs):
+        """LessonsManager instance methods should be callable."""
+        from core.tui.app import _get_lessons_manager
+
+        mgr = _get_lessons_manager()
+        # Verify the methods are bound and callable
+        assert callable(mgr.handoff_complete)
+        assert callable(mgr.handoff_archive)
+
+
 class TestCompleteAction:
     """Tests for the complete action."""
 
