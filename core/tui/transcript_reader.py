@@ -566,6 +566,53 @@ class TranscriptReader:
 
         return sessions[:limit]
 
+    def get_session_origin_fast(self, session_id: str) -> str:
+        """
+        Get session origin by direct file lookup.
+
+        O(1) file read instead of O(N) session enumeration.
+
+        Args:
+            session_id: The session UUID to look up
+
+        Returns:
+            Origin type: "User", "Explore", "Plan", "General", "System", or "Unknown"
+        """
+        # Glob for the session file across all projects
+        pattern = f"*/{session_id}.jsonl"
+        matches = list(self.projects_dir.glob(pattern))
+
+        if not matches:
+            return "Unknown"
+
+        session_path = matches[0]
+        if session_path.is_symlink():
+            return "Unknown"
+
+        # Read only enough to get first user prompt
+        first_prompt = ""
+        try:
+            with open(session_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if data.get("type") == "user":
+                        content = data.get("message", {}).get("content", "")
+                        if isinstance(content, str):
+                            first_prompt = content[:200]
+                        elif isinstance(content, list):
+                            first_prompt = _extract_text_content(content)[:200]
+                        break
+        except OSError:
+            return "Unknown"
+
+        return detect_origin(first_prompt)
+
     def load_session(
         self, session_path: Path, max_messages: int = 5000
     ) -> List[TranscriptMessage]:

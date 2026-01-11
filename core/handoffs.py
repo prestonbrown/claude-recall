@@ -2704,14 +2704,10 @@ Consider extracting lessons about:
 
         try:
             reader = TranscriptReader()
-            sessions = reader.list_all_sessions(limit=500)
-            for session in sessions:
-                if session.session_id == session_id:
-                    return session.origin
-        except Exception:
-            pass
-
-        return "Unknown"
+            return reader.get_session_origin_fast(session_id)
+        except (OSError, ValueError) as e:
+            # Expected failures when reading session files
+            return "Unknown"
 
     def parse_transcript_for_handoffs(
         self,

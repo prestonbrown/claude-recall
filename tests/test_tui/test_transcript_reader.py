@@ -1787,3 +1787,314 @@ class TestFastInitialLoad:
             reader.list_all_sessions_fast(max_age_hours=9999)
 
         assert len(open_calls) == 0, f"Expected cache hit, but files were opened: {open_calls}"
+
+
+# ============================================================================
+# get_session_origin_fast() Tests (Optimization Method)
+# ============================================================================
+
+
+class TestGetSessionOriginFast:
+    """Test the get_session_origin_fast() optimization method."""
+
+    def test_returns_correct_origin_for_existing_session(self, tmp_path):
+        """Should return correct origin for a valid session ID."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        # Create session with "explore" pattern in first prompt
+        session_file = project_dir / "explore-session.jsonl"
+        with open(session_file, "w") as f:
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "2024-01-01T00:00:00Z",
+                "message": {"content": "Explore the codebase"}
+            }) + "\n")
+
+        reader = TranscriptReader(claude_home=claude_home)
+        assert reader.get_session_origin_fast("explore-session") == "Explore"
+
+    def test_returns_unknown_for_nonexistent_session(self, tmp_path):
+        """Should return 'Unknown' for session IDs that don't exist."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        reader = TranscriptReader(claude_home=claude_home)
+        assert reader.get_session_origin_fast("nonexistent-session-id") == "Unknown"
+
+    def test_returns_unknown_for_empty_session_id(self, tmp_path):
+        """Should return 'Unknown' for empty session ID."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        reader = TranscriptReader(claude_home=claude_home)
+        assert reader.get_session_origin_fast("") == "Unknown"
+
+    def test_handles_malformed_jsonl(self, tmp_path):
+        """Should handle corrupted JSONL files gracefully."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        corrupt_file = project_dir / "corrupt-session.jsonl"
+        corrupt_file.write_text("not valid json\n{broken\n")
+
+        reader = TranscriptReader(claude_home=claude_home)
+        assert reader.get_session_origin_fast("corrupt-session") == "Unknown"
+
+    def test_handles_file_with_no_user_messages(self, tmp_path):
+        """Should return 'Unknown' if file has no user messages."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        session_file = project_dir / "no-user-session.jsonl"
+        with open(session_file, "w") as f:
+            f.write(json.dumps({"type": "assistant", "message": {}}) + "\n")
+
+        reader = TranscriptReader(claude_home=claude_home)
+        assert reader.get_session_origin_fast("no-user-session") == "Unknown"
+
+    def test_handles_content_as_list(self, tmp_path):
+        """Should handle message content as list (multi-part messages)."""
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        session_file = project_dir / "list-content-session.jsonl"
+        with open(session_file, "w") as f:
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "2024-01-01T00:00:00Z",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Explore the codebase"}
+                    ]
+                }
+            }) + "\n")
+
+        reader = TranscriptReader(claude_home=claude_home)
+        assert reader.get_session_origin_fast("list-content-session") == "Explore"
+
+
+# ============================================================================
+# get_session_origin_fast() Performance Benchmarks
+# ============================================================================
+
+
+class TestGetSessionOriginFastPerformance:
+    """Performance benchmarks for get_session_origin_fast().
+
+    These tests measure actual execution time and warn/fail if performance regresses.
+    Thresholds are intentionally generous to avoid flaky CI failures while still
+    catching significant regressions.
+    """
+
+    def test_lookup_completes_under_100ms(self, tmp_path):
+        """Session origin lookup should complete in under 100ms."""
+        import time
+        import warnings
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        # Create a session file
+        session_file = project_dir / "perf-test-session.jsonl"
+        with open(session_file, "w") as f:
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "2024-01-01T00:00:00Z",
+                "message": {"content": "Explore the codebase"}
+            }) + "\n")
+
+        reader = TranscriptReader(claude_home=claude_home)
+
+        start = time.perf_counter()
+        result = reader.get_session_origin_fast("perf-test-session")
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        assert result == "Explore"  # Sanity check
+
+        # Warn if slow, fail if very slow
+        if elapsed_ms > 100:
+            warnings.warn(f"get_session_origin_fast took {elapsed_ms:.1f}ms (threshold: 100ms)")
+        if elapsed_ms > 1000:
+            pytest.fail(f"get_session_origin_fast too slow: {elapsed_ms:.1f}ms (max: 1000ms)")
+
+    def test_nonexistent_session_lookup_fast(self, tmp_path):
+        """Looking up nonexistent session should also be fast."""
+        import time
+        import warnings
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        reader = TranscriptReader(claude_home=claude_home)
+
+        start = time.perf_counter()
+        result = reader.get_session_origin_fast("nonexistent-session")
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        assert result == "Unknown"
+
+        if elapsed_ms > 100:
+            warnings.warn(f"Nonexistent session lookup took {elapsed_ms:.1f}ms (threshold: 100ms)")
+        if elapsed_ms > 1000:
+            pytest.fail(f"Nonexistent session lookup too slow: {elapsed_ms:.1f}ms (max: 1000ms)")
+
+    def test_scales_with_multiple_projects(self, tmp_path):
+        """Performance should not degrade significantly with many projects."""
+        import time
+        import warnings
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        projects_dir = claude_home / "projects"
+
+        # Create 20 project directories with sessions
+        for i in range(20):
+            project_dir = projects_dir / f"-project-{i}"
+            project_dir.mkdir(parents=True)
+            # Add some sessions to each project
+            for j in range(5):
+                session_file = project_dir / f"session-{i}-{j}.jsonl"
+                with open(session_file, "w") as f:
+                    f.write(json.dumps({
+                        "type": "user",
+                        "timestamp": "2024-01-01T00:00:00Z",
+                        "message": {"content": f"User prompt {i}-{j}"}
+                    }) + "\n")
+
+        # Add target session in the last project
+        target_project = projects_dir / "-project-19"
+        target_file = target_project / "target-session.jsonl"
+        with open(target_file, "w") as f:
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "2024-01-01T00:00:00Z",
+                "message": {"content": "Explore the codebase"}
+            }) + "\n")
+
+        reader = TranscriptReader(claude_home=claude_home)
+
+        start = time.perf_counter()
+        result = reader.get_session_origin_fast("target-session")
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        assert result == "Explore"
+
+        # With 20 projects and 100 total sessions, should still be fast
+        if elapsed_ms > 200:
+            warnings.warn(f"Multi-project lookup took {elapsed_ms:.1f}ms (threshold: 200ms)")
+        if elapsed_ms > 2000:
+            pytest.fail(f"Multi-project lookup too slow: {elapsed_ms:.1f}ms (max: 2000ms)")
+
+    def test_repeated_lookups_are_fast(self, tmp_path):
+        """Repeated lookups of same session should be consistently fast."""
+        import time
+        import warnings
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        session_file = project_dir / "repeat-test-session.jsonl"
+        with open(session_file, "w") as f:
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "2024-01-01T00:00:00Z",
+                "message": {"content": "Implement the feature"}
+            }) + "\n")
+
+        reader = TranscriptReader(claude_home=claude_home)
+
+        # Warm up with first lookup
+        reader.get_session_origin_fast("repeat-test-session")
+
+        # Time 10 repeated lookups
+        timings = []
+        for _ in range(10):
+            start = time.perf_counter()
+            result = reader.get_session_origin_fast("repeat-test-session")
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            timings.append(elapsed_ms)
+            assert result == "General"  # Sanity check
+
+        avg_ms = sum(timings) / len(timings)
+        max_ms = max(timings)
+
+        # Average should be well under threshold, max should not spike
+        if avg_ms > 50:
+            warnings.warn(f"Repeated lookup avg: {avg_ms:.1f}ms (threshold: 50ms)")
+        if max_ms > 200:
+            warnings.warn(f"Repeated lookup max: {max_ms:.1f}ms (threshold: 200ms)")
+        if avg_ms > 500:
+            pytest.fail(f"Repeated lookups too slow (avg): {avg_ms:.1f}ms (max: 500ms)")
+
+    def test_large_session_file_lookup(self, tmp_path):
+        """Lookup should be fast even with larger session files.
+
+        The get_session_origin_fast() method should only read the first few lines
+        to find the first user message, not parse the entire file.
+        """
+        import time
+        import warnings
+        from core.tui.transcript_reader import TranscriptReader
+
+        claude_home = tmp_path / ".claude"
+        project_dir = claude_home / "projects" / "-test"
+        project_dir.mkdir(parents=True)
+
+        # Create a session file with many messages (simulating a long session)
+        session_file = project_dir / "large-session.jsonl"
+        with open(session_file, "w") as f:
+            # First message determines origin
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "2024-01-01T00:00:00Z",
+                "message": {"content": "Plan the implementation approach"}
+            }) + "\n")
+            # Add 100 more messages to make the file larger
+            for i in range(100):
+                f.write(json.dumps({
+                    "type": "assistant",
+                    "timestamp": f"2024-01-01T00:{i:02d}:00Z",
+                    "message": {
+                        "content": [{"type": "text", "text": f"Response {i} " * 100}],
+                        "usage": {"input_tokens": 1000, "output_tokens": 500}
+                    }
+                }) + "\n")
+
+        reader = TranscriptReader(claude_home=claude_home)
+
+        start = time.perf_counter()
+        result = reader.get_session_origin_fast("large-session")
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        assert result == "Plan"
+
+        # Should still be fast despite large file (only reads first few lines)
+        if elapsed_ms > 100:
+            warnings.warn(f"Large file lookup took {elapsed_ms:.1f}ms (threshold: 100ms)")
+        if elapsed_ms > 1000:
+            pytest.fail(f"Large file lookup too slow: {elapsed_ms:.1f}ms (max: 1000ms)")
