@@ -291,10 +291,10 @@ HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
   2. If working without TodoWrite, output: HANDOFF: title
   MAJOR = new feature, 4+ files, architectural, integration, refactoring
   MINOR = single-file fix, config, docs (no handoff needed)
-  COMPLETION: When all todos done:
-    - If code changed, consider /review before completing
-    - If review passes (or no code changes): HANDOFF COMPLETE <id>
-    - Then commit your changes"
+  COMPLETION: When all todos done in this session:
+    - If code changed, run /review
+    - Commit your changes (auto-completes the handoff)
+    - Or manually: HANDOFF COMPLETE <id>"
 
         # Add todo continuation if available
         if [[ -n "$todo_continuation" ]]; then

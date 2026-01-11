@@ -2478,8 +2478,38 @@ class TestHandoffSyncTodos:
         manager.handoff_sync_todos(todos)
         handoff = manager.handoff_get(handoff_id)
 
-        # All done, should be ready for lesson review (not auto-completed)
+        # All done but no commit step - should be ready for lesson review (not auto-completed)
         assert handoff.status == "ready_for_review"
+
+    def test_sync_all_completed_with_commit_auto_completes(self, manager: LessonsManager) -> None:
+        """All completed todos with a commit step should auto-complete the handoff."""
+        handoff_id = manager.handoff_add("Test approach")
+
+        todos = [
+            {"content": "Implement feature", "status": "completed", "activeForm": "Implementing"},
+            {"content": "Run tests", "status": "completed", "activeForm": "Running tests"},
+            {"content": "Commit changes", "status": "completed", "activeForm": "Committing"},
+        ]
+
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
+
+        # Has commit step - should auto-complete
+        assert handoff.status == "completed"
+
+    def test_sync_commit_detection_case_insensitive(self, manager: LessonsManager) -> None:
+        """Commit detection should be case-insensitive."""
+        handoff_id = manager.handoff_add("Test approach")
+
+        todos = [
+            {"content": "Fix bug", "status": "completed", "activeForm": "Fixing"},
+            {"content": "COMMIT the fix", "status": "completed", "activeForm": "Committing"},
+        ]
+
+        manager.handoff_sync_todos(todos)
+        handoff = manager.handoff_get(handoff_id)
+
+        assert handoff.status == "completed"
 
     def test_sync_in_progress_todo_updates_status(self, manager: LessonsManager) -> None:
         """In progress todo should move status to in_progress."""

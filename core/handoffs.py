@@ -915,7 +915,7 @@ class HandoffsMixin:
         )
 
     # Patterns that indicate work is complete (must be at start, case-insensitive)
-    COMPLETION_PATTERNS = ("final", "done", "complete", "finished")
+    COMPLETION_PATTERNS = ("final", "done", "complete", "finished", "commit")
 
     # Keywords that indicate implementing phase (case-insensitive)
     IMPLEMENTING_KEYWORDS = (
@@ -1873,8 +1873,16 @@ Consider extracting lessons about:
 
         # Update status based on todo states
         if completed and not pending and not in_progress:
-            # All todos completed, nothing pending - ready for lesson review
-            self.handoff_update_status(handoff_id, "ready_for_review")
+            # All todos completed - auto-complete if commit step succeeded
+            has_commit = any(
+                "commit" in t.get("content", "").lower()
+                for t in completed
+            )
+            if has_commit:
+                self.handoff_update_status(handoff_id, "completed")
+            else:
+                # No commit step - ready for lesson review
+                self.handoff_update_status(handoff_id, "ready_for_review")
         elif completed or in_progress:
             # Work has been done or is in progress - at least in_progress
             self.handoff_update_status(handoff_id, "in_progress")
