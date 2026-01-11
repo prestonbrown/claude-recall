@@ -685,7 +685,13 @@ def main():
 
             elif args.handoff_command == "process-transcript":
                 # Read transcript JSON from stdin, parse for handoffs, and process
+                import time as time_module
+                debug_timing = os.environ.get("CLAUDE_RECALL_DEBUG", "0") >= "1"
+
+                t0 = time_module.perf_counter()
                 transcript_data = json_module.loads(sys.stdin.read())
+                t1 = time_module.perf_counter()
+
                 if not isinstance(transcript_data, dict):
                     print("Error: Expected JSON object with assistant_texts array", file=sys.stderr)
                     sys.exit(1)
@@ -696,13 +702,19 @@ def main():
                     transcript_data,
                     session_id=session_id,
                 )
+                t2 = time_module.perf_counter()
 
                 if operations:
                     # Process all operations in batch
                     result = manager.handoff_batch_process(operations)
+                    t3 = time_module.perf_counter()
+                    if debug_timing:
+                        print(f"[timing] json_parse={int((t1-t0)*1000)}ms parse_transcript={int((t2-t1)*1000)}ms batch_process={int((t3-t2)*1000)}ms", file=sys.stderr)
                     print(json_module.dumps(result))
                 else:
                     # No operations found
+                    if debug_timing:
+                        print(f"[timing] json_parse={int((t1-t0)*1000)}ms parse_transcript={int((t2-t1)*1000)}ms (no ops)", file=sys.stderr)
                     print(json_module.dumps({"results": [], "last_id": None}))
 
         elif args.command == "watch":

@@ -168,6 +168,14 @@ cleanup_orphaned_checkpoints() {
 
     [[ -d "$STATE_DIR" ]] || return 0
 
+    # Only run cleanup 10% of the time to avoid performance impact
+    # Each find command takes ~30-50ms with many sessions
+    (( RANDOM % 10 != 0 )) && return 0
+
+    # Build a list of existing sessions ONCE (much faster than per-file find)
+    local existing_sessions
+    existing_sessions=$(find ~/.claude/projects -name "*.jsonl" -type f 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.jsonl$//' | sort -u)
+
     for state_file in "$STATE_DIR"/*; do
         [[ -f "$state_file" ]] || continue
         [[ $cleaned -ge $max_cleanup ]] && break
@@ -175,8 +183,8 @@ cleanup_orphaned_checkpoints() {
         local session_id=$(basename "$state_file")
         local found=false
 
-        # Check if transcript exists in Claude's project directories
-        if find ~/.claude/projects -name "${session_id}.jsonl" -type f 2>/dev/null | grep -q .; then
+        # Check if session exists in our pre-built list (O(1) with grep -q)
+        if echo "$existing_sessions" | grep -qx "$session_id"; then
             found=true
         fi
 
@@ -339,6 +347,10 @@ process_handoffs() {
     local session_id="$4"
     local processed_count=0
 
+    # Debug timing (only if debug enabled)
+    local t0 t1 t2 t3
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && t0=$(python3 -c 'import time; print(int(time.time()*1000))')
+
     # Skip if no Python manager available
     [[ ! -f "$PYTHON_MANAGER" ]] && return 0
 
@@ -349,13 +361,22 @@ process_handoffs() {
     local session_arg=""
     [[ -n "$session_id" ]] && session_arg="--session-id $session_id"
 
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && t1=$(python3 -c 'import time; print(int(time.time()*1000))')
+
     # Single Python call parses patterns, handles sub-agent blocking, and processes all operations
     local result
     result=$(echo "$TRANSCRIPT_CACHE" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
         python3 "$PYTHON_MANAGER" handoff process-transcript $session_arg 2>&1 || true)
 
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && t2=$(python3 -c 'import time; print(int(time.time()*1000))')
+
     # Count successful operations
     processed_count=$(echo "$result" | jq '[.results[]? | select(.ok == true)] | length' 2>/dev/null || echo 0)
+
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && {
+        t3=$(python3 -c 'import time; print(int(time.time()*1000))')
+        echo "[timing:process_handoffs] setup=$((t1-t0))ms python=$((t2-t1))ms jq=$((t3-t2))ms" >&2
+    }
 
     (( processed_count > 0 )) && echo "[handoffs] $processed_count handoff command(s) processed" >&2
 }

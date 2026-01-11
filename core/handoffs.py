@@ -2732,6 +2732,11 @@ Consider extracting lessons about:
                 {"op": "update", "id": "...", "status|phase|agent|desc|tried|next|checkpoint|blocked_by": ...}
                 {"op": "complete", "id": "..."}
         """
+        import time as time_module
+        import os
+        debug_timing = os.environ.get("CLAUDE_RECALL_DEBUG", "0") >= "1"
+        t_start = time_module.perf_counter()
+
         operations = []
 
         # Get text arrays from transcript data
@@ -2745,10 +2750,15 @@ Consider extracting lessons about:
 
         # Detect if this is a sub-agent session
         is_sub_agent = False
+        t_origin_start = time_module.perf_counter()
         if session_id:
             origin = self._detect_session_origin(session_id)
             if origin in self.SUB_AGENT_ORIGINS:
                 is_sub_agent = True
+        t_origin_end = time_module.perf_counter()
+        if debug_timing:
+            import sys
+            print(f"[timing] _detect_session_origin={int((t_origin_end-t_origin_start)*1000)}ms", file=sys.stderr)
 
         # Handoff ID pattern (hf-1234567 or legacy A001 format)
         handoff_id_pattern = r"(hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)"
