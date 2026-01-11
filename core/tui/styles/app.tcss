@@ -356,3 +356,27 @@ StatusSelectScreen, PhaseSelectScreen, AgentSelectScreen {
 .handoff-status-completed {
     color: cyan;
 }
+
+/* Loading Modal */
+LoadingScreen {
+    align: center middle;
+}
+
+#loading-modal {
+    width: 50;
+    height: auto;
+    border: solid $primary;
+    background: $surface;
+    padding: 2 4;
+}
+
+#loading-modal LoadingIndicator {
+    height: 3;
+    width: 100%;
+}
+
+#loading-status {
+    text-align: center;
+    margin-top: 1;
+    color: $text-muted;
+}

@@ -58,6 +58,7 @@ from textual.widgets import (
     Footer,
     Header,
     Input,
+    LoadingIndicator,
     OptionList,
     RichLog,
     Static,
@@ -820,6 +821,26 @@ class AgentSelectScreen(ModalScreen[str]):
             self.dismiss("")
 
 
+class LoadingScreen(ModalScreen):
+    """Full-screen loading modal shown during startup."""
+
+    BINDINGS = [
+        # No escape binding - must wait for loading
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="loading-modal"):
+            yield Static("[bold]Claude Recall[/bold]", classes="modal-title")
+            yield LoadingIndicator()
+            yield Static("Initializing...", id="loading-status")
+
+    def update_status(self, text: str) -> None:
+        self.query_one("#loading-status", Static).update(text)
+
+
 class RecallMonitorApp(App):
     """
     Main Textual application for claude-recall monitoring.
@@ -1005,41 +1026,68 @@ class RecallMonitorApp(App):
 
     def on_mount(self) -> None:
         """Initialize on app mount."""
-        # Load initial data with error handling
-        try:
-            self._load_events()
-        except Exception as e:
-            self.notify(f"Error loading events: {e}", severity="error")
+        self.push_screen(LoadingScreen())
+        self._load_all_async()
+
+    @work(exclusive=True)
+    async def _load_all_async(self) -> None:
+        """Load all data, updating loading status.
+
+        Note: We avoid asyncio.to_thread() here because the loading methods
+        perform Textual widget operations (e.g., event_log.write()) which must
+        run on the main thread. Instead, we call methods directly and yield
+        control to the event loop between steps using asyncio.sleep(0).
+        """
+        loading = self.screen  # The LoadingScreen we just pushed
 
         try:
-            self._update_health()
-        except Exception as e:
-            self.notify(f"Error updating health: {e}", severity="error")
+            loading.update_status("Loading events...")
+            await asyncio.sleep(0)  # Yield to event loop for UI updates
+            try:
+                self._load_events()
+            except Exception as e:
+                self.notify(f"Error loading events: {e}", severity="error")
 
-        try:
-            self._update_state()
-        except Exception as e:
-            self.notify(f"Error updating state: {e}", severity="error")
+            loading.update_status("Computing health stats...")
+            await asyncio.sleep(0)
+            try:
+                self._update_health()
+            except Exception as e:
+                self.notify(f"Error updating health: {e}", severity="error")
 
-        try:
-            self._setup_session_list()
-        except Exception as e:
-            self.notify(f"Error setting up sessions: {e}", severity="error")
+            loading.update_status("Loading state...")
+            await asyncio.sleep(0)
+            try:
+                self._update_state()
+            except Exception as e:
+                self.notify(f"Error updating state: {e}", severity="error")
 
-        try:
-            self._setup_handoff_list()
-        except Exception as e:
-            self.notify(f"Error setting up handoffs: {e}", severity="error")
+            loading.update_status("Scanning sessions...")
+            await asyncio.sleep(0)
+            try:
+                self._setup_session_list()
+            except Exception as e:
+                self.notify(f"Error setting up sessions: {e}", severity="error")
 
-        try:
-            self._update_charts()
-        except Exception as e:
-            self.notify(f"Error updating charts: {e}", severity="error")
+            loading.update_status("Loading handoffs...")
+            await asyncio.sleep(0)
+            try:
+                self._setup_handoff_list()
+            except Exception as e:
+                self.notify(f"Error setting up handoffs: {e}", severity="error")
 
-        self._update_subtitle()
+            loading.update_status("Generating charts...")
+            await asyncio.sleep(0)
+            try:
+                self._update_charts()
+            except Exception as e:
+                self.notify(f"Error updating charts: {e}", severity="error")
 
-        # Start auto-refresh timer (5 seconds) - must use sync callback
-        self._refresh_timer = self.set_interval(5.0, self._on_refresh_timer)
+        finally:
+            self._update_subtitle()
+            self._refresh_timer = self.set_interval(5.0, self._on_refresh_timer)
+            # Dismiss loading screen
+            self.pop_screen()
 
     def _load_events(self) -> None:
         """Load and display events in the log."""
