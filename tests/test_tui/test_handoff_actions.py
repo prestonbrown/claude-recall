@@ -807,6 +807,67 @@ class TestLessonsManagerImport:
 class TestCompleteAction:
     """Tests for the complete action."""
 
+    def test_get_lessons_manager_not_double_instantiated(
+        self, temp_project_with_handoffs
+    ):
+        """_get_lessons_manager() returns an instance that should be used directly.
+
+        Regression test for bug where LessonsManager was assigned the instance
+        from _get_lessons_manager() then called again like a class:
+            LessonsManager = _get_lessons_manager()  # Returns instance
+            mgr = LessonsManager()  # ERROR: instance is not callable
+
+        The correct pattern is:
+            mgr = _get_lessons_manager()  # Use instance directly
+        """
+        from core.tui.app import _get_lessons_manager
+
+        # Get the manager instance
+        mgr = _get_lessons_manager()
+
+        # The instance should NOT be callable (it's not a class)
+        assert not callable(mgr), (
+            "_get_lessons_manager() should return an instance, not a class. "
+            "Code that does 'LessonsManager = _get_lessons_manager(); mgr = LessonsManager()' "
+            "will fail because the instance is not callable."
+        )
+
+        # The instance should have the expected methods
+        assert hasattr(mgr, "handoff_complete")
+        assert hasattr(mgr, "handoff_archive")
+
+    def test_handle_handoff_action_code_pattern(
+        self, temp_project_with_handoffs
+    ):
+        """Verify handle_handoff_action doesn't double-instantiate LessonsManager.
+
+        This test checks the actual source code to ensure the buggy pattern:
+            LessonsManager = _get_lessons_manager()
+            mgr = LessonsManager()
+
+        has been fixed to:
+            mgr = _get_lessons_manager()
+        """
+        import inspect
+        from core.tui.app import RecallMonitorApp
+
+        # Get the source code of _on_handoff_action_result
+        source = inspect.getsource(RecallMonitorApp._on_handoff_action_result)
+
+        # Check for the buggy pattern: assigning _get_lessons_manager() to a variable
+        # then calling that variable
+        buggy_pattern_found = (
+            "LessonsManager = _get_lessons_manager()" in source
+            and "mgr = LessonsManager()" in source
+        )
+
+        assert not buggy_pattern_found, (
+            "_on_handoff_action_result contains buggy pattern: "
+            "'LessonsManager = _get_lessons_manager()' followed by 'mgr = LessonsManager()'. "
+            "This causes 'LessonsManager is not callable' error. "
+            "Fix: Use 'mgr = _get_lessons_manager()' directly."
+        )
+
     @pytest.mark.asyncio
     async def test_complete_action_marks_handoff_completed(
         self, temp_project_with_handoffs

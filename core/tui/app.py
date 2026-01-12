@@ -1038,7 +1038,25 @@ class RecallMonitorApp(App):
         run on the main thread. Instead, we call methods directly and yield
         control to the event loop between steps using asyncio.sleep(0).
         """
-        loading = self.screen  # The LoadingScreen we just pushed
+        # Wait for the LoadingScreen to be fully composed
+        # The screen may not be mounted yet when the worker starts
+        for _ in range(50):  # Max 500ms wait
+            await asyncio.sleep(0.01)
+            if isinstance(self.screen, LoadingScreen) and self.screen.is_mounted:
+                break
+
+        loading = self.screen
+        if not isinstance(loading, LoadingScreen):
+            # Screen was dismissed or replaced, skip loading UI updates
+            self._load_events()
+            self._update_health()
+            self._update_state()
+            self._setup_session_list()
+            self._setup_handoff_list()
+            self._update_charts()
+            self._update_subtitle()
+            self._refresh_timer = self.set_interval(5.0, self._on_refresh_timer)
+            return
 
         try:
             loading.update_status("Loading events...")
@@ -1600,8 +1618,7 @@ class RecallMonitorApp(App):
         if result == "complete":
             # Complete the handoff
             try:
-                LessonsManager = _get_lessons_manager()
-                mgr = LessonsManager()
+                mgr = _get_lessons_manager()
                 mgr.handoff_complete(handoff_id)
                 self.notify(f"Handoff {handoff_id} completed")
             except Exception as e:
@@ -1610,8 +1627,7 @@ class RecallMonitorApp(App):
         elif result == "archive":
             # Archive the handoff
             try:
-                LessonsManager = _get_lessons_manager()
-                mgr = LessonsManager()
+                mgr = _get_lessons_manager()
                 mgr.handoff_archive(handoff_id)
                 self.notify(f"Handoff {handoff_id} archived")
             except Exception as e:

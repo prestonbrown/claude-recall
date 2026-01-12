@@ -297,9 +297,10 @@ SessionDetailModal {
     margin-top: 1;
 }
 
-/* Handoff Action Modal */
+/* Handoff Action Modal - no background dimming */
 HandoffActionScreen {
     align: center middle;
+    background: transparent;
 }
 
 #handoff-action-modal {
@@ -311,9 +312,10 @@ HandoffActionScreen {
     padding: 1 2;
 }
 
-/* Status/Phase/Agent Select Modals */
+/* Status/Phase/Agent Select Modals - no background dimming */
 StatusSelectScreen, PhaseSelectScreen, AgentSelectScreen {
     align: center middle;
+    background: transparent;
 }
 
 #status-select-modal, #phase-select-modal, #agent-select-modal {
