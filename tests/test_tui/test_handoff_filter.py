@@ -838,3 +838,42 @@ class TestHandoffFilterMatching:
         # Text doesn't match
         parsed = app._parse_handoff_filter("status:in_progress Database")
         assert app._matches_filter(handoff, parsed) is False
+
+
+# --- Tests for Filter Status Visibility ---
+
+
+class TestHandoffFilterStatusVisibility:
+    """Tests for filter status indicator visibility (display property)."""
+
+    @pytest.mark.asyncio
+    async def test_status_hidden_when_showing_all(self, mock_project_with_varied_handoffs):
+        """Status indicator should be hidden (display=False) when no filter active."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("f6")
+            await pilot.pause()
+
+            # Explicitly call to ensure the display property is set
+            app._update_filter_status(5, 5)  # All visible
+
+            status = app.query_one("#handoff-filter-status", Static)
+            assert status.display is False, "Status should be hidden when showing all"
+
+    @pytest.mark.asyncio
+    async def test_status_visible_when_filtering(self, mock_project_with_varied_handoffs):
+        """Status indicator should be visible when filter hides items."""
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("f6")
+            await pilot.pause()
+
+            # Directly test the method with filtered results
+            app._update_filter_status(2, 5)  # 2 visible of 5 total
+
+            status = app.query_one("#handoff-filter-status", Static)
+            assert status.display is True, "Status should be visible when filtering"

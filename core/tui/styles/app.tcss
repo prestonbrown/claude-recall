@@ -338,6 +338,26 @@ StatusSelectScreen, PhaseSelectScreen, AgentSelectScreen {
     border: solid $primary-darken-2;
 }
 
+/* Filter row */
+.filter-row {
+    width: 100%;
+    height: auto;
+}
+
+.filter-label {
+    width: auto;
+}
+
+#handoff-filter {
+    width: 1fr;
+    margin: 0 1;
+}
+
+#clear-filter {
+    width: 3;
+    min-width: 3;
+}
+
 /* Handoff status colors in DataTable */
 .handoff-status-not-started {
     color: $text-muted;
