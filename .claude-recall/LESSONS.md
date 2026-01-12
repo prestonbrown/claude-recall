@@ -39,8 +39,8 @@
 > In Textual TUI, use OptionList widget instead of Static for modal popup menus. OptionList provides built-in arrow key navigation and Enter selection. Static widgets don't handle keyboard navigation.
 
 
-### [L007] [*----|-----] Double-action popup trigger
-- **Uses**: 1 | **Velocity**: 0.0 | **Learned**: 2026-01-09 | **Last**: 2026-01-09 | **Category**: pattern | **Type**: informational
+### [L007] [*----|+----] Double-action popup trigger
+- **Uses**: 2 | **Velocity**: 1.0 | **Learned**: 2026-01-09 | **Last**: 2026-01-11 | **Category**: pattern | **Type**: informational
 > Track confirmed selection separately from current selection (e.g., _current_handoff_id vs _user_selected_handoff_id). First action confirms selection, second action on same item opens popup. Prevents accidental popup triggers.
 
 

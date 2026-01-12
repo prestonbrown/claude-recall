@@ -121,6 +121,26 @@ Ideas that aren't ready for implementation but worth capturing for later.
 
 ---
 
+## Store Full Datetimes for Handoffs
+
+**Context:** Handoff timestamps currently store only dates (YYYY-MM-DD), not full datetimes. The TUI shows "today" or "yesterday" but can't show what time a handoff was created or updated.
+
+**Problem:** When multiple handoffs happen on the same day, you can't tell which is more recent. The "Updated" column doesn't help distinguish recent activity.
+
+**Idea:** Change handoff data model to store ISO 8601 datetimes:
+- `created`: "2024-01-15T14:30:00" instead of "2024-01-15"
+- `updated`: Same format
+- TUI displays: "today 2:30 PM" or "yesterday 9:15 AM"
+- Use existing `_get_time_format()` to respect user's 12h/24h preference
+
+**Implementation notes:**
+- Update `core/models.py` Handoff dataclass
+- Update `core/handoffs.py` where timestamps are set
+- Update TUI `_format_handoff_date()` to parse and display times
+- Migration: existing date-only values should still parse (add T00:00:00 default)
+
+---
+
 ## Git Commit Integration for Handoffs
 
 **Context:** Commits are the strongest signal of completed work. Currently handoffs don't integrate with git at all.
