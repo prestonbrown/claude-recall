@@ -43,6 +43,103 @@ MAX_MESSAGES = 20
 # Timeout for claude call (seconds)
 CLAUDE_TIMEOUT = 30
 
+# Phrases that indicate a garbage summary from Haiku
+GARBAGE_SUMMARY_PHRASES = [
+    "no conversation occurred",
+    "empty session",
+    "no content to summarize",
+    "nothing to summarize",
+    "conversation is empty",
+    "no work completed",
+]
+
+
+def _format_tool_use(tool_name: str, tool_input: dict) -> str:
+    """Format a tool_use block concisely for context extraction.
+
+    Args:
+        tool_name: Name of the tool (Read, Edit, Bash, etc.)
+        tool_input: Tool input parameters
+
+    Returns:
+        Concise description like "Used Read: file.py" or "Used Bash: git status"
+    """
+    # Extract the most relevant part of the tool input for context
+    if tool_name == "Read":
+        file_path = tool_input.get("file_path", "")
+        if file_path:
+            # Just the filename, not full path
+            filename = Path(file_path).name if "/" in file_path else file_path
+            return f"[Used Read: {filename}]"
+        return "[Used Read]"
+
+    elif tool_name == "Edit":
+        file_path = tool_input.get("file_path", "")
+        if file_path:
+            filename = Path(file_path).name if "/" in file_path else file_path
+            return f"[Used Edit: {filename}]"
+        return "[Used Edit]"
+
+    elif tool_name == "Write":
+        file_path = tool_input.get("file_path", "")
+        if file_path:
+            filename = Path(file_path).name if "/" in file_path else file_path
+            return f"[Used Write: {filename}]"
+        return "[Used Write]"
+
+    elif tool_name == "Bash":
+        command = tool_input.get("command", "")
+        if command:
+            # Truncate long commands
+            if len(command) > 50:
+                command = command[:50] + "..."
+            return f"[Used Bash: {command}]"
+        return "[Used Bash]"
+
+    elif tool_name == "Glob":
+        pattern = tool_input.get("pattern", "")
+        if pattern:
+            return f"[Used Glob: {pattern}]"
+        return "[Used Glob]"
+
+    elif tool_name == "Grep":
+        pattern = tool_input.get("pattern", "")
+        if pattern:
+            return f"[Used Grep: {pattern}]"
+        return "[Used Grep]"
+
+    elif tool_name == "Task":
+        description = tool_input.get("description", "")
+        if description:
+            if len(description) > 50:
+                description = description[:50] + "..."
+            return f"[Used Task: {description}]"
+        return "[Used Task]"
+
+    else:
+        # Generic format for unknown tools
+        return f"[Used {tool_name}]"
+
+
+def _validate_summary(summary: str) -> bool:
+    """Check if a summary is valid or garbage.
+
+    Args:
+        summary: The summary text to validate
+
+    Returns:
+        True if the summary appears valid, False if it contains garbage phrases
+    """
+    if not summary or not summary.strip():
+        return False
+
+    summary_lower = summary.lower()
+    for phrase in GARBAGE_SUMMARY_PHRASES:
+        if phrase in summary_lower:
+            return False
+
+    return True
+
 
 def _read_transcript_messages(transcript_path: Path, max_messages: int = MAX_MESSAGES) -> str:
     """Read and format recent messages from a transcript JSONL file.
@@ -73,18 +170,37 @@ def _read_transcript_messages(transcript_path: Path, max_messages: int = MAX_MES
                         if content:
                             messages.append(f"User: {content}")
                     elif entry_type == "assistant":
-                        # Assistant message - extract text content
+                        # Assistant message - extract text, tool_use, and thinking content
                         msg_content = entry.get("message", {}).get("content", "")
                         if isinstance(msg_content, str):
                             messages.append(f"Assistant: {msg_content}")
                         elif isinstance(msg_content, list):
-                            # Content is array of blocks
-                            text_parts = []
+                            # Content is array of blocks - extract text, tools, and thinking
+                            content_parts = []
                             for block in msg_content:
-                                if isinstance(block, dict) and block.get("type") == "text":
-                                    text_parts.append(block.get("text", ""))
-                            if text_parts:
-                                messages.append(f"Assistant: {' '.join(text_parts)}")
+                                if not isinstance(block, dict):
+                                    continue
+                                block_type = block.get("type", "")
+                                if block_type == "text":
+                                    text = block.get("text", "")
+                                    if text:
+                                        content_parts.append(text)
+                                elif block_type == "tool_use":
+                                    # Format tool use concisely
+                                    tool_name = block.get("name", "unknown")
+                                    tool_input = block.get("input", {})
+                                    tool_desc = _format_tool_use(tool_name, tool_input)
+                                    content_parts.append(tool_desc)
+                                elif block_type == "thinking":
+                                    # Include thinking content (truncated if long)
+                                    thinking = block.get("thinking", "")
+                                    if thinking:
+                                        # Truncate long thinking blocks
+                                        if len(thinking) > 200:
+                                            thinking = thinking[:200] + "..."
+                                        content_parts.append(f"[Thinking: {thinking}]")
+                            if content_parts:
+                                messages.append(f"Assistant: {' '.join(content_parts)}")
                 except json.JSONDecodeError:
                     continue
     except (OSError, IOError):
@@ -210,12 +326,17 @@ Conversation:
     except json.JSONDecodeError:
         return None
 
+    # Validate summary - reject garbage
+    summary = data.get("summary", "")
+    if not _validate_summary(summary):
+        return None
+
     # Get git ref
     git_ref = _get_git_ref()
 
     # Build HandoffContext from parsed data
     return HandoffContext(
-        summary=data.get("summary", ""),
+        summary=summary,
         critical_files=data.get("critical_files", []),
         recent_changes=data.get("recent_changes", []),
         learnings=data.get("learnings", []),

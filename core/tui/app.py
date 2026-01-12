@@ -1510,16 +1510,15 @@ class RecallMonitorApp(App):
         elif event.data_table.id == "handoff-list":
             # Track user's selection for persistence during refresh
             self._user_selected_handoff_id = row_key
+            # Note: Don't set _current_handoff_id here - that breaks double-action [L007]
+            # _current_handoff_id is only set in on_data_table_row_selected (Enter press)
             self._show_handoff_details(row_key)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection (Enter/Space) in data tables.
 
-        Uses double-action behavior for handoffs:
-        - First Enter/click on a NEW row: selects the row, shows details
-        - Second Enter/click on the SAME row: opens the action popup
-
-        This prevents accidental popup opens when navigating.
+        For handoffs: opens the action popup for the highlighted row.
+        Requires double-action only when clicking (not arrow-key navigation).
         """
         if event.row_key is None:
             return
@@ -2887,7 +2886,10 @@ class RecallMonitorApp(App):
     @work(thread=True)
     def _enrich_selected_handoff(self) -> None:
         """Enrich the currently selected handoff with context extraction."""
-        if not self._current_handoff_id:
+        # Use _user_selected_handoff_id (set on arrow navigation) so 'e' works
+        # without requiring a prior Enter press
+        handoff_id = self._user_selected_handoff_id or self._current_handoff_id
+        if not handoff_id:
             self.call_from_thread(self.notify, "No handoff selected", severity="warning")
             return
 
@@ -2896,10 +2898,10 @@ class RecallMonitorApp(App):
         except ImportError:
             from handoffs import enrich_handoff
 
-        result = enrich_handoff(self._current_handoff_id)
+        result = enrich_handoff(handoff_id)
 
         if result.success:
-            self.call_from_thread(self.notify, f"Enriched {self._current_handoff_id}", severity="information")
+            self.call_from_thread(self.notify, f"Enriched {handoff_id}", severity="information")
             self.call_from_thread(self._refresh_handoff_list)
         else:
             error_msg = result.error or "Unknown error"

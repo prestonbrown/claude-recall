@@ -27,18 +27,18 @@ export CLAUDE_RECALL_STATE
 # Export legacy names for downstream compatibility
 LESSONS_BASE="$CLAUDE_RECALL_BASE"
 LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
-# Python manager - try installed location first, fall back to dev location
-if [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"
+# Python manager - try installed locations first, fall back to dev location
+if [[ -f "$CLAUDE_RECALL_BASE/core/cli.py" ]]; then
+    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/core/cli.py"
+elif [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
+    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"  # Legacy flat structure
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
 fi
 
-# Maximum messages to include in summary prompt
-MAX_MESSAGES=20
-# Timeout for claude call (seconds)
-CLAUDE_TIMEOUT=30
+# Timeout for context extraction (seconds) - passed to Python CLI
+CONTEXT_TIMEOUT=45
 
 is_enabled() {
     local config="$HOME/.claude/settings.json"
@@ -63,68 +63,30 @@ get_git_ref() {
     git -C "$project_root" rev-parse --short HEAD 2>/dev/null || echo ""
 }
 
-# Extract recent messages from transcript for summarization
-extract_recent_messages() {
+# Extract handoff context using Python CLI (unified extraction with tool_use/thinking support)
+extract_handoff_context_python() {
     local transcript_path="$1"
-    local max_messages="$2"
-
-    # Get last N user/assistant messages, format as conversation
-    jq -r --argjson max "$max_messages" '
-        select(.type == "user" or .type == "assistant") |
-        if .type == "user" then
-            "User: " + (.message.content // "")
-        else
-            "Assistant: " + (
-                if .message.content | type == "array" then
-                    [.message.content[] | select(.type == "text") | .text] | join(" ")
-                else
-                    .message.content // ""
-                end
-            )
-        end
-    ' "$transcript_path" 2>/dev/null | tail -n "$max_messages"
-}
-
-# Call Haiku to extract structured handoff context as JSON
-extract_handoff_context() {
-    local messages="$1"
     local git_ref="$2"
 
-    # Skip if messages are empty or too short
-    [[ ${#messages} -lt 50 ]] && return 1
+    if [[ ! -f "$PYTHON_MANAGER" ]]; then
+        return 1
+    fi
 
-    local prompt='Analyze this conversation and extract a structured handoff context for session continuity.
-
-Return ONLY valid JSON with these fields:
-{
-  "summary": "1-2 sentence progress summary - what was accomplished and current state",
-  "critical_files": ["file.py:42", "other.py:100"],  // 2-3 most important file:line refs mentioned
-  "recent_changes": ["Added X", "Fixed Y"],          // list of changes made this session
-  "learnings": ["Pattern found", "Gotcha discovered"], // discoveries/patterns found
-  "blockers": ["Waiting for Z"]                       // issues blocking progress (empty if none)
-}
-
-Important:
-- Return ONLY the JSON object, no markdown code blocks, no explanation
-- Keep arrays short (2-5 items max)
-- Use file:line format for critical_files when line numbers are mentioned
-- Leave arrays empty [] if nothing applies
-
-Conversation:
-'"$messages"
-
-    # Call claude in programmatic mode with haiku
+    # Call Python CLI for context extraction - it handles:
+    # - Reading transcript with tool_use/thinking blocks
+    # - Calling Haiku for summarization
+    # - Validating the result (rejects garbage summaries)
     local result
-    result=$(echo "$prompt" | LESSONS_SCORING_ACTIVE=1 timeout "$CLAUDE_TIMEOUT" claude -p --model haiku 2>/dev/null) || return 1
+    result=$(PROJECT_DIR="$PROJECT_DIR" LESSONS_BASE="$LESSONS_BASE" LESSONS_SCORING_ACTIVE=1 \
+        timeout "$CONTEXT_TIMEOUT" python3 "$PYTHON_MANAGER" extract-context "$transcript_path" --git-ref "$git_ref" 2>/dev/null) || return 1
 
-    # Validate we got something useful
-    [[ -z "$result" ]] && return 1
+    # Check if we got valid JSON (not empty object)
+    if [[ -z "$result" ]] || [[ "$result" == "{}" ]]; then
+        return 1
+    fi
 
-    # Strip any markdown code block markers if present
-    result=$(echo "$result" | sed 's/^```json//g' | sed 's/^```//g' | sed 's/```$//g')
-
-    # Inject git_ref into the JSON
-    result=$(echo "$result" | jq --arg ref "$git_ref" '. + {git_ref: $ref}' 2>/dev/null) || return 1
+    # Validate JSON structure
+    echo "$result" | jq -e '.summary' >/dev/null 2>&1 || return 1
 
     echo "$result"
 }
@@ -202,22 +164,17 @@ main() {
         exit 0
     }
 
-    # Extract recent messages
-    local messages
-    messages=$(extract_recent_messages "$transcript_path" "$MAX_MESSAGES")
-
-    [[ -z "$messages" ]] && {
-        echo "[session-end] No messages to summarize" >&2
-        exit 0
-    }
+    # Export PROJECT_DIR for Python CLI
+    export PROJECT_DIR="$project_root"
 
     # Get current git ref
     local git_ref
     git_ref=$(get_git_ref "$project_root")
 
-    # Extract structured handoff context
+    # Extract structured handoff context using Python CLI
+    # This handles tool_use/thinking blocks properly (not just text blocks)
     local context_json
-    context_json=$(extract_handoff_context "$messages" "$git_ref")
+    context_json=$(extract_handoff_context_python "$transcript_path" "$git_ref")
 
     if [[ -n "$context_json" ]] && echo "$context_json" | jq -e . >/dev/null 2>&1; then
         # Use structured set-context command

@@ -228,7 +228,7 @@ def enrich_handoff(
     try:
         from core.context_extractor import extract_context
     except ImportError:
-        from context_extractor import extract_context
+        from .context_extractor import extract_context
 
     # Find transcript for handoff
     transcript_path = get_transcript_for_handoff(handoff_id, state_dir)

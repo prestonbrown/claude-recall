@@ -693,8 +693,13 @@ class TestEnrichKeyBinding:
             await pilot.pause()
 
             # Mock the enrich function to track if it was called
-            with patch("core.tui.app.enrich_handoff") as mock_enrich:
-                mock_enrich.return_value = {"success": True}
+            # Note: Patch at source location since it's imported locally in the method
+            with patch("core.handoffs.enrich_handoff") as mock_enrich:
+                # Return object with .success attribute (not dict)
+                mock_result = MagicMock()
+                mock_result.success = True
+                mock_result.error = None
+                mock_enrich.return_value = mock_result
 
                 # Press 'e' to enrich
                 await pilot.press("e")
@@ -722,8 +727,12 @@ class TestEnrichKeyBinding:
             await pilot.press("down")
             await pilot.pause()
 
-            with patch("core.tui.app.enrich_handoff") as mock_enrich:
-                mock_enrich.return_value = {"success": True}
+            with patch("core.handoffs.enrich_handoff") as mock_enrich:
+                # Return object with .success attribute (not dict)
+                mock_result = MagicMock()
+                mock_result.success = True
+                mock_result.error = None
+                mock_enrich.return_value = mock_result
 
                 await pilot.press("e")
                 await pilot.pause()
@@ -749,11 +758,12 @@ class TestEnrichKeyBinding:
             await pilot.press("down")
             await pilot.pause()
 
-            with patch("core.tui.app.enrich_handoff") as mock_enrich:
-                mock_enrich.return_value = {
-                    "success": False,
-                    "error": "No transcript found for handoff",
-                }
+            with patch("core.handoffs.enrich_handoff") as mock_enrich:
+                # Return object with .success attribute (not dict)
+                mock_result = MagicMock()
+                mock_result.success = False
+                mock_result.error = "No transcript found for handoff"
+                mock_enrich.return_value = mock_result
 
                 await pilot.press("e")
                 await pilot.pause()

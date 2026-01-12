@@ -172,26 +172,42 @@ install_core() {
     log_info "Installing Claude Recall core..."
     mkdir -p "$CLAUDE_RECALL_BASE" "$CLAUDE_RECALL_BASE/plugins"
     mkdir -p "$CLAUDE_RECALL_STATE"  # XDG state dir for logs
+
+    # Clean up old flat file structure (migrating to package structure)
+    rm -f "$CLAUDE_RECALL_BASE/cli.py" "$CLAUDE_RECALL_BASE/manager.py"
+    rm -f "$CLAUDE_RECALL_BASE/models.py" "$CLAUDE_RECALL_BASE/parsing.py"
+    rm -f "$CLAUDE_RECALL_BASE/file_lock.py" "$CLAUDE_RECALL_BASE/lessons.py"
+    rm -f "$CLAUDE_RECALL_BASE/handoffs.py" "$CLAUDE_RECALL_BASE/debug_logger.py"
+    rm -f "$CLAUDE_RECALL_BASE/__init__.py" "$CLAUDE_RECALL_BASE/_version.py"
+    rm -f "$CLAUDE_RECALL_BASE/context_extractor.py" "$CLAUDE_RECALL_BASE/lessons_manager.py"
+    rm -rf "$CLAUDE_RECALL_BASE/tui" 2>/dev/null || true
+    rm -rf "$CLAUDE_RECALL_BASE/__pycache__" 2>/dev/null || true
+
+    # Copy shell scripts to base (they use relative paths)
     cp "$SCRIPT_DIR/core/lessons-manager.sh" "$CLAUDE_RECALL_BASE/"
-    # Copy all Python modules (new modular structure)
-    cp "$SCRIPT_DIR/core/_version.py" "$CLAUDE_RECALL_BASE/"
-    cp "$SCRIPT_DIR/core/cli.py" "$CLAUDE_RECALL_BASE/"
-    cp "$SCRIPT_DIR/core/manager.py" "$CLAUDE_RECALL_BASE/"
-    cp "$SCRIPT_DIR/core/models.py" "$CLAUDE_RECALL_BASE/"
-    cp "$SCRIPT_DIR/core/parsing.py" "$CLAUDE_RECALL_BASE/"
-    cp "$SCRIPT_DIR/core/file_lock.py" "$CLAUDE_RECALL_BASE/"
-    cp "$SCRIPT_DIR/core/lessons.py" "$CLAUDE_RECALL_BASE/"
-    cp "$SCRIPT_DIR/core/handoffs.py" "$CLAUDE_RECALL_BASE/"
-    cp "$SCRIPT_DIR/core/debug_logger.py" "$CLAUDE_RECALL_BASE/"
-    cp "$SCRIPT_DIR/core/__init__.py" "$CLAUDE_RECALL_BASE/"
     cp "$SCRIPT_DIR/core/lesson-reminder-hook.sh" "$CLAUDE_RECALL_BASE/"
 
-    # Copy TUI module if it exists
+    # Install Python as a proper package structure (core/)
+    # This allows standard imports like "from core.models import X"
+    mkdir -p "$CLAUDE_RECALL_BASE/core"
+    cp "$SCRIPT_DIR/core/_version.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/cli.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/manager.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/models.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/parsing.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/file_lock.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/lessons.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/handoffs.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/debug_logger.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/context_extractor.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/__init__.py" "$CLAUDE_RECALL_BASE/core/"
+
+    # Copy TUI module as subpackage
     if [[ -d "$SCRIPT_DIR/core/tui" ]]; then
-        mkdir -p "$CLAUDE_RECALL_BASE/tui/styles"
-        cp "$SCRIPT_DIR/core/tui/"*.py "$CLAUDE_RECALL_BASE/tui/"
-        [[ -f "$SCRIPT_DIR/core/tui/styles/app.tcss" ]] && cp "$SCRIPT_DIR/core/tui/styles/app.tcss" "$CLAUDE_RECALL_BASE/tui/styles/"
-        log_success "Installed TUI module to $CLAUDE_RECALL_BASE/tui/"
+        mkdir -p "$CLAUDE_RECALL_BASE/core/tui/styles"
+        cp "$SCRIPT_DIR/core/tui/"*.py "$CLAUDE_RECALL_BASE/core/tui/"
+        [[ -f "$SCRIPT_DIR/core/tui/styles/app.tcss" ]] && cp "$SCRIPT_DIR/core/tui/styles/app.tcss" "$CLAUDE_RECALL_BASE/core/tui/styles/"
+        log_success "Installed TUI module to $CLAUDE_RECALL_BASE/core/tui/"
     fi
 
     # Install recall-watch command
@@ -211,9 +227,8 @@ install_core() {
     fi
 
     chmod +x "$CLAUDE_RECALL_BASE/lessons-manager.sh" "$CLAUDE_RECALL_BASE/lesson-reminder-hook.sh"
-    log_success "Installed lessons-manager.sh to $CLAUDE_RECALL_BASE/"
-    log_success "Installed Python modules (cli.py, manager.py, etc.) to $CLAUDE_RECALL_BASE/"
-    log_success "Installed lesson-reminder-hook.sh to $CLAUDE_RECALL_BASE/"
+    log_success "Installed shell scripts to $CLAUDE_RECALL_BASE/"
+    log_success "Installed Python package to $CLAUDE_RECALL_BASE/core/"
 
     # Install OpenCode plugin to core location (adapters will symlink/copy)
     if [[ -f "$SCRIPT_DIR/plugins/opencode-lesson-reminder.ts" ]]; then
@@ -560,7 +575,17 @@ uninstall() {
     cleanup_config_dir() {
         local dir="$1"
         if [[ -d "$dir" ]]; then
+            # Shell scripts at base level
             rm -f "$dir/lessons-manager.sh"
+            rm -f "$dir/lesson-reminder-hook.sh"
+            rm -f "$dir/.reminder-state"
+            rm -rf "$dir/plugins"
+            rm -rf "$dir/.venv"
+
+            # New package structure (core/ subdirectory)
+            rm -rf "$dir/core"
+
+            # Old flat structure (for migration cleanup)
             rm -f "$dir/cli.py"
             rm -f "$dir/manager.py"
             rm -f "$dir/models.py"
@@ -571,12 +596,10 @@ uninstall() {
             rm -f "$dir/debug_logger.py"
             rm -f "$dir/__init__.py"
             rm -f "$dir/_version.py"
+            rm -f "$dir/context_extractor.py"
             rm -f "$dir/lessons_manager.py"
-            rm -f "$dir/lesson-reminder-hook.sh"
-            rm -f "$dir/.reminder-state"
-            rm -rf "$dir/plugins"
             rm -rf "$dir/tui"
-            rm -rf "$dir/.venv"
+
             log_info "Cleaned up $dir"
         fi
     }

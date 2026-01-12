@@ -17,9 +17,11 @@ export CLAUDE_RECALL_STATE
 LESSONS_BASE="$CLAUDE_RECALL_BASE"
 LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
 BASH_MANAGER="$CLAUDE_RECALL_BASE/lessons-manager.sh"
-# Python manager - try installed location first, fall back to dev location
-if [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"
+# Python manager - try installed locations first, fall back to dev location
+if [[ -f "$CLAUDE_RECALL_BASE/core/cli.py" ]]; then
+    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/core/cli.py"
+elif [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
+    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"  # Legacy flat structure
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"

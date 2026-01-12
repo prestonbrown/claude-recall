@@ -1420,7 +1420,7 @@ class TestCLI:
 class TestCaptureHook:
     """Tests for capture-hook.sh parsing."""
 
-    def test_capture_hook_parses_no_promote(self, temp_lessons_base: Path, temp_project_root: Path):
+    def test_capture_hook_parses_no_promote(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path):
         """capture-hook.sh should parse LESSON (no-promote): syntax."""
 
         hook_path = Path("adapters/claude-code/capture-hook.sh")
@@ -1432,6 +1432,10 @@ class TestCaptureHook:
             "cwd": str(temp_project_root),
         })
 
+        # Override HOME to avoid reading live user settings (prevents flaky tests)
+        temp_home = tmp_path / "home"
+        temp_home.mkdir()
+
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=input_data,
@@ -1439,6 +1443,7 @@ class TestCaptureHook:
             text=True,
             env={
                 **os.environ,
+                "HOME": str(temp_home),
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
@@ -1457,7 +1462,7 @@ class TestCaptureHook:
         assert lesson is not None
         assert lesson.promotable is False
 
-    def test_capture_hook_normal_lesson_is_promotable(self, temp_lessons_base: Path, temp_project_root: Path):
+    def test_capture_hook_normal_lesson_is_promotable(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path):
         """capture-hook.sh without (no-promote) should create promotable lesson."""
 
         hook_path = Path("adapters/claude-code/capture-hook.sh")
@@ -1469,6 +1474,10 @@ class TestCaptureHook:
             "cwd": str(temp_project_root),
         })
 
+        # Override HOME to avoid reading live user settings (prevents flaky tests)
+        temp_home = tmp_path / "home"
+        temp_home.mkdir()
+
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=input_data,
@@ -1476,6 +1485,7 @@ class TestCaptureHook:
             text=True,
             env={
                 **os.environ,
+                "HOME": str(temp_home),
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
@@ -1493,7 +1503,7 @@ class TestCaptureHook:
 class TestHookPathResolution:
     """Tests for hook Python manager path resolution."""
 
-    def test_hook_uses_installed_path_when_available(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+    def test_hook_uses_installed_path_when_available(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, tmp_path: Path):
         """Hooks should use $CLAUDE_RECALL_BASE/cli.py when it exists (installed mode)."""
         import shutil
         from core import LessonsManager
@@ -1537,6 +1547,10 @@ class TestHookPathResolution:
         if not hook_path.exists():
             pytest.skip("inject-hook.sh not found")
 
+        # Override HOME to avoid reading live user settings (prevents flaky tests)
+        temp_home = tmp_path / "home"
+        temp_home.mkdir()
+
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=json.dumps({"cwd": str(temp_project_root)}),
@@ -1545,6 +1559,7 @@ class TestHookPathResolution:
             cwd="/tmp",  # Run from different directory
             env={
                 **os.environ,
+                "HOME": str(temp_home),
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),
@@ -1555,7 +1570,7 @@ class TestHookPathResolution:
         assert result.returncode == 0
         assert "LESSONS ACTIVE" in result.stdout or "S001" in result.stdout
 
-    def test_hook_falls_back_to_dev_path(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+    def test_hook_falls_back_to_dev_path(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, tmp_path: Path):
         """Hooks should fall back to dev path when installed path doesn't exist."""
         from core import LessonsManager
 
@@ -1574,6 +1589,10 @@ class TestHookPathResolution:
             content="Test content for hook path resolution."
         )
 
+        # Override HOME to avoid reading live user settings (prevents flaky tests)
+        temp_home = tmp_path / "home"
+        temp_home.mkdir()
+
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=json.dumps({"cwd": str(temp_project_root)}),
@@ -1581,6 +1600,7 @@ class TestHookPathResolution:
             text=True,
             env={
                 **os.environ,
+                "HOME": str(temp_home),
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),
@@ -1595,7 +1615,7 @@ class TestInjectHookHandoffs:
     """Tests for inject-hook.sh handling of handoffs, especially edge cases."""
 
     def test_inject_hook_no_crash_on_missing_review_ids(
-        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, tmp_path: Path
     ):
         """Inject hook should not crash when grep for review IDs finds no matches.
 
@@ -1620,6 +1640,10 @@ class TestInjectHookHandoffs:
         monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(level="project", category="pattern", title="Test", content="Content")
+
+        # Override HOME to avoid reading live user settings (prevents flaky tests)
+        temp_home = tmp_path / "home"
+        temp_home.mkdir()
 
         # Create a handoff that is NOT ready_for_review (should trigger the grep but find nothing)
         handoffs_file = temp_project_root / ".claude-recall" / "HANDOFFS.md"
@@ -1646,6 +1670,7 @@ class TestInjectHookHandoffs:
             cwd="/tmp",
             env={
                 **os.environ,
+                "HOME": str(temp_home),
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),

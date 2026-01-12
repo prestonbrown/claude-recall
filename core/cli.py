@@ -309,6 +309,18 @@ def main():
     link_parser.add_argument("session_id", help="Claude session ID")
     link_parser.add_argument("--handoff", help="Handoff ID to link to")
 
+    # extract-context command - extract handoff context from transcript
+    extract_context_parser = subparsers.add_parser(
+        "extract-context",
+        help="Extract handoff context from transcript using Haiku"
+    )
+    extract_context_parser.add_argument(
+        "transcript_path", help="Path to transcript JSONL file"
+    )
+    extract_context_parser.add_argument(
+        "--git-ref", help="Git commit hash to include in context"
+    )
+
     # Debug commands for logging from bash hooks
     debug_parser = subparsers.add_parser("debug", help="Debug logging commands")
     debug_subparsers = debug_parser.add_subparsers(dest="debug_command")
@@ -851,6 +863,47 @@ def main():
                 )
                 result = {"origin": origin, "parent": parent_id, "handoff": handoff_id}
                 print(json_module.dumps(result))
+
+        elif args.command == "extract-context":
+            # Extract handoff context from transcript using Python context extractor
+            try:
+                from core.context_extractor import extract_context, _get_git_ref
+            except ImportError:
+                from context_extractor import extract_context, _get_git_ref
+
+            transcript_path = Path(args.transcript_path).expanduser()
+            if not transcript_path.exists():
+                print(f"Error: Transcript not found: {transcript_path}", file=sys.stderr)
+                sys.exit(1)
+
+            # Set LESSONS_SCORING_ACTIVE to prevent recursive Haiku calls
+            os.environ["LESSONS_SCORING_ACTIVE"] = "1"
+
+            context = extract_context(transcript_path)
+
+            if context is None:
+                # Return empty JSON object to indicate extraction failed
+                print("{}")
+                sys.exit(0)
+
+            # Override git_ref if provided via CLI
+            git_ref = getattr(args, "git_ref", None)
+            if git_ref:
+                context.git_ref = git_ref
+            elif not context.git_ref:
+                # Try to get git ref from project dir
+                context.git_ref = _get_git_ref()
+
+            # Output as JSON
+            result = {
+                "summary": context.summary,
+                "critical_files": context.critical_files,
+                "recent_changes": context.recent_changes,
+                "learnings": context.learnings,
+                "blockers": context.blockers,
+                "git_ref": context.git_ref,
+            }
+            print(json_module.dumps(result))
 
         elif args.command == "debug":
             try:
