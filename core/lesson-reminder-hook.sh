@@ -35,7 +35,10 @@ COUNT=0
 
 # Increment and save
 COUNT=$((COUNT + 1))
-echo "$COUNT" > "$STATE_FILE"
+
+# Atomic write using temp file + rename
+TEMP_FILE="${STATE_FILE}.$$"
+echo "$COUNT" > "$TEMP_FILE" && mv "$TEMP_FILE" "$STATE_FILE"
 
 # Only remind on Nth prompt
 if (( COUNT % REMIND_EVERY != 0 )); then

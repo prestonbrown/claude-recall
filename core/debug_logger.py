@@ -592,9 +592,10 @@ def get_logger() -> DebugLogger:
 
 
 def reset_logger() -> None:
-    """Reset the global logger (for testing)."""
-    global _logger
+    """Reset the global logger and session ID (for testing)."""
+    global _logger, _SESSION_ID
     _logger = None
+    _SESSION_ID = None
 
 
 # Convenience decorator for tracing function calls

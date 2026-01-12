@@ -1457,7 +1457,7 @@ class TestCaptureHook:
         assert lesson is not None
         assert lesson.promotable is False
 
-    def test_capture_hook_normal_lesson_is_promotable(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path):
+    def test_capture_hook_normal_lesson_is_promotable(self, temp_lessons_base: Path, temp_project_root: Path, isolated_subprocess_env):
         """capture-hook.sh without (no-promote) should create promotable lesson."""
 
         hook_path = Path("adapters/claude-code/capture-hook.sh")
@@ -1469,21 +1469,19 @@ class TestCaptureHook:
             "cwd": str(temp_project_root),
         })
 
-        # Override HOME to avoid reading live user settings (prevents flaky tests)
-        temp_home = tmp_path / "home"
-        temp_home.mkdir()
+        # Use isolated environment with whitelist approach
+        env = {
+            **isolated_subprocess_env,
+            "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+            "PROJECT_DIR": str(temp_project_root),
+        }
 
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=input_data,
             capture_output=True,
             text=True,
-            env={
-                **os.environ,
-                "HOME": str(temp_home),
-                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
-                "PROJECT_DIR": str(temp_project_root),
-            },
+            env=env,
         )
 
         assert result.returncode == 0
@@ -1498,7 +1496,7 @@ class TestCaptureHook:
 class TestHookPathResolution:
     """Tests for hook Python manager path resolution."""
 
-    def test_hook_uses_installed_path_when_available(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, tmp_path: Path):
+    def test_hook_uses_installed_path_when_available(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, isolated_subprocess_env):
         """Hooks should use $CLAUDE_RECALL_BASE/cli.py when it exists (installed mode)."""
         import shutil
         from core import LessonsManager
@@ -1542,10 +1540,6 @@ class TestHookPathResolution:
         if not hook_path.exists():
             pytest.skip("inject-hook.sh not found")
 
-        # Override HOME to avoid reading live user settings (prevents flaky tests)
-        temp_home = tmp_path / "home"
-        temp_home.mkdir()
-
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=json.dumps({"cwd": str(temp_project_root)}),
@@ -1553,8 +1547,7 @@ class TestHookPathResolution:
             text=True,
             cwd="/tmp",  # Run from different directory
             env={
-                **os.environ,
-                "HOME": str(temp_home),
+                **isolated_subprocess_env,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),
@@ -1565,7 +1558,7 @@ class TestHookPathResolution:
         assert result.returncode == 0
         assert "LESSONS ACTIVE" in result.stdout or "S001" in result.stdout
 
-    def test_hook_falls_back_to_dev_path(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, tmp_path: Path):
+    def test_hook_falls_back_to_dev_path(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, isolated_subprocess_env):
         """Hooks should fall back to dev path when installed path doesn't exist."""
         from core import LessonsManager
 
@@ -1584,18 +1577,13 @@ class TestHookPathResolution:
             content="Test content for hook path resolution."
         )
 
-        # Override HOME to avoid reading live user settings (prevents flaky tests)
-        temp_home = tmp_path / "home"
-        temp_home.mkdir()
-
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=json.dumps({"cwd": str(temp_project_root)}),
             capture_output=True,
             text=True,
             env={
-                **os.environ,
-                "HOME": str(temp_home),
+                **isolated_subprocess_env,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),
@@ -1610,7 +1598,7 @@ class TestInjectHookHandoffs:
     """Tests for inject-hook.sh handling of handoffs, especially edge cases."""
 
     def test_inject_hook_no_crash_on_missing_review_ids(
-        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, tmp_path: Path
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, isolated_subprocess_env
     ):
         """Inject hook should not crash when grep for review IDs finds no matches.
 
@@ -1636,10 +1624,6 @@ class TestInjectHookHandoffs:
         manager = LessonsManager(temp_lessons_base, temp_project_root)
         manager.add_lesson(level="project", category="pattern", title="Test", content="Content")
 
-        # Override HOME to avoid reading live user settings (prevents flaky tests)
-        temp_home = tmp_path / "home"
-        temp_home.mkdir()
-
         # Create a handoff that is NOT ready_for_review (should trigger the grep but find nothing)
         handoffs_file = temp_project_root / ".claude-recall" / "HANDOFFS.md"
         handoffs_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1664,8 +1648,7 @@ class TestInjectHookHandoffs:
             text=True,
             cwd="/tmp",
             env={
-                **os.environ,
-                "HOME": str(temp_home),
+                **isolated_subprocess_env,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "CLAUDE_RECALL_STATE": str(temp_state_dir),
                 "PROJECT_DIR": str(temp_project_root),
@@ -1688,11 +1671,14 @@ class TestReminderHook:
             pytest.skip("lesson-reminder-hook.sh not found")
         return path
 
-    def test_reminder_reads_config_file(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+    def test_reminder_reads_config_file(self, temp_lessons_base: Path, temp_project_root: Path, hook_path: Path, isolated_subprocess_env):
         """Reminder hook reads remindEvery from config file."""
 
+        # Use HOME from isolated_subprocess_env
+        home = Path(isolated_subprocess_env["HOME"])
+
         # Create config with custom remindEvery
-        config_dir = tmp_path / ".claude"
+        config_dir = home / ".claude"
         config_dir.mkdir()
         config_file = config_dir / "settings.json"
         config_file.write_text(json.dumps({
@@ -1700,9 +1686,8 @@ class TestReminderHook:
         }))
 
         # Create state file at count 2 (next will be 3, triggering reminder)
-        state_dir = tmp_path / ".config" / "claude-recall"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / ".reminder-state").write_text("2")
+        # State file goes in CLAUDE_RECALL_BASE (temp_lessons_base)
+        (temp_lessons_base / ".reminder-state").write_text("2")
 
         # Create a lessons file with high-star lesson
         lessons_dir = temp_project_root / ".claude-recall"
@@ -1717,8 +1702,7 @@ class TestReminderHook:
             text=True,
             cwd=str(temp_project_root),
             env={
-                **os.environ,
-                "HOME": str(tmp_path),
+                **isolated_subprocess_env,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
             },
         )
@@ -1830,12 +1814,11 @@ class TestReminderHook:
         assert "L001" in log_entry["lesson_ids"]
         assert log_entry["prompt_count"] == 12
 
-    def test_reminder_no_log_when_debug_disabled(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+    def test_reminder_no_log_when_debug_disabled(self, temp_lessons_base: Path, temp_project_root: Path, hook_path: Path, isolated_subprocess_env):
         """No debug log when CLAUDE_RECALL_DEBUG is not set."""
 
-        state_dir = tmp_path / ".config" / "claude-recall"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / ".reminder-state").write_text("11")
+        # State file goes in CLAUDE_RECALL_BASE (temp_lessons_base)
+        (temp_lessons_base / ".reminder-state").write_text("11")
 
         lessons_dir = temp_project_root / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
@@ -1843,26 +1826,22 @@ class TestReminderHook:
             "# Lessons\n\n### [L001] [*****|-----] Test Lesson\n- Content\n"
         )
 
-        # Build env without any debug env vars
-        env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_RECALL_DEBUG", "LESSONS_DEBUG")}
-        env.update({
-            "HOME": str(tmp_path),
-            "CLAUDE_RECALL_BASE": str(temp_lessons_base),
-        })
-
         result = subprocess.run(
             ["bash", str(hook_path)],
             capture_output=True,
             text=True,
             cwd=str(temp_project_root),
-            env=env,
+            env={
+                **isolated_subprocess_env,
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+            },
         )
 
         assert result.returncode == 0
         assert "LESSON CHECK" in result.stdout
 
-        # Debug log should not exist
-        debug_log = state_dir / "debug.log"
+        # Debug log should not exist (in CLAUDE_RECALL_BASE)
+        debug_log = temp_lessons_base / "debug.log"
         assert not debug_log.exists()
 
 

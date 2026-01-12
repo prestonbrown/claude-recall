@@ -94,17 +94,26 @@ def integration_env(tmp_path: Path) -> Dict[str, Path]:
 
 
 @pytest.fixture
-def hook_env(integration_env: Dict[str, Path]) -> Dict[str, str]:
-    """Environment variables for running hooks."""
+def hook_env(integration_env: Dict[str, Path], tmp_path: Path) -> Dict[str, str]:
+    """Environment for running hook scripts with isolation."""
     repo_root = Path(__file__).parent.parent
+
+    # Whitelist only essential system env vars
+    safe_vars = {"PATH", "SHELL", "TERM", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE"}
+    base_env = {k: v for k, v in os.environ.items() if k in safe_vars}
+
+    # Create isolated TMPDIR
+    tmpdir = tmp_path / "hook_tmp"
+    tmpdir.mkdir(exist_ok=True)
+
     return {
-        **os.environ,
+        **base_env,
         "HOME": str(integration_env["home"]),
+        "TMPDIR": str(tmpdir),
         "PROJECT_DIR": str(integration_env["project_root"]),
         "CLAUDE_RECALL_BASE": str(integration_env["claude_recall_base"]),
         "CLAUDE_RECALL_STATE": str(integration_env["claude_recall_state"]),
         "CLAUDE_RECALL_DEBUG": "1",
-        # Add repo root to PYTHONPATH so imports work
         "PYTHONPATH": str(repo_root),
     }
 
@@ -803,7 +812,7 @@ summary: Previous session worked on integration tests.""")
 class TestStopHookIncrementalProcessing:
     """Tests for stop-hook incremental processing with transcript caching."""
 
-    def test_incremental_citation_processing(self, integration_env, hook_env):
+    def test_incremental_citation_processing(self, integration_env, isolated_subprocess_env):
         """Stop hook should only process new entries after checkpoint.
 
         This test verifies that the transcript caching (single jq pass)
@@ -813,6 +822,17 @@ class TestStopHookIncrementalProcessing:
         3. New entries added to transcript
         4. Second run only processes new entries
         """
+        # Build hook_env from isolated_subprocess_env
+        repo_root = Path(__file__).parent.parent
+        hook_env = {
+            **isolated_subprocess_env,
+            "PROJECT_DIR": str(integration_env["project_root"]),
+            "CLAUDE_RECALL_BASE": str(integration_env["claude_recall_base"]),
+            "CLAUDE_RECALL_STATE": str(integration_env["claude_recall_state"]),
+            "CLAUDE_RECALL_DEBUG": "1",
+            "PYTHONPATH": str(repo_root),
+        }
+
         # Create a lesson to cite
         lessons_dir = integration_env["project_root"] / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
@@ -892,7 +912,7 @@ class TestStopHookIncrementalProcessing:
             f"L001 should not be re-cited on second run (was {l001_uses_first}, now {l001_uses_second})"
         assert l002_match and int(l002_match.group(1)) >= 2, "L002 should have 2+ uses after second run"
 
-    def test_multiple_patterns_single_transcript_parse(self, integration_env, hook_env):
+    def test_multiple_patterns_single_transcript_parse(self, integration_env, isolated_subprocess_env):
         """Stop hook should extract multiple pattern types from cached transcript.
 
         Verifies that a single transcript parse correctly extracts:
@@ -901,6 +921,17 @@ class TestStopHookIncrementalProcessing:
         - Citations
         - TodoWrite calls
         """
+        # Build hook_env from isolated_subprocess_env
+        repo_root = Path(__file__).parent.parent
+        hook_env = {
+            **isolated_subprocess_env,
+            "PROJECT_DIR": str(integration_env["project_root"]),
+            "CLAUDE_RECALL_BASE": str(integration_env["claude_recall_base"]),
+            "CLAUDE_RECALL_STATE": str(integration_env["claude_recall_state"]),
+            "CLAUDE_RECALL_DEBUG": "1",
+            "PYTHONPATH": str(repo_root),
+        }
+
         # Create transcript with multiple patterns
         transcript = integration_env["home"] / "multi_pattern.jsonl"
         entries = [
@@ -965,8 +996,19 @@ class TestStopHookIncrementalProcessing:
         lesson_content = lessons_file.read_text()
         assert "Test pattern" in lesson_content
 
-    def test_empty_transcript_handling(self, integration_env, hook_env):
+    def test_empty_transcript_handling(self, integration_env, isolated_subprocess_env):
         """Stop hook should handle empty transcript gracefully."""
+        # Build hook_env from isolated_subprocess_env
+        repo_root = Path(__file__).parent.parent
+        hook_env = {
+            **isolated_subprocess_env,
+            "PROJECT_DIR": str(integration_env["project_root"]),
+            "CLAUDE_RECALL_BASE": str(integration_env["claude_recall_base"]),
+            "CLAUDE_RECALL_STATE": str(integration_env["claude_recall_state"]),
+            "CLAUDE_RECALL_DEBUG": "1",
+            "PYTHONPATH": str(repo_root),
+        }
+
         transcript = integration_env["home"] / "empty.jsonl"
         transcript.write_text("")  # Empty file
 
