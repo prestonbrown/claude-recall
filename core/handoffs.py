@@ -1939,9 +1939,14 @@ Consider extracting lessons about:
 
                 lines.append("")
 
-        # Recent completions section
+        # Recent completions section - show summaries for today's completions
         if completed_handoffs:
-            lines.append("## Recent Completions")
+            # Check if any completions are from today (may need verification)
+            today_count = sum(1 for h in completed_handoffs if (date.today() - h.updated).days == 0)
+            if today_count > 0:
+                lines.append(f"## Recent Completions ({today_count} today - verify if issues arise)")
+            else:
+                lines.append("## Recent Completions")
             lines.append("")
 
             for handoff in completed_handoffs:
@@ -1955,6 +1960,15 @@ Consider extracting lessons about:
                     time_str = f"{days_ago}d ago"
 
                 lines.append(f"  [{handoff.id}] ✓ {handoff.title} (completed {time_str})")
+
+                # Show summary for today's completions - may need verification
+                if days_ago == 0 and handoff.handoff is not None:
+                    summary = handoff.handoff.summary
+                    if summary:
+                        # Truncate long summaries
+                        if len(summary) > 150:
+                            summary = summary[:147] + "..."
+                        lines.append(f"    └─ {summary}")
 
             lines.append("")
 

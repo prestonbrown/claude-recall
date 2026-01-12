@@ -1587,6 +1587,91 @@ class TestHandoffInjectWithCompleted:
         assert "Task 3" not in output
         assert "Task 4" not in output
 
+    def test_handoff_inject_today_completions_show_verify_warning(
+        self, manager: "LessonsManager"
+    ):
+        """Today's completions should show 'verify if issues arise' in header."""
+        # Create and complete a handoff (will be completed today)
+        handoff_id = manager.handoff_add(title="Feature completed today")
+        manager.handoff_update_status(handoff_id, "completed")
+
+        output = manager.handoff_inject()
+
+        # Header should indicate today's completions need verification
+        assert "today" in output.lower()
+        assert "verify" in output.lower()
+
+    def test_handoff_inject_today_completions_show_summary(
+        self, manager: "LessonsManager"
+    ):
+        """Today's completions with HandoffContext should show summary."""
+        try:
+            from core.models import HandoffContext
+        except ImportError:
+            pytest.skip("HandoffContext not yet implemented")
+
+        # Create handoff with context
+        handoff_id = manager.handoff_add(title="Feature with summary")
+
+        # Set context with a summary
+        context = HandoffContext(
+            summary="Fixed critical bug in authentication flow",
+            critical_files=["src/auth.py:100"],
+            recent_changes=["Updated auth logic"],
+            learnings=[],
+            blockers=[],
+            git_ref="abc1234",
+        )
+        manager.handoff_update_context(handoff_id, context)
+
+        # Complete it (will be completed today)
+        manager.handoff_update_status(handoff_id, "completed")
+
+        output = manager.handoff_inject()
+
+        # Should show the summary with └─ prefix for today's completion
+        assert "└─" in output
+        assert "Fixed critical bug in authentication flow" in output
+
+    def test_handoff_inject_old_completions_no_summary(
+        self, manager: "LessonsManager"
+    ):
+        """Completions older than today should NOT show summary (to save space)."""
+        try:
+            from core.models import HandoffContext
+        except ImportError:
+            pytest.skip("HandoffContext not yet implemented")
+
+        # Create handoff with context
+        handoff_id = manager.handoff_add(title="Old feature")
+
+        context = HandoffContext(
+            summary="This summary should not appear",
+            critical_files=[],
+            recent_changes=[],
+            learnings=[],
+            blockers=[],
+            git_ref="old1234",
+        )
+        manager.handoff_update_context(handoff_id, context)
+        manager.handoff_update_status(handoff_id, "completed")
+
+        # Make it old (completed yesterday)
+        handoffs_file = manager.project_handoffs_file
+        content = handoffs_file.read_text()
+        old_date = (date.today() - timedelta(days=1)).isoformat()
+        content = content.replace(
+            f"**Updated**: {date.today().isoformat()}",
+            f"**Updated**: {old_date}"
+        )
+        handoffs_file.write_text(content)
+
+        output = manager.handoff_inject()
+
+        # Should show the handoff but NOT the summary (not from today)
+        assert "Old feature" in output
+        assert "This summary should not appear" not in output
+
 
 class TestHandoffAutoArchive:
     """Tests for auto-archiving after lesson extraction."""
