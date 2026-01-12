@@ -1966,12 +1966,14 @@ class TestStopHookLastReference:
         lessons_base = tmp_path / ".config" / "claude-recall"
         state_dir = tmp_path / ".local" / "state" / "claude-recall"
         project_root = tmp_path / "project"
+        temp_home = tmp_path / "home"
         lessons_base.mkdir(parents=True)
         state_dir.mkdir(parents=True, exist_ok=True)
         project_root.mkdir(parents=True)
+        temp_home.mkdir(parents=True)
         # Set env var so LessonsManager uses temp state dir
         monkeypatch.setenv("CLAUDE_RECALL_STATE", str(state_dir))
-        return lessons_base, state_dir, project_root
+        return lessons_base, state_dir, project_root, temp_home
 
     def create_mock_transcript(self, project_root: Path, messages: list) -> Path:
         """Create a mock transcript file with the given assistant messages."""
@@ -1993,7 +1995,7 @@ class TestStopHookLastReference:
 
     def test_last_reference_phase_update(self, temp_dirs):
         """HANDOFF UPDATE LAST: phase should update the most recent handoff."""
-        lessons_base, state_dir, project_root = temp_dirs
+        lessons_base, state_dir, project_root, temp_home = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
@@ -2009,6 +2011,7 @@ class TestStopHookLastReference:
             "transcript_path": str(transcript),
         })
 
+        # Override HOME to avoid reading live user settings (prevents flaky tests)
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=input_data,
@@ -2016,6 +2019,7 @@ class TestStopHookLastReference:
             text=True,
             env={
                 **os.environ,
+                "HOME": str(temp_home),
                 "CLAUDE_RECALL_BASE": str(lessons_base),
                 "CLAUDE_RECALL_STATE": str(state_dir),
                 "PROJECT_DIR": str(project_root),
@@ -2034,7 +2038,7 @@ class TestStopHookLastReference:
 
     def test_last_reference_tried_update(self, temp_dirs):
         """HANDOFF UPDATE LAST: tried should update the most recent handoff."""
-        lessons_base, state_dir, project_root = temp_dirs
+        lessons_base, state_dir, project_root, temp_home = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
@@ -2050,6 +2054,7 @@ class TestStopHookLastReference:
             "transcript_path": str(transcript),
         })
 
+        # Override HOME to avoid reading live user settings (prevents flaky tests)
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=input_data,
@@ -2057,6 +2062,7 @@ class TestStopHookLastReference:
             text=True,
             env={
                 **os.environ,
+                "HOME": str(temp_home),
                 "CLAUDE_RECALL_BASE": str(lessons_base),
                 "CLAUDE_RECALL_STATE": str(state_dir),
                 "PROJECT_DIR": str(project_root),
@@ -2077,7 +2083,7 @@ class TestStopHookLastReference:
 
     def test_last_reference_complete(self, temp_dirs):
         """APPROACH COMPLETE LAST should complete the most recent handoff."""
-        lessons_base, state_dir, project_root = temp_dirs
+        lessons_base, state_dir, project_root, temp_home = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
@@ -2093,6 +2099,7 @@ class TestStopHookLastReference:
             "transcript_path": str(transcript),
         })
 
+        # Override HOME to avoid reading live user settings (prevents flaky tests)
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=input_data,
@@ -2100,6 +2107,7 @@ class TestStopHookLastReference:
             text=True,
             env={
                 **os.environ,
+                "HOME": str(temp_home),
                 "CLAUDE_RECALL_BASE": str(lessons_base),
                 "CLAUDE_RECALL_STATE": str(state_dir),
                 "PROJECT_DIR": str(project_root),
@@ -2119,7 +2127,7 @@ class TestStopHookLastReference:
 
     def test_last_tracks_across_multiple_creates(self, temp_dirs):
         """LAST should track the most recently created handoff."""
-        lessons_base, state_dir, project_root = temp_dirs
+        lessons_base, state_dir, project_root, temp_home = temp_dirs
         hook_path = Path("adapters/claude-code/stop-hook.sh")
         if not hook_path.exists():
             pytest.skip("stop-hook.sh not found")
@@ -2136,6 +2144,7 @@ class TestStopHookLastReference:
             "transcript_path": str(transcript),
         })
 
+        # Override HOME to avoid reading live user settings (prevents flaky tests)
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=input_data,
@@ -2143,6 +2152,7 @@ class TestStopHookLastReference:
             text=True,
             env={
                 **os.environ,
+                "HOME": str(temp_home),
                 "CLAUDE_RECALL_BASE": str(lessons_base),
                 "CLAUDE_RECALL_STATE": str(state_dir),
                 "PROJECT_DIR": str(project_root),

@@ -228,7 +228,12 @@ def enrich_handoff(
     try:
         from core.context_extractor import extract_context
     except ImportError:
-        from .context_extractor import extract_context
+        # For installed flat package, add parent dir to path
+        import sys
+        _parent = str(Path(__file__).parent)
+        if _parent not in sys.path:
+            sys.path.insert(0, _parent)
+        from context_extractor import extract_context
 
     # Find transcript for handoff
     transcript_path = get_transcript_for_handoff(handoff_id, state_dir)
