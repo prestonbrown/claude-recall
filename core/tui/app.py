@@ -51,6 +51,7 @@ def _get_time_format() -> str:
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
@@ -342,6 +343,36 @@ def _format_tokens(tokens: int) -> str:
     if tokens >= 1000:
         return f"{tokens / 1000:.1f}k"
     return str(tokens)
+
+
+def _format_handoff_date(date_str: str) -> str:
+    """Format a handoff date string (YYYY-MM-DD) with relative labels.
+
+    Returns:
+        - "today" for today's date
+        - "yesterday" for yesterday's date
+        - "Jan 10" for dates within the current year
+        - "Jan 10, 2024" for dates in other years
+    """
+    if not date_str:
+        return "-"
+
+    try:
+        dt = date.fromisoformat(date_str)
+    except (ValueError, TypeError):
+        return date_str  # Return original if parse fails
+
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+
+    if dt == today:
+        return "today"
+    elif dt == yesterday:
+        return "yesterday"
+    elif dt.year == today.year:
+        return dt.strftime("%b %d")
+    else:
+        return dt.strftime("%b %d, %Y")
 
 
 def _compute_session_status(last_event_time: Optional[datetime]) -> str:
@@ -1889,12 +1920,15 @@ class RecallMonitorApp(App):
         """
         try:
             status = self.query_one("#handoff-filter-status", Static)
-            if visible < total:
-                status.update(f"[dim]Showing {visible} of {total} handoffs[/dim]")
-            else:
-                status.update("")
-        except Exception:
-            pass
+        except NoMatches:
+            return  # Widget not mounted yet, expected during startup
+
+        if visible < total:
+            status.update(f"[dim]Showing {visible} of {total} handoffs[/dim]")
+            status.display = True
+        else:
+            status.update("")
+            status.display = False
 
     def _should_show_handoff(self, handoff: HandoffSummary) -> bool:
         """Determine if a handoff should be shown based on current filter settings.
@@ -2047,8 +2081,8 @@ class RecallMonitorApp(App):
         # Format age
         age_display = f"{handoff.age_days}d"
 
-        # Format updated date
-        updated_display = handoff.updated if handoff.updated else "-"
+        # Format updated date with relative labels
+        updated_display = _format_handoff_date(handoff.updated)
 
         # Count tried and next steps
         tried_count = str(len(handoff.tried_steps))
@@ -2114,9 +2148,11 @@ class RecallMonitorApp(App):
 
         # Time tracking: sessions and duration
         duration_str = f"{handoff.age_days}d" if handoff.age_days > 0 else "today"
+        created_display = _format_handoff_date(handoff.created)
+        updated_display = _format_handoff_date(handoff.updated)
         details_log.write(
-            f"[bold]Created:[/bold] {handoff.created} | "
-            f"[bold]Updated:[/bold] {handoff.updated}"
+            f"[bold]Created:[/bold] {created_display} | "
+            f"[bold]Updated:[/bold] {updated_display}"
         )
         details_log.write(
             f"[bold]Time:[/bold] {session_count} session{'s' if session_count != 1 else ''} "
