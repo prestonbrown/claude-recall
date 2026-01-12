@@ -44,3 +44,30 @@ def isolate_state_dir(temp_state_dir: Path):
     # Reset logger after test
     from core.debug_logger import reset_logger
     reset_logger()
+
+
+@pytest.fixture
+def isolated_subprocess_env(tmp_path):
+    """Fully isolated environment for subprocess tests.
+
+    Creates isolated HOME, config, and state directories to prevent
+    parallel test interference and avoid reading live user config.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    config = home / ".config" / "claude-recall"
+    config.mkdir(parents=True)
+    state = home / ".local" / "state" / "claude-recall"
+    state.mkdir(parents=True)
+
+    # Create empty debug.log to prevent errors
+    (state / "debug.log").write_text("")
+
+    return {
+        **os.environ,
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_STATE_HOME": str(home / ".local" / "state"),
+        "CLAUDE_RECALL_BASE": str(config),
+        "CLAUDE_RECALL_STATE": str(state),
+    }

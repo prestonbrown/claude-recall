@@ -1420,7 +1420,7 @@ class TestCLI:
 class TestCaptureHook:
     """Tests for capture-hook.sh parsing."""
 
-    def test_capture_hook_parses_no_promote(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path):
+    def test_capture_hook_parses_no_promote(self, temp_lessons_base: Path, temp_project_root: Path, isolated_subprocess_env):
         """capture-hook.sh should parse LESSON (no-promote): syntax."""
 
         hook_path = Path("adapters/claude-code/capture-hook.sh")
@@ -1432,18 +1432,13 @@ class TestCaptureHook:
             "cwd": str(temp_project_root),
         })
 
-        # Override HOME to avoid reading live user settings (prevents flaky tests)
-        temp_home = tmp_path / "home"
-        temp_home.mkdir()
-
         result = subprocess.run(
             ["bash", str(hook_path)],
             input=input_data,
             capture_output=True,
             text=True,
             env={
-                **os.environ,
-                "HOME": str(temp_home),
+                **isolated_subprocess_env,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "PROJECT_DIR": str(temp_project_root),
             },
@@ -1732,20 +1727,22 @@ class TestReminderHook:
         assert "LESSON CHECK" in result.stdout
         assert "L001" in result.stdout
 
-    def test_reminder_env_var_overrides_config(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+    def test_reminder_env_var_overrides_config(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path, isolated_subprocess_env):
         """LESSON_REMIND_EVERY env var takes precedence over config."""
 
+        # Use HOME from isolated_subprocess_env
+        home = Path(isolated_subprocess_env["HOME"])
+
         # Config says remind every 100
-        config_dir = tmp_path / ".claude"
+        config_dir = home / ".claude"
         config_dir.mkdir()
         (config_dir / "settings.json").write_text(json.dumps({
             "claudeRecall": {"remindEvery": 100}
         }))
 
         # State at count 4, env says remind every 5
-        state_dir = tmp_path / ".config" / "claude-recall"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / ".reminder-state").write_text("4")
+        # State file goes in CLAUDE_RECALL_BASE (temp_lessons_base)
+        (temp_lessons_base / ".reminder-state").write_text("4")
 
         lessons_dir = temp_project_root / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
@@ -1759,8 +1756,7 @@ class TestReminderHook:
             text=True,
             cwd=str(temp_project_root),
             env={
-                **os.environ,
-                "HOME": str(tmp_path),
+                **isolated_subprocess_env,
                 "LESSON_REMIND_EVERY": "5",  # Override config
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
             },
@@ -1769,13 +1765,12 @@ class TestReminderHook:
         assert result.returncode == 0
         assert "LESSON CHECK" in result.stdout  # Triggered because 5 % 5 == 0
 
-    def test_reminder_default_when_no_config(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+    def test_reminder_default_when_no_config(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path, isolated_subprocess_env):
         """Default remindEvery=12 when no config file exists."""
 
         # No config file, state at 11
-        state_dir = tmp_path / ".config" / "claude-recall"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / ".reminder-state").write_text("11")
+        # State file goes in CLAUDE_RECALL_BASE (temp_lessons_base)
+        (temp_lessons_base / ".reminder-state").write_text("11")
 
         lessons_dir = temp_project_root / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
@@ -1789,8 +1784,7 @@ class TestReminderHook:
             text=True,
             cwd=str(temp_project_root),
             env={
-                **os.environ,
-                "HOME": str(tmp_path),
+                **isolated_subprocess_env,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
             },
         )
@@ -1798,12 +1792,11 @@ class TestReminderHook:
         assert result.returncode == 0
         assert "LESSON CHECK" in result.stdout  # Count 12, default reminder
 
-    def test_reminder_logs_when_debug_enabled(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path):
+    def test_reminder_logs_when_debug_enabled(self, temp_lessons_base: Path, temp_project_root: Path, tmp_path: Path, hook_path: Path, isolated_subprocess_env):
         """Reminder logs to debug.log when CLAUDE_RECALL_DEBUG>=1."""
 
-        state_dir = tmp_path / ".config" / "claude-recall"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / ".reminder-state").write_text("11")
+        # State file goes in CLAUDE_RECALL_BASE (temp_lessons_base)
+        (temp_lessons_base / ".reminder-state").write_text("11")
 
         lessons_dir = temp_project_root / ".claude-recall"
         lessons_dir.mkdir(exist_ok=True)
@@ -1818,8 +1811,7 @@ class TestReminderHook:
             text=True,
             cwd=str(temp_project_root),
             env={
-                **os.environ,
-                "HOME": str(tmp_path),
+                **isolated_subprocess_env,
                 "CLAUDE_RECALL_BASE": str(temp_lessons_base),
                 "CLAUDE_RECALL_DEBUG": "1",
             },
@@ -1828,8 +1820,8 @@ class TestReminderHook:
         assert result.returncode == 0
         assert "LESSON CHECK" in result.stdout
 
-        # Check debug log was created
-        debug_log = state_dir / "debug.log"
+        # Check debug log was created (in CLAUDE_RECALL_BASE)
+        debug_log = temp_lessons_base / "debug.log"
         assert debug_log.exists()
 
         log_content = debug_log.read_text()
