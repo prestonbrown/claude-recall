@@ -308,6 +308,7 @@ class Handoff:
     handoff: Optional["HandoffContext"] = None  # Rich context for session handoffs
     blocked_by: List[str] = field(default_factory=list)  # IDs of blocking handoffs
     stealth: bool = False  # If True, stored in HANDOFFS_LOCAL.md (not committed to git)
+    sessions: List[str] = field(default_factory=list)  # Session IDs linked to this handoff
 
     # Backward compatibility: 'files' is an alias for 'refs'
     @property

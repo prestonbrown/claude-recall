@@ -863,7 +863,7 @@ class RecallMonitorApp(App):
         Binding("p", "toggle_pause", "Pause"),
         Binding("r", "refresh", "Refresh"),
         Binding("a", "toggle_all", "All"),
-        Binding("e", "expand_session", "Expand"),
+        Binding("e", "expand_session", "Expand/Enrich"),
         Binding("c", "toggle_completed", "Completed"),
         Binding("w", "toggle_system_sessions", "System", show=True),
         Binding("t", "toggle_timeline", "Timeline", show=True),
@@ -2132,7 +2132,9 @@ class RecallMonitorApp(App):
         # Description
         if handoff.description:
             details_log.write(f"[bold]Description:[/bold] {handoff.description}")
-            details_log.write("")
+        else:
+            details_log.write("[dim](no description)[/dim]")
+        details_log.write("")
 
         # Tried steps with summary counts and icons
         if handoff.tried_steps:
@@ -2153,7 +2155,9 @@ class RecallMonitorApp(App):
                 outcome_icons = {"success": "[green][/green]", "fail": "[red][/red]", "partial": "[yellow]~[/yellow]"}
                 icon = outcome_icons.get(step.outcome, "?")
                 details_log.write(f"  {i}. {icon} {step.description}")
-            details_log.write("")
+        else:
+            details_log.write("[dim]Tried: none[/dim]")
+        details_log.write("")
 
         # Current progress (in-progress todo)
         if handoff.checkpoint:
@@ -2231,6 +2235,9 @@ class RecallMonitorApp(App):
                         details_log.write(f"    [red][/red] {blocker}")
 
                 details_log.write("")
+        else:
+            details_log.write("[dim](not yet enriched - press 'e' to extract context)[/dim]")
+            details_log.write("")
 
         # Sessions section with numbered navigation
         if sessions:
@@ -2253,6 +2260,8 @@ class RecallMonitorApp(App):
                 details_log.write(f"  [{i}] {session_display} ({created_display})")
             if len(sessions) > 9:
                 details_log.write(f"  [dim]... and {len(sessions) - 9} more[/dim]")
+        else:
+            details_log.write("[dim](no sessions linked)[/dim]")
 
         # Scroll to top
         self.call_after_refresh(details_log.scroll_home)
@@ -2812,7 +2821,24 @@ class RecallMonitorApp(App):
         self.notify(f"System sessions {'shown' if self._show_system_sessions else 'hidden'}")
 
     def action_expand_session(self) -> None:
-        """Open modal with expanded session details for the highlighted row."""
+        """Context-sensitive 'e' key action.
+
+        On session tab: Open modal with expanded session details.
+        On handoffs tab: Enrich the selected handoff with transcript context.
+        """
+        # Check which tab is active
+        try:
+            tabs = self.query_one(TabbedContent)
+            active_tab = tabs.active
+        except Exception:
+            active_tab = None
+
+        if active_tab == "handoffs":
+            # Enrich handoff
+            self._enrich_selected_handoff()
+            return
+
+        # Default: expand session (for session tab or other contexts)
         try:
             session_table = self.query_one("#session-list", DataTable)
         except Exception:
@@ -2841,6 +2867,27 @@ class RecallMonitorApp(App):
             self.push_screen(SessionDetailModal(session_id, summary))
         else:
             self.notify("Invalid session data format", severity="error")
+
+    @work(thread=True)
+    def _enrich_selected_handoff(self) -> None:
+        """Enrich the currently selected handoff with context extraction."""
+        if not self._current_handoff_id:
+            self.call_from_thread(self.notify, "No handoff selected", severity="warning")
+            return
+
+        try:
+            from core.handoffs import enrich_handoff
+        except ImportError:
+            from handoffs import enrich_handoff
+
+        result = enrich_handoff(self._current_handoff_id)
+
+        if result.success:
+            self.call_from_thread(self.notify, f"Enriched {self._current_handoff_id}", severity="information")
+            self.call_from_thread(self._refresh_handoff_list)
+        else:
+            error_msg = result.error or "Unknown error"
+            self.call_from_thread(self.notify, f"Enrichment failed: {error_msg}", severity="error")
 
     def action_copy_session(self) -> None:
         """Copy highlighted session data to clipboard."""

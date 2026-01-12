@@ -110,6 +110,207 @@ def _validate_ref(ref: str) -> bool:
     return bool(re.match(pattern, ref))
 
 
+# ============================================================================
+# Enrichment Types and Functions
+# ============================================================================
+
+from dataclasses import dataclass
+import os
+import json as json_mod
+
+
+@dataclass
+class EnrichmentResult:
+    """Result of enrichment operation.
+
+    Attributes:
+        success: True if enrichment completed successfully
+        error: Error message if enrichment failed
+        context: The extracted HandoffContext, if successful
+    """
+
+    success: bool
+    error: Optional[str] = None
+    context: Optional[HandoffContext] = None
+
+
+def _get_state_dir() -> Path:
+    """Get the state directory path.
+
+    Returns:
+        Path to state directory (from env or default)
+    """
+    state_dir = os.environ.get("CLAUDE_RECALL_STATE")
+    if state_dir:
+        return Path(state_dir)
+    return Path.home() / ".local" / "state" / "claude-recall"
+
+
+def _load_session_handoffs_global(state_dir: Optional[str] = None) -> dict:
+    """Load session-handoffs mapping from JSON file.
+
+    Args:
+        state_dir: State directory path (default: from environment)
+
+    Returns:
+        Dict mapping session_id -> session data
+    """
+    if state_dir:
+        file_path = Path(state_dir) / "session-handoffs.json"
+    else:
+        file_path = _get_state_dir() / "session-handoffs.json"
+
+    if not file_path.exists():
+        return {}
+
+    try:
+        return json_mod.loads(file_path.read_text())
+    except (json_mod.JSONDecodeError, OSError):
+        return {}
+
+
+def get_transcript_for_handoff(
+    handoff_id: str, state_dir: Optional[str] = None
+) -> Optional[str]:
+    """Find the most recent transcript for a handoff.
+
+    Looks up session-handoffs.json to find linked transcripts.
+
+    Args:
+        handoff_id: The handoff ID (e.g., 'hf-abc1234')
+        state_dir: State directory (default: from environment)
+
+    Returns:
+        Path to transcript, or None if not found
+    """
+    data = _load_session_handoffs_global(state_dir)
+
+    # Find all sessions linked to this handoff
+    linked_sessions = []
+    for session_id, entry in data.items():
+        if isinstance(entry, dict) and handoff_id and entry.get("handoff_id") == handoff_id:
+            transcript_path = entry.get("transcript_path")
+            created = entry.get("created", "")
+            if transcript_path:
+                linked_sessions.append((created, transcript_path))
+
+    if not linked_sessions:
+        return None
+
+    # Sort by created time (most recent first) and return the most recent transcript
+    linked_sessions.sort(key=lambda x: x[0], reverse=True)
+    return linked_sessions[0][1]
+
+
+def enrich_handoff(
+    handoff_id: str,
+    state_dir: Optional[str] = None,
+    project_dir: Optional[str] = None,
+) -> EnrichmentResult:
+    """Enrich a handoff by extracting context from its transcript.
+
+    Args:
+        handoff_id: The handoff ID to enrich
+        state_dir: State directory (default: from environment)
+        project_dir: Project directory (default: from environment)
+
+    Returns:
+        EnrichmentResult with success/error status
+    """
+    # Validate handoff_id format
+    if not handoff_id or not handoff_id.startswith("hf-"):
+        return EnrichmentResult(
+            success=False,
+            error=f"Invalid handoff ID format: {handoff_id}",
+        )
+
+    # Import extract_context lazily to avoid circular imports
+    try:
+        from core.context_extractor import extract_context
+    except ImportError:
+        from context_extractor import extract_context
+
+    # Find transcript for handoff
+    transcript_path = get_transcript_for_handoff(handoff_id, state_dir)
+    if not transcript_path:
+        return EnrichmentResult(
+            success=False,
+            error=f"No transcript found for handoff {handoff_id}",
+        )
+
+    # Verify transcript exists
+    if not Path(transcript_path).exists():
+        return EnrichmentResult(
+            success=False,
+            error=f"Transcript file not found: {transcript_path}",
+        )
+
+    # Extract context from transcript
+    context = extract_context(transcript_path)
+    if context is None:
+        return EnrichmentResult(
+            success=False,
+            error="Failed to extract context from transcript",
+        )
+
+    # Update handoff with extracted context
+    # Import LessonsManager lazily to avoid circular imports
+    try:
+        from core.manager import LessonsManager
+    except ImportError:
+        from manager import LessonsManager
+
+    # Get lessons base directory
+    base_path = (
+        os.environ.get("CLAUDE_RECALL_BASE")
+        or os.environ.get("RECALL_BASE")
+        or os.environ.get("LESSONS_BASE")
+    )
+    lessons_base = Path(base_path) if base_path else Path.home() / ".config" / "claude-recall"
+
+    # Get project root from environment or parameter
+    if project_dir:
+        project_root = Path(project_dir)
+    else:
+        project_dir_env = os.environ.get("PROJECT_DIR")
+        if project_dir_env:
+            project_root = Path(project_dir_env)
+        else:
+            project_root = Path.cwd()
+            while project_root != project_root.parent:
+                if (project_root / ".git").exists():
+                    break
+                project_root = project_root.parent
+            else:
+                project_root = Path.cwd()
+
+    try:
+        mgr = LessonsManager(lessons_base, project_root)
+
+        # Convert extracted context to HandoffContext from models
+        handoff_context = HandoffContext(
+            summary=context.summary,
+            critical_files=context.critical_files,
+            recent_changes=context.recent_changes,
+            learnings=context.learnings,
+            blockers=context.blockers,
+            git_ref=context.git_ref,
+        )
+
+        # Update handoff with context
+        mgr.handoff_update_context(handoff_id, handoff_context)
+
+        return EnrichmentResult(
+            success=True,
+            context=handoff_context,
+        )
+    except Exception as e:
+        return EnrichmentResult(
+            success=False,
+            error=f"Failed to update handoff: {str(e)}",
+        )
+
+
 class HandoffsMixin:
     """
     Mixin containing handoff-related methods.
@@ -445,6 +646,17 @@ class HandoffsMixin:
                         blocked_by = [b.strip() for b in blocked_str.split(",") if b.strip()]
                     idx += 1
 
+            # Parse sessions field (optional)
+            sessions = []
+            sessions_pattern = re.compile(r"^\s*-\s*\*\*Sessions\*\*:\s*(.*)$")
+            if idx < len(lines):
+                sessions_match = sessions_pattern.match(lines[idx])
+                if sessions_match:
+                    sessions_str = sessions_match.group(1).strip()
+                    if sessions_str:
+                        sessions = [s.strip() for s in sessions_str.split(",") if s.strip()]
+                    idx += 1
+
             # Parse tried section
             tried = []
             # Look for **Tried**: header
@@ -497,6 +709,7 @@ class HandoffsMixin:
                 handoff=handoff_context,
                 blocked_by=blocked_by,
                 stealth=stealth,
+                sessions=sessions,
             ))
 
         return handoffs
@@ -535,6 +748,10 @@ class HandoffsMixin:
         # Add blocked_by if present
         if handoff.blocked_by:
             lines.append(f"- **Blocked By**: {', '.join(handoff.blocked_by)}")
+
+        # Add sessions if present
+        if handoff.sessions:
+            lines.append(f"- **Sessions**: {', '.join(handoff.sessions)}")
 
         lines.append("")
 
@@ -2337,12 +2554,18 @@ Consider extracting lessons about:
         if not handoff:
             return None
 
-        # Build or update the handoff context with transcript info
-        # Store transcripts in a format that can be displayed in HANDOFFS.md
-        # We'll store in the context.critical_files for now (they're file refs)
-        # In the future, we may add a dedicated transcripts field
+        # Update the handoff's sessions list and persist to file
+        def update_fn(h: Handoff) -> None:
+            if session_id not in h.sessions:
+                h.sessions.append(session_id)
 
-        # For now, log the transcript addition
+        try:
+            self._update_handoff_in_file(handoff_id, update_fn)
+        except ValueError:
+            # Handoff not found in file - just log and return
+            pass
+
+        # Log the transcript addition
         logger = get_logger()
         logger.mutation("add_transcript", handoff_id, {
             "session_id": session_id,
