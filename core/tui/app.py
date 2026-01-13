@@ -1103,6 +1103,16 @@ class RecallMonitorApp(App):
                 lines.append(f"  {hook}: avg={timing['avg_ms']:.0f}ms p95={timing['p95_ms']:.0f}ms (n={timing['count']})")
             lines.append("")
 
+        # Context Budget (24h avg)
+        if stats.injection_count > 0:
+            lines.append("[bold]Context Budget (24h avg)[/bold]")
+            lines.append(f"  Total: ~{int(stats.avg_total_tokens)} tokens")
+            lines.append(f"  |-- Lessons: ~{int(stats.avg_lessons_tokens)} tokens")
+            lines.append(f"  |-- Handoffs: ~{int(stats.avg_handoffs_tokens)} tokens")
+            lines.append(f"  +-- Duties: ~{int(stats.avg_duties_tokens)} tokens")
+            lines.append(f"  (n={stats.injection_count} injections)")
+            lines.append("")
+
         # Log info
         lines.append("[bold]Log File[/bold]")
         lines.append(f"  Size: {stats.log_size_mb:.2f} MB")

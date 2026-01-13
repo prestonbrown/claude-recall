@@ -141,6 +141,12 @@ class StatsAggregator:
         all_hook_timings: List[float] = []
         hook_timings: Dict[str, List[float]] = defaultdict(list)
 
+        # Token budget tracking
+        total_tokens_list: List[int] = []
+        lessons_tokens_list: List[int] = []
+        handoffs_tokens_list: List[int] = []
+        duties_tokens_list: List[int] = []
+
         # Process events
         for event in events:
             # Check if event is within rolling 24-hour window
@@ -172,6 +178,13 @@ class StatsAggregator:
                     hook_name = event.get("hook") or "unknown"
                     hook_timings[hook_name].append(timing)
 
+            # Collect token budget data (filtered to 24h)
+            if event.event == EventType.INJECTION_BUDGET and is_recent:
+                total_tokens_list.append(event.get("total_tokens", 0))
+                lessons_tokens_list.append(event.get("lessons_tokens", 0))
+                handoffs_tokens_list.append(event.get("handoffs_tokens", 0))
+                duties_tokens_list.append(event.get("duties_tokens", 0))
+
         # Calculate timing statistics
         avg_hook_ms = 0.0
         p95_hook_ms = 0.0
@@ -186,6 +199,22 @@ class StatsAggregator:
         log_size_bytes = self.log_reader.get_log_size_bytes()
         log_size_mb = log_size_bytes / (1024 * 1024)
 
+        # Calculate token budget averages
+        avg_total_tokens = 0.0
+        avg_lessons_tokens = 0.0
+        avg_handoffs_tokens = 0.0
+        avg_duties_tokens = 0.0
+        injection_count = len(total_tokens_list)
+
+        if total_tokens_list:
+            avg_total_tokens = sum(total_tokens_list) / len(total_tokens_list)
+        if lessons_tokens_list:
+            avg_lessons_tokens = sum(lessons_tokens_list) / len(lessons_tokens_list)
+        if handoffs_tokens_list:
+            avg_handoffs_tokens = sum(handoffs_tokens_list) / len(handoffs_tokens_list)
+        if duties_tokens_list:
+            avg_duties_tokens = sum(duties_tokens_list) / len(duties_tokens_list)
+
         result = SystemStats(
             sessions_today=sessions_today,
             citations_today=citations_today,
@@ -198,6 +227,11 @@ class StatsAggregator:
             events_by_type=dict(events_by_type),
             events_by_project=dict(events_by_project),
             hook_timings=dict(hook_timings),
+            avg_total_tokens=round(avg_total_tokens, 0),
+            avg_lessons_tokens=round(avg_lessons_tokens, 0),
+            avg_handoffs_tokens=round(avg_handoffs_tokens, 0),
+            avg_duties_tokens=round(avg_duties_tokens, 0),
+            injection_count=injection_count,
         )
 
         # Cache the result

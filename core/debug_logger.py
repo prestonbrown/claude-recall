@@ -481,6 +481,7 @@ class DebugLogger:
         duration_ms: int,
         top_scores: List[tuple],
         error: Optional[str] = None,
+        cache_hit: bool = False,
     ) -> None:
         """Log Haiku relevance scoring - level 2."""
         if self._level < 2:
@@ -495,6 +496,8 @@ class DebugLogger:
         }
         if error:
             event["err"] = error
+        if cache_hit:
+            event["cache"] = True
         self._write(event)
 
     def injection_generated(
@@ -528,6 +531,34 @@ class DebugLogger:
                 "level": "error",
                 "error_event": event_name,
                 "message": message[:500],  # Truncate long error messages
+            }
+        )
+
+    def injection_budget(
+        self,
+        total_tokens: int,
+        lessons_tokens: int,
+        handoffs_tokens: int,
+        duties_tokens: int,
+    ) -> None:
+        """Log context injection token budget breakdown.
+
+        Args:
+            total_tokens: Total tokens injected
+            lessons_tokens: Tokens from lessons component
+            handoffs_tokens: Tokens from handoffs component
+            duties_tokens: Tokens from duty reminders
+        """
+        if self._level < 1:
+            return
+        self._write(
+            {
+                "event": "injection_budget",
+                "level": "info",
+                "total_tokens": total_tokens,
+                "lessons_tokens": lessons_tokens,
+                "handoffs_tokens": handoffs_tokens,
+                "duties_tokens": duties_tokens,
             }
         )
 

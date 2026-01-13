@@ -334,6 +334,15 @@ def main():
     error_parser.add_argument("event", help="Error event name")
     error_parser.add_argument("message", help="Error message")
 
+    # debug injection-budget - log token budget breakdown
+    budget_parser = debug_subparsers.add_parser(
+        "injection-budget", help="Log injection token budget breakdown"
+    )
+    budget_parser.add_argument("total", type=int, help="Total tokens")
+    budget_parser.add_argument("lessons", type=int, help="Lessons tokens")
+    budget_parser.add_argument("handoffs", type=int, help="Handoffs tokens")
+    budget_parser.add_argument("duties", type=int, help="Duties tokens")
+
     # config command - read settings for shell scripts
     config_parser = subparsers.add_parser("config", help="Get configuration value")
     config_parser.add_argument("key", help="Config key (dot notation, e.g., claudeRecall.debugLevel)")
@@ -851,6 +860,14 @@ def main():
             elif args.debug_command == "log-error":
                 # Log an error event for debugging hook failures
                 logger.inject_error(args.event, args.message)
+            elif args.debug_command == "injection-budget":
+                # Log injection token budget breakdown
+                logger.injection_budget(
+                    total_tokens=args.total,
+                    lessons_tokens=args.lessons,
+                    handoffs_tokens=args.handoffs,
+                    duties_tokens=args.duties,
+                )
             else:
                 print("Unknown debug command", file=sys.stderr)
                 sys.exit(1)

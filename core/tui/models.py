@@ -26,6 +26,7 @@ class EventType:
     HANDOFF_CHANGE = "handoff_change"
     HANDOFF_COMPLETED = "handoff_completed"
     LESSON_ADDED = "lesson_added"
+    INJECTION_BUDGET = "injection_budget"
 
 
 @dataclass
@@ -118,6 +119,12 @@ class SystemStats:
     events_by_type: Dict[str, int] = field(default_factory=dict)
     events_by_project: Dict[str, int] = field(default_factory=dict)
     hook_timings: Dict[str, List[float]] = field(default_factory=dict)
+    # Context budget tracking (24h averages)
+    avg_total_tokens: float = 0.0
+    avg_lessons_tokens: float = 0.0
+    avg_handoffs_tokens: float = 0.0
+    avg_duties_tokens: float = 0.0
+    injection_count: int = 0
 
 
 @dataclass
