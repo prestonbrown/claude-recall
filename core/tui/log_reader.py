@@ -41,7 +41,10 @@ def _format_details_from_extracted(event: DebugEvent, d: dict) -> str:
 
     elif event.event == "hook_end":
         ms = float(d["total_ms"])
-        return f"{d['hook']}: {ms:.0f}ms"
+        base = f"{d['hook']}: {ms:.0f}ms"
+        if "phases" in d:
+            return f"{base} ({d['phases']})"
+        return base
 
     elif event.event == "hook_phase":
         ms = float(d["ms"])
@@ -55,6 +58,16 @@ def _format_details_from_extracted(event: DebugEvent, d: dict) -> str:
 
     elif event.event == "lesson_added":
         return f"{d['lesson_id']} ({d['level']})"
+
+    elif event.event == "relevance_score":
+        ms = float(d["duration_ms"])
+        cache = d.get("cache_hit", "")
+        if d.get("error"):
+            return f"relevance: {ms:.0f}ms ERR: {d['error']}"
+        result = f"relevance: {ms:.0f}ms ({d['lesson_count']} lessons)"
+        if cache:
+            result += f" {cache}"
+        return result
 
     return ""
 

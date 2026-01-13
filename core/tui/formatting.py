@@ -84,6 +84,7 @@ EVENT_TYPE_COLORS = {
     "hook_end": "dim",
     "hook_phase": "dim",
     "lesson_added": "bright_green",
+    "relevance_score": "blue",
 }
 
 # ANSI color codes for terminal output
@@ -100,6 +101,7 @@ ANSI_COLORS = {
     "hook_end": "\033[2m",
     "hook_phase": "\033[2m",
     "lesson_added": "\033[92m",  # bright_green
+    "relevance_score": "\033[34m",  # blue
     "reset": "\033[0m",
 }
 
@@ -147,6 +149,11 @@ def extract_event_details(event: "DebugEvent") -> Dict[str, str]:
     elif event.event == "hook_end":
         result["hook"] = raw.get("hook", "")
         result["total_ms"] = str(raw.get("total_ms", 0))
+        phases = raw.get("phases", {})
+        if phases:
+            # Format as "phase:ms, phase:ms" for compact display
+            phase_parts = [f"{k}:{int(v)}" for k, v in phases.items()]
+            result["phases"] = ", ".join(phase_parts)
 
     elif event.event == "hook_phase":
         result["hook"] = raw.get("hook", "")
@@ -164,5 +171,13 @@ def extract_event_details(event: "DebugEvent") -> Dict[str, str]:
     elif event.event == "lesson_added":
         result["lesson_id"] = raw.get("lesson_id", "")
         result["level"] = raw.get("lesson_level", "")
+
+    elif event.event == "relevance_score":
+        result["duration_ms"] = str(raw.get("duration_ms", 0))
+        result["lesson_count"] = str(raw.get("lesson_count", 0))
+        if raw.get("cache_hit"):
+            result["cache_hit"] = "✓ cache"
+        if raw.get("error"):
+            result["error"] = str(raw.get("error", ""))[:30]
 
     return result
