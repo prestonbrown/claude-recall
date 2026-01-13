@@ -1,0 +1,541 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""
+Test suite for CLI Command pattern implementation.
+
+This is a TDD test file - tests are written BEFORE the implementation.
+Run with: pytest tests/test_cli_commands.py -v
+
+The Command pattern provides:
+- Abstract Command base class with execute() method
+- Command registry for dispatch
+- Incremental migration path from if-elif chain
+"""
+
+import pytest
+from abc import ABC
+from argparse import Namespace
+from pathlib import Path
+
+
+# =============================================================================
+# Command Pattern Structure Tests
+# =============================================================================
+
+
+class TestCommandPatternStructure:
+    """Tests for the Command pattern base structure."""
+
+    def test_command_module_exists(self):
+        """The commands module should exist."""
+        from core import commands
+        assert commands is not None
+
+    def test_command_is_abstract_base_class(self):
+        """Command should be an abstract base class."""
+        from core.commands import Command
+        assert issubclass(Command, ABC)
+
+    def test_command_has_execute_method(self):
+        """Command should have an abstract execute method."""
+        from core.commands import Command
+        # ABC with abstractmethod means it can't be instantiated directly
+        with pytest.raises(TypeError, match="abstract"):
+            Command()
+
+    def test_command_execute_signature(self):
+        """Execute method should accept args and manager parameters."""
+        from core.commands import Command
+        import inspect
+        sig = inspect.signature(Command.execute)
+        params = list(sig.parameters.keys())
+        assert "args" in params
+        assert "manager" in params
+
+    def test_command_registry_exists(self):
+        """COMMAND_REGISTRY should be a dict."""
+        from core.commands import COMMAND_REGISTRY
+        assert isinstance(COMMAND_REGISTRY, dict)
+
+    def test_dispatch_command_function_exists(self):
+        """dispatch_command function should exist."""
+        from core.commands import dispatch_command
+        assert callable(dispatch_command)
+
+
+# =============================================================================
+# Command Registration Tests
+# =============================================================================
+
+
+class TestCommandRegistration:
+    """Tests for command registration in the registry."""
+
+    def test_add_command_is_registered(self):
+        """AddCommand should be registered for 'add'."""
+        from core.commands import COMMAND_REGISTRY, AddCommand
+        assert "add" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["add"] is AddCommand
+
+    def test_add_ai_command_is_registered(self):
+        """AddAICommand should be registered for 'add-ai'."""
+        from core.commands import COMMAND_REGISTRY, AddAICommand
+        assert "add-ai" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["add-ai"] is AddAICommand
+
+    def test_add_system_command_is_registered(self):
+        """AddSystemCommand should be registered for 'add-system'."""
+        from core.commands import COMMAND_REGISTRY, AddSystemCommand
+        assert "add-system" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["add-system"] is AddSystemCommand
+
+    def test_cite_command_is_registered(self):
+        """CiteCommand should be registered for 'cite'."""
+        from core.commands import COMMAND_REGISTRY, CiteCommand
+        assert "cite" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["cite"] is CiteCommand
+
+    def test_inject_command_is_registered(self):
+        """InjectCommand should be registered for 'inject'."""
+        from core.commands import COMMAND_REGISTRY, InjectCommand
+        assert "inject" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["inject"] is InjectCommand
+
+    def test_list_command_is_registered(self):
+        """ListCommand should be registered for 'list'."""
+        from core.commands import COMMAND_REGISTRY, ListCommand
+        assert "list" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["list"] is ListCommand
+
+    def test_decay_command_is_registered(self):
+        """DecayCommand should be registered for 'decay'."""
+        from core.commands import COMMAND_REGISTRY, DecayCommand
+        assert "decay" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["decay"] is DecayCommand
+
+    def test_edit_command_is_registered(self):
+        """EditCommand should be registered for 'edit'."""
+        from core.commands import COMMAND_REGISTRY, EditCommand
+        assert "edit" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["edit"] is EditCommand
+
+    def test_delete_command_is_registered(self):
+        """DeleteCommand should be registered for 'delete'."""
+        from core.commands import COMMAND_REGISTRY, DeleteCommand
+        assert "delete" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["delete"] is DeleteCommand
+
+    def test_promote_command_is_registered(self):
+        """PromoteCommand should be registered for 'promote'."""
+        from core.commands import COMMAND_REGISTRY, PromoteCommand
+        assert "promote" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["promote"] is PromoteCommand
+
+    def test_score_relevance_command_is_registered(self):
+        """ScoreRelevanceCommand should be registered for 'score-relevance'."""
+        from core.commands import COMMAND_REGISTRY, ScoreRelevanceCommand
+        assert "score-relevance" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["score-relevance"] is ScoreRelevanceCommand
+
+
+# =============================================================================
+# Command Execution Tests
+# =============================================================================
+
+
+class TestCommandExecution:
+    """Tests for command execution behavior."""
+
+    @pytest.fixture
+    def temp_lessons_base(self, tmp_path: Path) -> Path:
+        """Create a temporary lessons base directory."""
+        lessons_base = tmp_path / ".config" / "claude-recall"
+        lessons_base.mkdir(parents=True)
+        return lessons_base
+
+    @pytest.fixture
+    def temp_project_root(self, tmp_path: Path) -> Path:
+        """Create a temporary project directory with .git folder."""
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".git").mkdir()
+        (project / ".claude-recall").mkdir()
+        return project
+
+    @pytest.fixture
+    def manager(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Create a LessonsManager instance with temporary paths."""
+        from core.manager import LessonsManager
+        return LessonsManager(
+            lessons_base=temp_lessons_base,
+            project_root=temp_project_root,
+        )
+
+    def test_add_command_executes_successfully(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """AddCommand.execute should add a lesson and return 0."""
+        from core.commands import AddCommand
+
+        args = Namespace(
+            command="add",
+            category="pattern",
+            title="Test Pattern",
+            content="Test content here",
+            system=False,
+            force=False,
+            no_promote=False,
+            type="",
+        )
+
+        cmd = AddCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "L001" in captured.out
+        assert "Test Pattern" in captured.out
+
+    def test_add_command_with_system_flag(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """AddCommand with --system flag should add system lesson."""
+        from core.commands import AddCommand
+
+        args = Namespace(
+            command="add",
+            category="preference",
+            title="System Pref",
+            content="Always do this",
+            system=True,
+            force=False,
+            no_promote=False,
+            type="",
+        )
+
+        cmd = AddCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "S001" in captured.out
+        assert "system" in captured.out.lower()
+
+    def test_cite_command_executes_successfully(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """CiteCommand.execute should cite a lesson and return 0."""
+        from core.commands import CiteCommand
+
+        # First add a lesson
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Test",
+            content="Content",
+        )
+
+        args = Namespace(
+            command="cite",
+            lesson_ids=["L001"],
+        )
+
+        cmd = CiteCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "OK" in captured.out
+
+    def test_cite_command_handles_multiple_ids(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """CiteCommand should handle multiple lesson IDs."""
+        from core.commands import CiteCommand
+
+        # Add two lessons
+        manager.add_lesson(level="project", category="pattern", title="Test1", content="C1")
+        manager.add_lesson(level="project", category="pattern", title="Test2", content="C2")
+
+        args = Namespace(
+            command="cite",
+            lesson_ids=["L001", "L002"],
+        )
+
+        cmd = CiteCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        # Should have output for both citations
+        assert captured.out.count("OK") == 2
+
+    def test_inject_command_executes_successfully(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """InjectCommand.execute should output lessons context."""
+        from core.commands import InjectCommand
+
+        # Add a lesson to inject
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Inject Me",
+            content="Important content",
+        )
+
+        args = Namespace(
+            command="inject",
+            top_n=5,
+        )
+
+        cmd = InjectCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Inject Me" in captured.out or "L001" in captured.out
+
+    def test_list_command_executes_successfully(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """ListCommand.execute should list lessons."""
+        from core.commands import ListCommand
+
+        # Add some lessons
+        manager.add_lesson(level="project", category="pattern", title="Listed", content="C")
+
+        args = Namespace(
+            command="list",
+            project=False,
+            system=False,
+            search=None,
+            category=None,
+            stale=False,
+        )
+
+        cmd = ListCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Listed" in captured.out or "L001" in captured.out
+
+    def test_delete_command_executes_successfully(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """DeleteCommand.execute should delete a lesson."""
+        from core.commands import DeleteCommand
+
+        # Add then delete
+        manager.add_lesson(level="project", category="pattern", title="Gone", content="C")
+
+        args = Namespace(
+            command="delete",
+            lesson_id="L001",
+        )
+
+        cmd = DeleteCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Deleted" in captured.out
+        assert "L001" in captured.out
+
+
+# =============================================================================
+# Dispatch Tests
+# =============================================================================
+
+
+class TestDispatchCommand:
+    """Tests for the dispatch_command function."""
+
+    @pytest.fixture
+    def temp_lessons_base(self, tmp_path: Path) -> Path:
+        """Create a temporary lessons base directory."""
+        lessons_base = tmp_path / ".config" / "claude-recall"
+        lessons_base.mkdir(parents=True)
+        return lessons_base
+
+    @pytest.fixture
+    def temp_project_root(self, tmp_path: Path) -> Path:
+        """Create a temporary project directory with .git folder."""
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".git").mkdir()
+        (project / ".claude-recall").mkdir()
+        return project
+
+    @pytest.fixture
+    def manager(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Create a LessonsManager instance with temporary paths."""
+        from core.manager import LessonsManager
+        return LessonsManager(
+            lessons_base=temp_lessons_base,
+            project_root=temp_project_root,
+        )
+
+    def test_dispatch_routes_to_correct_command(self, manager, capsys):
+        """dispatch_command should route to the correct command class."""
+        from core.commands import dispatch_command
+
+        args = Namespace(
+            command="inject",
+            top_n=3,
+        )
+
+        result = dispatch_command(args, manager)
+        assert result == 0
+
+    def test_dispatch_unknown_command_returns_error(self, manager, capsys):
+        """dispatch_command should return 1 for unknown commands."""
+        from core.commands import dispatch_command
+
+        args = Namespace(command="unknown-command-xyz")
+
+        result = dispatch_command(args, manager)
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Unknown command" in captured.out
+
+    def test_dispatch_add_command(self, manager, capsys):
+        """dispatch_command should correctly dispatch 'add'."""
+        from core.commands import dispatch_command
+
+        args = Namespace(
+            command="add",
+            category="pattern",
+            title="Dispatched",
+            content="Content",
+            system=False,
+            force=False,
+            no_promote=False,
+            type="",
+        )
+
+        result = dispatch_command(args, manager)
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "L001" in captured.out
+
+
+# =============================================================================
+# Command Return Value Tests
+# =============================================================================
+
+
+class TestCommandReturnValues:
+    """Tests for command return values and error handling."""
+
+    @pytest.fixture
+    def temp_lessons_base(self, tmp_path: Path) -> Path:
+        """Create a temporary lessons base directory."""
+        lessons_base = tmp_path / ".config" / "claude-recall"
+        lessons_base.mkdir(parents=True)
+        return lessons_base
+
+    @pytest.fixture
+    def temp_project_root(self, tmp_path: Path) -> Path:
+        """Create a temporary project directory with .git folder."""
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".git").mkdir()
+        (project / ".claude-recall").mkdir()
+        return project
+
+    @pytest.fixture
+    def manager(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Create a LessonsManager instance with temporary paths."""
+        from core.manager import LessonsManager
+        return LessonsManager(
+            lessons_base=temp_lessons_base,
+            project_root=temp_project_root,
+        )
+
+    def test_all_commands_return_int(self, manager, capsys):
+        """All command execute methods should return an integer."""
+        from core.commands import COMMAND_REGISTRY
+
+        # Test a few representative commands with valid args
+        test_cases = [
+            ("inject", Namespace(command="inject", top_n=3)),
+            ("list", Namespace(
+                command="list", project=False, system=False,
+                search=None, category=None, stale=False
+            )),
+        ]
+
+        for cmd_name, args in test_cases:
+            cmd_class = COMMAND_REGISTRY[cmd_name]
+            cmd = cmd_class()
+            result = cmd.execute(args, manager)
+            assert isinstance(result, int), f"{cmd_name} should return int"
+
+    def test_successful_commands_return_zero(self, manager, capsys):
+        """Successful command execution should return 0."""
+        from core.commands import InjectCommand
+
+        args = Namespace(command="inject", top_n=5)
+        cmd = InjectCommand()
+        result = cmd.execute(args, manager)
+        assert result == 0
+
+
+# =============================================================================
+# Integration Tests
+# =============================================================================
+
+
+class TestCommandPatternIntegration:
+    """Integration tests for command pattern with cli.py."""
+
+    @pytest.fixture
+    def temp_lessons_base(self, tmp_path: Path) -> Path:
+        """Create a temporary lessons base directory."""
+        lessons_base = tmp_path / ".config" / "claude-recall"
+        lessons_base.mkdir(parents=True)
+        return lessons_base
+
+    @pytest.fixture
+    def temp_project_root(self, tmp_path: Path) -> Path:
+        """Create a temporary project directory with .git folder."""
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".git").mkdir()
+        (project / ".claude-recall").mkdir()
+        return project
+
+    def test_command_registry_covers_basic_commands(self):
+        """Registry should contain all basic lesson commands."""
+        from core.commands import COMMAND_REGISTRY
+
+        basic_commands = [
+            "add", "add-ai", "add-system",
+            "cite", "inject", "list",
+            "decay", "edit", "delete", "promote",
+            "score-relevance",
+        ]
+
+        for cmd in basic_commands:
+            assert cmd in COMMAND_REGISTRY, f"'{cmd}' should be in COMMAND_REGISTRY"
+
+    def test_all_registered_commands_are_command_subclasses(self):
+        """All registered commands should be subclasses of Command."""
+        from core.commands import COMMAND_REGISTRY, Command
+
+        for name, cmd_class in COMMAND_REGISTRY.items():
+            assert issubclass(cmd_class, Command), \
+                f"'{name}' should be a Command subclass"
+
+    def test_all_registered_commands_can_be_instantiated(self):
+        """All registered command classes should be instantiable."""
+        from core.commands import COMMAND_REGISTRY
+
+        for name, cmd_class in COMMAND_REGISTRY.items():
+            try:
+                cmd = cmd_class()
+                assert cmd is not None
+            except TypeError as e:
+                pytest.fail(f"'{name}' command failed to instantiate: {e}")

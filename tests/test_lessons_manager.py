@@ -1505,6 +1505,7 @@ class TestHookPathResolution:
         core_dir = Path(__file__).parent.parent / "core"
         modules = [
             "cli.py",
+            "commands.py",
             "manager.py",
             "debug_logger.py",
             "models.py",
@@ -1512,6 +1513,7 @@ class TestHookPathResolution:
             "file_lock.py",
             "lessons.py",
             "handoffs.py",  # Renamed from approaches.py
+            "paths.py",
             "__init__.py",
             "_version.py",
         ]
@@ -1611,9 +1613,9 @@ class TestInjectHookHandoffs:
         # Copy Python modules
         core_dir = Path(__file__).parent.parent / "core"
         modules = [
-            "cli.py", "manager.py", "debug_logger.py", "models.py",
+            "cli.py", "commands.py", "manager.py", "debug_logger.py", "models.py",
             "parsing.py", "file_lock.py", "lessons.py", "handoffs.py",
-            "__init__.py", "_version.py",
+            "paths.py", "__init__.py", "_version.py",
         ]
         for module in modules:
             src = core_dir / module
@@ -2537,6 +2539,215 @@ class TestInjectErrorLogging:
 
         # The message should be truncated to 500 chars
         assert logs.count("X") == 500
+
+
+# =============================================================================
+# Level/ID Parser Helpers
+# =============================================================================
+
+
+class TestLevelIdHelpers:
+    """Tests for _get_level_from_id and _get_file_path_for_id helper methods."""
+
+    def test_get_level_from_id_system_s001(self, manager: "LessonsManager"):
+        """S001 should return 'system' level."""
+        assert manager._get_level_from_id("S001") == "system"
+
+    def test_get_level_from_id_system_s999(self, manager: "LessonsManager"):
+        """S999 should return 'system' level."""
+        assert manager._get_level_from_id("S999") == "system"
+
+    def test_get_level_from_id_project_l001(self, manager: "LessonsManager"):
+        """L001 should return 'project' level."""
+        assert manager._get_level_from_id("L001") == "project"
+
+    def test_get_level_from_id_project_l999(self, manager: "LessonsManager"):
+        """L999 should return 'project' level."""
+        assert manager._get_level_from_id("L999") == "project"
+
+    def test_get_file_path_for_id_system(self, manager: "LessonsManager"):
+        """S### should return system_lessons_file path."""
+        result = manager._get_file_path_for_id("S001")
+        assert result == manager.system_lessons_file
+
+    def test_get_file_path_for_id_project(self, manager: "LessonsManager"):
+        """L### should return project_lessons_file path."""
+        result = manager._get_file_path_for_id("L001")
+        assert result == manager.project_lessons_file
+
+    def test_get_file_path_for_id_system_high_number(self, manager: "LessonsManager"):
+        """S999 should return system_lessons_file path."""
+        result = manager._get_file_path_for_id("S999")
+        assert result == manager.system_lessons_file
+
+    def test_get_file_path_for_id_project_high_number(self, manager: "LessonsManager"):
+        """L999 should return project_lessons_file path."""
+        result = manager._get_file_path_for_id("L999")
+        assert result == manager.project_lessons_file
+
+
+# =============================================================================
+# Atomic Update Pattern
+# =============================================================================
+
+
+class TestAtomicUpdatePattern:
+    """Tests for the _atomic_update_lessons_file helper method."""
+
+    def test_atomic_update_lessons_modifies_file(self, manager: "LessonsManager"):
+        """Given a lesson file, when atomic update modifies it, changes are persisted."""
+        # Setup: Create a lesson to modify
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Original title",
+            content="Original content",
+        )
+
+        # Define an update function that modifies the first lesson's content
+        def update_fn(lessons):
+            lessons[0].content = "Modified content"
+
+        # Execute the atomic update
+        manager._atomic_update_lessons_file(
+            manager.project_lessons_file,
+            update_fn,
+            level="project"
+        )
+
+        # Verify: Re-read the lesson and check the content was modified
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.content == "Modified content"
+
+    def test_atomic_update_lessons_uses_file_lock(self, manager: "LessonsManager"):
+        """Verify file locking is used during atomic update."""
+        from unittest.mock import patch, MagicMock
+
+        # Setup: Create a lesson file
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Test",
+            content="Content",
+        )
+
+        # Track whether FileLock was called
+        lock_called = False
+        original_file_lock = None
+
+        # Import FileLock to patch it
+        try:
+            from core.file_lock import FileLock
+            original_file_lock = FileLock
+        except ImportError:
+            from file_lock import FileLock
+            original_file_lock = FileLock
+
+        class MockFileLock:
+            def __init__(self, path):
+                nonlocal lock_called
+                lock_called = True
+                self.path = path
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        # Patch FileLock and execute update
+        with patch("core.lessons.FileLock", MockFileLock):
+            def noop_update(lessons):
+                pass
+
+            manager._atomic_update_lessons_file(
+                manager.project_lessons_file,
+                noop_update,
+                level="project"
+            )
+
+        assert lock_called, "FileLock should be used during atomic update"
+
+    def test_atomic_update_handles_empty_file(self, manager: "LessonsManager"):
+        """Empty file should not crash and update_fn receives empty list."""
+        # Setup: Initialize an empty lessons file (just header, no lessons)
+        manager.init_lessons_file("project")
+
+        received_lessons = []
+
+        def capture_update(lessons):
+            nonlocal received_lessons
+            received_lessons = list(lessons)
+
+        # Should not raise an exception
+        manager._atomic_update_lessons_file(
+            manager.project_lessons_file,
+            capture_update,
+            level="project"
+        )
+
+        # Should receive an empty list
+        assert received_lessons == []
+
+    def test_atomic_update_modifies_list_in_place(self, manager: "LessonsManager"):
+        """The update_fn should be able to modify the lessons list in-place."""
+        # Setup: Create two lessons
+        manager.add_lesson(level="project", category="pattern", title="Keep", content="Keep this")
+        manager.add_lesson(level="project", category="pattern", title="Remove", content="Delete this")
+
+        def remove_second(lessons):
+            # Remove the second lesson in-place
+            del lessons[1]
+
+        manager._atomic_update_lessons_file(
+            manager.project_lessons_file,
+            remove_second,
+            level="project"
+        )
+
+        # Verify only one lesson remains
+        lessons = manager.list_lessons(scope="project")
+        assert len(lessons) == 1
+        assert lessons[0].title == "Keep"
+
+    def test_atomic_update_appends_new_lesson(self, manager: "LessonsManager"):
+        """The update_fn should be able to append new lessons."""
+        from datetime import date
+
+        try:
+            from core.models import Lesson
+        except ImportError:
+            from models import Lesson
+
+        manager.add_lesson(level="project", category="pattern", title="Existing", content="Existing content")
+
+        def append_lesson(lessons):
+            new_lesson = Lesson(
+                id="L002",
+                title="New lesson",
+                content="New content",
+                uses=1,
+                velocity=0,
+                learned=date.today(),
+                last_used=date.today(),
+                category="gotcha",
+                source="human",
+                level="project",
+            )
+            lessons.append(new_lesson)
+
+        manager._atomic_update_lessons_file(
+            manager.project_lessons_file,
+            append_lesson,
+            level="project"
+        )
+
+        # Verify both lessons exist
+        lessons = manager.list_lessons(scope="project")
+        assert len(lessons) == 2
+        assert lessons[0].title == "Existing"
+        assert lessons[1].title == "New lesson"
 
 
 # Helper for creating mock subprocess results (used in TestScoreRelevance)

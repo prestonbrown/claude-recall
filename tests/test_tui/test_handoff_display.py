@@ -135,14 +135,16 @@ def simulate_show_handoff_details(handoff, sessions=None):
     # We need to mock the app's query_one and other methods
     from core.tui.app import RecallMonitorApp
 
-    # Create a mock app instance
+    # Create a mock app instance with state structure
     app = MagicMock(spec=RecallMonitorApp)
 
-    # Set up the handoff data
-    app._handoff_data = {handoff.id: handoff}
-    app._handoff_detail_sessions = []
-    app._handoff_detail_blockers = []
-    app._current_handoff_id = None
+    # Set up the handoff state (new structure uses app.state.handoff.*)
+    app.state = MagicMock()
+    app.state.handoff = MagicMock()
+    app.state.handoff.data = {handoff.id: handoff}
+    app.state.handoff.detail_sessions = []
+    app.state.handoff.detail_blockers = []
+    app.state.handoff.current_id = None
 
     # Mock query_one to return our mock log
     app.query_one.return_value = mock_log

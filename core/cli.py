@@ -20,28 +20,16 @@ from pathlib import Path
 # Handle both module import and direct script execution
 try:
     from core._version import __version__
+    from core.commands import COMMAND_REGISTRY, dispatch_command
     from core.manager import LessonsManager
     from core.models import ROBOT_EMOJI, LessonRating
+    from core.paths import PathResolver
 except ImportError:
     from _version import __version__
+    from commands import COMMAND_REGISTRY, dispatch_command
     from manager import LessonsManager
     from models import ROBOT_EMOJI, LessonRating
-
-
-def _get_lessons_base() -> Path:
-    """Get the system lessons base directory for Claude Recall.
-
-    Checks environment variables in order of precedence:
-    CLAUDE_RECALL_BASE → RECALL_BASE → LESSONS_BASE → default
-    """
-    base_path = (
-        os.environ.get("CLAUDE_RECALL_BASE") or
-        os.environ.get("RECALL_BASE") or
-        os.environ.get("LESSONS_BASE")
-    )
-    if base_path:
-        return Path(base_path)
-    return Path.home() / ".config" / "claude-recall"
+    from paths import PathResolver
 
 
 def main():
@@ -348,6 +336,17 @@ def main():
     error_parser.add_argument("event", help="Error event name")
     error_parser.add_argument("message", help="Error message")
 
+    # config command - read settings for shell scripts
+    config_parser = subparsers.add_parser("config", help="Get configuration value")
+    config_parser.add_argument("key", help="Config key (dot notation, e.g., claudeRecall.debugLevel)")
+    config_parser.add_argument("--default", "-d", default="", help="Default value if key not found")
+    config_parser.add_argument(
+        "--type", "-t",
+        choices=["string", "int", "bool"],
+        default="string",
+        help="Value type (string, int, bool)"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -367,12 +366,17 @@ def main():
         else:
             project_root = Path.cwd()
 
-    # Lessons base - use helper that checks CLAUDE_RECALL_BASE first, then RECALL_BASE, then LESSONS_BASE
-    lessons_base = _get_lessons_base()
+    # Lessons base - use PathResolver that checks CLAUDE_RECALL_BASE first, then RECALL_BASE, then LESSONS_BASE
+    lessons_base = PathResolver.lessons_base()
     manager = LessonsManager(lessons_base, project_root)
 
     try:
-        if args.command == "add":
+        # Use Command pattern for registered commands (incremental migration)
+        if args.command in COMMAND_REGISTRY:
+            return dispatch_command(args, manager)
+
+        # Legacy if-elif chain for commands not yet migrated
+        elif args.command == "add":
             level = "system" if args.system else "project"
             promotable = not getattr(args, "no_promote", False)
             lesson_type = getattr(args, "type", "")
@@ -947,6 +951,26 @@ def main():
             else:
                 print("Unknown debug command", file=sys.stderr)
                 sys.exit(1)
+
+        elif args.command == "config":
+            try:
+                from core.config import get_setting, get_bool_setting, get_int_setting
+            except ImportError:
+                from config import get_setting, get_bool_setting, get_int_setting
+
+            if args.type == "bool":
+                default_bool = args.default.lower() in ("true", "1", "yes") if args.default else False
+                value = get_bool_setting(args.key, default_bool)
+                # Output shell-friendly booleans
+                print("true" if value else "false")
+            elif args.type == "int":
+                default_int = int(args.default) if args.default else 0
+                value = get_int_setting(args.key, default_int)
+                print(value)
+            else:
+                value = get_setting(args.key, args.default if args.default else None)
+                # Print value or empty string for None
+                print(value if value is not None else "")
 
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)

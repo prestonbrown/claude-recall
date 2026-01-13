@@ -475,16 +475,16 @@ class TestJumpToHandoffBinding:
             await pilot.pause()
 
             # Verify we have a current session set
-            assert app._current_session_id == "sess-nav-test", (
-                f"Expected current session 'sess-nav-test', got '{app._current_session_id}'"
+            assert app.state.session.current_id == "sess-nav-test", (
+                f"Expected current session 'sess-nav-test', got '{app.state.session.current_id}'"
             )
 
             # Verify handoffs were loaded
-            assert len(app._handoff_data) > 0, (
-                f"Handoff data should be populated. Got: {app._handoff_data.keys()}"
+            assert len(app.state.handoff.data) > 0, (
+                f"Handoff data should be populated. Got: {app.state.handoff.data.keys()}"
             )
-            assert "hf-nav0001" in app._handoff_data, (
-                f"Expected hf-nav0001 in handoff data. Got: {app._handoff_data.keys()}"
+            assert "hf-nav0001" in app.state.handoff.data, (
+                f"Expected hf-nav0001 in handoff data. Got: {app.state.handoff.data.keys()}"
             )
 
             # Call the action directly (simulates pressing 'h')
@@ -497,7 +497,7 @@ class TestJumpToHandoffBinding:
             assert tabs.active == "handoffs", (
                 f"action_goto_handoff should switch to handoffs tab, "
                 f"but active tab is '{tabs.active}'. "
-                f"Handoff data keys: {list(app._handoff_data.keys())}"
+                f"Handoff data keys: {list(app.state.handoff.data.keys())}"
             )
 
     @pytest.mark.asyncio

@@ -224,10 +224,10 @@ class TestHandoffSelectionTracking:
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            # Should have _user_selected_handoff_id attribute
-            assert hasattr(app, "_user_selected_handoff_id"), (
-                "RecallMonitorApp should have '_user_selected_handoff_id' attribute to track "
-                "user's row selection. Add: self._user_selected_handoff_id: Optional[str] = None"
+            # Should have state.handoff.user_selected_id attribute
+            assert hasattr(app.state.handoff, "user_selected_id"), (
+                "RecallMonitorApp should have 'state.handoff.user_selected_id' attribute to track "
+                "user's row selection."
             )
 
     @pytest.mark.asyncio
@@ -252,14 +252,12 @@ class TestHandoffSelectionTracking:
             await pilot.press("down")
             await pilot.pause()
 
-            # Verify _user_selected_handoff_id is set
-            assert hasattr(app, "_user_selected_handoff_id"), (
-                "App should have _user_selected_handoff_id attribute"
+            # Verify state.handoff.user_selected_id is set
+            assert hasattr(app.state.handoff, "user_selected_id"), (
+                "App should have state.handoff.user_selected_id attribute"
             )
-            assert app._user_selected_handoff_id is not None, (
-                "_user_selected_handoff_id should be set after user navigates with arrow keys. "
-                "Fix: In on_data_table_row_highlighted(), for handoff-list table, "
-                "store the handoff ID: self._user_selected_handoff_id = row_key"
+            assert app.state.handoff.user_selected_id is not None, (
+                "state.handoff.user_selected_id should be set after user navigates with arrow keys."
             )
 
     @pytest.mark.asyncio
@@ -433,19 +431,19 @@ class TestScrollSelectionIntegration:
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            # After mount, all should exist
-            tracking_vars = [
-                ("_user_selected_handoff_id", "track user's handoff row selection"),
-                ("_user_selected_session_id", "track user's session row selection"),
-                ("_current_handoff_id", "track currently displayed handoff"),
-                ("_current_session_id", "track currently displayed session"),
-            ]
-
-            for var_name, purpose in tracking_vars:
-                assert hasattr(app, var_name), (
-                    f"RecallMonitorApp should have '{var_name}' to {purpose}. "
-                    f"Add: self.{var_name}: Optional[str] = None in __init__"
-                )
+            # After mount, all state attributes should exist
+            assert hasattr(app.state.handoff, "user_selected_id"), (
+                "RecallMonitorApp should have 'state.handoff.user_selected_id' to track user's handoff row selection."
+            )
+            assert hasattr(app.state.session, "user_selected_id"), (
+                "RecallMonitorApp should have 'state.session.user_selected_id' to track user's session row selection."
+            )
+            assert hasattr(app.state.handoff, "current_id"), (
+                "RecallMonitorApp should have 'state.handoff.current_id' to track currently displayed handoff."
+            )
+            assert hasattr(app.state.session, "current_id"), (
+                "RecallMonitorApp should have 'state.session.current_id' to track currently displayed session."
+            )
 
     @pytest.mark.asyncio
     async def test_handoff_selection_and_scroll_work_together(

@@ -7,6 +7,7 @@ Contains all dataclasses, enums, and constants used by the lessons system.
 """
 
 import re
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
@@ -78,6 +79,28 @@ class LessonCategory(str, Enum):
     DECISION = "decision"
     GOTCHA = "gotcha"
     PREFERENCE = "preference"
+
+
+# =============================================================================
+# Abstract Base Classes
+# =============================================================================
+
+
+class FormattableResult(ABC):
+    """Base class for all result types that can be formatted for display.
+
+    All result dataclasses that have a format() method should inherit from this
+    to ensure a consistent interface for formatting results.
+    """
+
+    @abstractmethod
+    def format(self) -> str:
+        """Format the result for display.
+
+        Returns:
+            Human-readable string representation of the result.
+        """
+        pass
 
 
 # =============================================================================
@@ -189,7 +212,7 @@ class LessonRating:
 
 
 @dataclass
-class CitationResult:
+class CitationResult(FormattableResult):
     """Result of citing a lesson."""
     success: bool
     lesson_id: str
@@ -198,9 +221,19 @@ class CitationResult:
     promotion_ready: bool = False
     message: str = ""
 
+    def format(self) -> str:
+        """Format citation result for display."""
+        if not self.success:
+            return self.message or f"Failed to cite {self.lesson_id}"
+        rating = LessonRating.calculate(self.uses, self.velocity)
+        result = f"Cited [{self.lesson_id}] {rating} (uses: {self.uses})"
+        if self.promotion_ready:
+            result += " - Ready for promotion to system level!"
+        return result
+
 
 @dataclass
-class InjectionResult:
+class InjectionResult(FormattableResult):
     """Result of context injection."""
     top_lessons: List[Lesson]
     all_lessons: List[Lesson]
@@ -264,13 +297,21 @@ class InjectionResult:
 
 
 @dataclass
-class DecayResult:
+class DecayResult(FormattableResult):
     """Result of decay operation."""
     decayed_uses: int
     decayed_velocity: int
     sessions_since_last: int
     skipped: bool = False
     message: str = ""
+
+    def format(self) -> str:
+        """Format decay result for display."""
+        if self.skipped:
+            return self.message or "Decay skipped"
+        if self.decayed_uses == 0 and self.decayed_velocity == 0:
+            return f"No lessons decayed (sessions since last: {self.sessions_since_last})"
+        return f"Decayed {self.decayed_uses} uses, {self.decayed_velocity} velocity (sessions since last: {self.sessions_since_last})"
 
 
 @dataclass
@@ -327,7 +368,7 @@ Approach = Handoff
 
 
 @dataclass
-class HandoffCompleteResult:
+class HandoffCompleteResult(FormattableResult):
     """Result of completing a handoff."""
     handoff: Handoff
     extraction_prompt: str
@@ -337,6 +378,16 @@ class HandoffCompleteResult:
     def approach(self) -> Handoff:
         """Backward compatibility alias for handoff."""
         return self.handoff
+
+    def format(self) -> str:
+        """Format handoff completion result for display."""
+        lines = [
+            f"Completed [{self.handoff.id}] {self.handoff.title}",
+            "",
+            "Extraction prompt for lessons:",
+            self.extraction_prompt
+        ]
+        return "\n".join(lines)
 
 
 # DEPRECATED (remove after 2025-06-01): Use HandoffCompleteResult instead
@@ -362,7 +413,7 @@ class ScoredLesson:
 
 
 @dataclass
-class RelevanceResult:
+class RelevanceResult(FormattableResult):
     """Result of relevance scoring."""
     scored_lessons: List[ScoredLesson]
     query_text: str
@@ -395,7 +446,7 @@ class RelevanceResult:
 
 
 @dataclass
-class ValidationResult:
+class ValidationResult(FormattableResult):
     """Result of handoff resume validation."""
     valid: bool
     warnings: List[str] = field(default_factory=list)  # e.g., "Codebase changed since handoff"
@@ -422,7 +473,7 @@ class ValidationResult:
 
 
 @dataclass
-class HandoffResumeResult:
+class HandoffResumeResult(FormattableResult):
     """Result of resuming a handoff."""
     handoff: Handoff
     validation: ValidationResult

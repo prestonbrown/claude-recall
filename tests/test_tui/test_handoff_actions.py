@@ -326,7 +326,7 @@ class TestPopupTrigger:
 
             # Clear _current_handoff_id to simulate fresh navigation
             # (row_highlighted sets _user_selected_handoff_id but not _current_handoff_id)
-            app._current_handoff_id = None
+            app.state.handoff.current_id = None
 
             # First Enter - should NOT open popup, just select
             await pilot.press("enter")
@@ -372,7 +372,7 @@ class TestPopupTrigger:
             await pilot.pause()
 
             # Clear _current_handoff_id to simulate fresh state
-            app._current_handoff_id = None
+            app.state.handoff.current_id = None
 
             # First Enter - selects row
             await pilot.press("enter")
@@ -423,7 +423,7 @@ class TestPopupTrigger:
             await pilot.pause()
 
             # Ensure fresh state
-            app._current_handoff_id = None
+            app.state.handoff.current_id = None
 
             # Step 1: Navigate with arrow key (highlights row)
             await pilot.press("down")
@@ -439,7 +439,7 @@ class TestPopupTrigger:
             # Still no popup
             assert not isinstance(app.screen, HandoffActionScreen)
             # But _current_handoff_id should now be set
-            assert app._current_handoff_id is not None
+            assert app.state.handoff.current_id is not None
 
             # Step 3: Second Enter (opens popup)
             await pilot.press("enter")
@@ -477,14 +477,14 @@ class TestPopupTrigger:
             await pilot.pause()
 
             # Navigate to first row and select it
-            app._current_handoff_id = None
+            app.state.handoff.current_id = None
             await pilot.press("down")
             await pilot.pause()
             await pilot.press("enter")  # First Enter - selects row A
             await pilot.pause()
 
             # Remember which row was selected
-            first_row_id = app._current_handoff_id
+            first_row_id = app.state.handoff.current_id
             assert first_row_id is not None
 
             # Navigate to second row
@@ -500,7 +500,7 @@ class TestPopupTrigger:
             )
 
             # Verify we're now tracking the new row
-            assert app._current_handoff_id != first_row_id
+            assert app.state.handoff.current_id != first_row_id
 
             # Second Enter on same row - should open popup
             await pilot.press("enter")
@@ -544,7 +544,7 @@ class TestStatusSelection:
         from core.tui.app import (
             HandoffActionScreen,
             RecallMonitorApp,
-            StatusSelectScreen,
+            GenericSelectModal,
         )
 
         app = RecallMonitorApp()
@@ -561,8 +561,8 @@ class TestStatusSelection:
             await pilot.pause()
 
             # Should have opened status selection screen
-            assert isinstance(app.screen, StatusSelectScreen), (
-                "Pressing 's' should open StatusSelectScreen"
+            assert isinstance(app.screen, GenericSelectModal), (
+                "Pressing 's' should open GenericSelectModal"
             )
 
     @pytest.mark.asyncio
@@ -573,7 +573,7 @@ class TestStatusSelection:
         from core.tui.app import (
             HandoffActionScreen,
             RecallMonitorApp,
-            StatusSelectScreen,
+            GenericSelectModal,
         )
 
         app = RecallMonitorApp()
@@ -596,9 +596,9 @@ class TestStatusSelection:
                 "completed",
             ]
 
-            # The StatusSelectScreen should have these as options
+            # The GenericSelectModal should have these as options
             status_screen = app.screen
-            assert isinstance(status_screen, StatusSelectScreen)
+            assert isinstance(status_screen, GenericSelectModal)
             # Verify options are available (implementation-specific check)
 
     @pytest.mark.asyncio
@@ -607,7 +607,7 @@ class TestStatusSelection:
         from core.tui.app import (
             HandoffActionScreen,
             RecallMonitorApp,
-            StatusSelectScreen,
+            GenericSelectModal,
         )
 
         app = RecallMonitorApp()
@@ -634,7 +634,7 @@ class TestStatusSelection:
             await pilot.pause()
 
             # Both popups should be dismissed, back to main screen
-            assert not isinstance(app.screen, (HandoffActionScreen, StatusSelectScreen))
+            assert not isinstance(app.screen, (HandoffActionScreen, GenericSelectModal))
 
 
 # ============================================================================
@@ -650,7 +650,7 @@ class TestPhaseSelection:
         """Pressing 'p' on action screen should open phase selection."""
         from core.tui.app import (
             HandoffActionScreen,
-            PhaseSelectScreen,
+            GenericSelectModal,
             RecallMonitorApp,
         )
 
@@ -665,8 +665,8 @@ class TestPhaseSelection:
             await pilot.press("p")
             await pilot.pause()
 
-            assert isinstance(app.screen, PhaseSelectScreen), (
-                "Pressing 'p' should open PhaseSelectScreen"
+            assert isinstance(app.screen, GenericSelectModal), (
+                "Pressing 'p' should open GenericSelectModal"
             )
 
     @pytest.mark.asyncio
@@ -676,7 +676,7 @@ class TestPhaseSelection:
         """Phase sub-menu should show all valid phase options."""
         from core.tui.app import (
             HandoffActionScreen,
-            PhaseSelectScreen,
+            GenericSelectModal,
             RecallMonitorApp,
         )
 
@@ -695,7 +695,7 @@ class TestPhaseSelection:
             expected_phases = ["research", "planning", "implementing", "review"]
 
             phase_screen = app.screen
-            assert isinstance(phase_screen, PhaseSelectScreen)
+            assert isinstance(phase_screen, GenericSelectModal)
 
 
 # ============================================================================
@@ -710,7 +710,7 @@ class TestAgentSelection:
     async def test_agent_submenu_opens(self, temp_project_with_handoffs):
         """Pressing 'a' on action screen should open agent selection."""
         from core.tui.app import (
-            AgentSelectScreen,
+            GenericSelectModal,
             HandoffActionScreen,
             RecallMonitorApp,
         )
@@ -726,8 +726,8 @@ class TestAgentSelection:
             await pilot.press("a")
             await pilot.pause()
 
-            assert isinstance(app.screen, AgentSelectScreen), (
-                "Pressing 'a' should open AgentSelectScreen"
+            assert isinstance(app.screen, GenericSelectModal), (
+                "Pressing 'a' should open GenericSelectModal"
             )
 
     @pytest.mark.asyncio
@@ -736,7 +736,7 @@ class TestAgentSelection:
     ):
         """Agent sub-menu should show all valid agent options."""
         from core.tui.app import (
-            AgentSelectScreen,
+            GenericSelectModal,
             HandoffActionScreen,
             RecallMonitorApp,
         )
@@ -756,7 +756,7 @@ class TestAgentSelection:
             expected_agents = ["explore", "general-purpose", "plan", "review", "user"]
 
             agent_screen = app.screen
-            assert isinstance(agent_screen, AgentSelectScreen)
+            assert isinstance(agent_screen, GenericSelectModal)
 
 
 # ============================================================================
@@ -1025,7 +1025,7 @@ class TestRefreshAfterActions:
             await pilot.pause()
 
             # Get initial handoff data
-            initial_handoff = app._handoff_data.get("hf-test001")
+            initial_handoff = app.state.handoff.data.get("hf-test001")
             initial_status = initial_handoff.status if initial_handoff else None
 
             # Open action screen and change status
@@ -1037,7 +1037,7 @@ class TestRefreshAfterActions:
             await pilot.pause()
 
             # The list should have refreshed with new status
-            updated_handoff = app._handoff_data.get("hf-test001")
+            updated_handoff = app.state.handoff.data.get("hf-test001")
             if updated_handoff:
                 # Status should have changed (or at least the action was attempted)
                 pass
@@ -1049,33 +1049,21 @@ class TestRefreshAfterActions:
 
 
 class TestSelectionScreenBase:
-    """Tests for the base selection screen pattern."""
+    """Tests for GenericSelectModal - the unified selection screen."""
 
-    def test_selection_screen_classes_exist(self):
-        """All selection screen classes should exist."""
-        from core.tui.app import (
-            AgentSelectScreen,
-            PhaseSelectScreen,
-            StatusSelectScreen,
-        )
+    def test_generic_select_modal_exists(self):
+        """GenericSelectModal class should exist."""
+        from core.tui.app import GenericSelectModal
 
-        assert StatusSelectScreen is not None
-        assert PhaseSelectScreen is not None
-        assert AgentSelectScreen is not None
+        assert GenericSelectModal is not None
 
-    def test_selection_screens_are_modal_screens(self):
-        """Selection screens should be ModalScreen subclasses."""
+    def test_generic_select_modal_is_modal_screen(self):
+        """GenericSelectModal should be a ModalScreen subclass."""
         from textual.screen import ModalScreen
 
-        from core.tui.app import (
-            AgentSelectScreen,
-            PhaseSelectScreen,
-            StatusSelectScreen,
-        )
+        from core.tui.app import GenericSelectModal
 
-        assert issubclass(StatusSelectScreen, ModalScreen)
-        assert issubclass(PhaseSelectScreen, ModalScreen)
-        assert issubclass(AgentSelectScreen, ModalScreen)
+        assert issubclass(GenericSelectModal, ModalScreen)
 
 
 # ============================================================================
@@ -1177,7 +1165,7 @@ class TestArrowKeyNavigation:
         """Enter should select the currently highlighted option."""
         from textual.widgets import OptionList
 
-        from core.tui.app import HandoffActionScreen, RecallMonitorApp, StatusSelectScreen
+        from core.tui.app import HandoffActionScreen, RecallMonitorApp, GenericSelectModal
 
         app = RecallMonitorApp()
 
@@ -1197,20 +1185,20 @@ class TestArrowKeyNavigation:
             await pilot.press("enter")
             await pilot.pause()
 
-            # Should have opened StatusSelectScreen or performed the action
+            # Should have opened GenericSelectModal or performed the action
             # Depending on which option was selected
             assert not isinstance(app.screen, HandoffActionScreen) or isinstance(
-                app.screen, StatusSelectScreen
+                app.screen, GenericSelectModal
             ), "Enter should trigger the selected action"
 
     @pytest.mark.asyncio
     async def test_status_select_screen_has_option_list(
         self, temp_project_with_handoffs
     ):
-        """StatusSelectScreen should contain an OptionList widget."""
+        """GenericSelectModal should contain an OptionList widget."""
         from textual.widgets import OptionList
 
-        from core.tui.app import HandoffActionScreen, RecallMonitorApp, StatusSelectScreen
+        from core.tui.app import HandoffActionScreen, RecallMonitorApp, GenericSelectModal
 
         app = RecallMonitorApp()
 
@@ -1224,22 +1212,22 @@ class TestArrowKeyNavigation:
             await pilot.press("s")
             await pilot.pause()
 
-            assert isinstance(app.screen, StatusSelectScreen)
+            assert isinstance(app.screen, GenericSelectModal)
 
             # Query for OptionList widget
             option_lists = app.screen.query(OptionList)
             assert len(option_lists) > 0, (
-                "StatusSelectScreen should contain an OptionList widget"
+                "GenericSelectModal should contain an OptionList widget"
             )
 
     @pytest.mark.asyncio
     async def test_phase_select_screen_has_option_list(
         self, temp_project_with_handoffs
     ):
-        """PhaseSelectScreen should contain an OptionList widget."""
+        """GenericSelectModal should contain an OptionList widget."""
         from textual.widgets import OptionList
 
-        from core.tui.app import HandoffActionScreen, PhaseSelectScreen, RecallMonitorApp
+        from core.tui.app import HandoffActionScreen, GenericSelectModal, RecallMonitorApp
 
         app = RecallMonitorApp()
 
@@ -1253,22 +1241,22 @@ class TestArrowKeyNavigation:
             await pilot.press("p")
             await pilot.pause()
 
-            assert isinstance(app.screen, PhaseSelectScreen)
+            assert isinstance(app.screen, GenericSelectModal)
 
             # Query for OptionList widget
             option_lists = app.screen.query(OptionList)
             assert len(option_lists) > 0, (
-                "PhaseSelectScreen should contain an OptionList widget"
+                "GenericSelectModal should contain an OptionList widget"
             )
 
     @pytest.mark.asyncio
     async def test_agent_select_screen_has_option_list(
         self, temp_project_with_handoffs
     ):
-        """AgentSelectScreen should contain an OptionList widget."""
+        """GenericSelectModal should contain an OptionList widget."""
         from textual.widgets import OptionList
 
-        from core.tui.app import AgentSelectScreen, HandoffActionScreen, RecallMonitorApp
+        from core.tui.app import GenericSelectModal, HandoffActionScreen, RecallMonitorApp
 
         app = RecallMonitorApp()
 
@@ -1282,12 +1270,12 @@ class TestArrowKeyNavigation:
             await pilot.press("a")
             await pilot.pause()
 
-            assert isinstance(app.screen, AgentSelectScreen)
+            assert isinstance(app.screen, GenericSelectModal)
 
             # Query for OptionList widget
             option_lists = app.screen.query(OptionList)
             assert len(option_lists) > 0, (
-                "AgentSelectScreen should contain an OptionList widget"
+                "GenericSelectModal should contain an OptionList widget"
             )
 
     @pytest.mark.asyncio
@@ -1295,7 +1283,7 @@ class TestArrowKeyNavigation:
         self, temp_project_with_handoffs
     ):
         """Direct key bindings should still work alongside arrow navigation."""
-        from core.tui.app import HandoffActionScreen, RecallMonitorApp, StatusSelectScreen
+        from core.tui.app import HandoffActionScreen, RecallMonitorApp, GenericSelectModal
 
         app = RecallMonitorApp()
 
@@ -1310,16 +1298,16 @@ class TestArrowKeyNavigation:
             await pilot.pause()
 
             # Should still open status selection
-            assert isinstance(app.screen, StatusSelectScreen), (
+            assert isinstance(app.screen, GenericSelectModal), (
                 "Direct key binding 's' should still work"
             )
 
     @pytest.mark.asyncio
     async def test_status_arrow_navigation_and_enter(self, temp_project_with_handoffs):
-        """Arrow navigation and Enter should work in StatusSelectScreen."""
+        """Arrow navigation and Enter should work in GenericSelectModal."""
         from textual.widgets import OptionList
 
-        from core.tui.app import HandoffActionScreen, RecallMonitorApp, StatusSelectScreen
+        from core.tui.app import HandoffActionScreen, RecallMonitorApp, GenericSelectModal
 
         app = RecallMonitorApp()
 
@@ -1332,7 +1320,7 @@ class TestArrowKeyNavigation:
             await pilot.press("s")
             await pilot.pause()
 
-            assert isinstance(app.screen, StatusSelectScreen)
+            assert isinstance(app.screen, GenericSelectModal)
 
             option_list = app.screen.query_one(OptionList)
 
@@ -1345,16 +1333,16 @@ class TestArrowKeyNavigation:
             await pilot.pause()
 
             # Should have dismissed the screen (action taken)
-            assert not isinstance(app.screen, StatusSelectScreen), (
-                "Enter should select option and dismiss StatusSelectScreen"
+            assert not isinstance(app.screen, GenericSelectModal), (
+                "Enter should select option and dismiss GenericSelectModal"
             )
 
     @pytest.mark.asyncio
     async def test_number_keys_still_work_in_status_select(
         self, temp_project_with_handoffs
     ):
-        """Number key shortcuts should still work in StatusSelectScreen."""
-        from core.tui.app import HandoffActionScreen, RecallMonitorApp, StatusSelectScreen
+        """Number key shortcuts should still work in GenericSelectModal."""
+        from core.tui.app import HandoffActionScreen, RecallMonitorApp, GenericSelectModal
 
         app = RecallMonitorApp()
 
@@ -1367,13 +1355,13 @@ class TestArrowKeyNavigation:
             await pilot.press("s")
             await pilot.pause()
 
-            assert isinstance(app.screen, StatusSelectScreen)
+            assert isinstance(app.screen, GenericSelectModal)
 
             # Press '2' for in_progress
             await pilot.press("2")
             await pilot.pause()
 
             # Should have dismissed the screen
-            assert not isinstance(app.screen, StatusSelectScreen), (
+            assert not isinstance(app.screen, GenericSelectModal), (
                 "Number key '2' should still select option"
             )

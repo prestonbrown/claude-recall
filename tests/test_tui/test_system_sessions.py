@@ -202,7 +202,7 @@ class TestSystemSessionsHiddenByDefault:
             await pilot.pause()
 
             # Verify that no warmup sessions are visible
-            session_data = app._session_data
+            session_data = app.state.session.data
             visible_origins = [s.origin for s in session_data.values()]
 
             assert "Warmup" not in visible_origins, (
@@ -222,7 +222,7 @@ class TestSystemSessionsHiddenByDefault:
             await pilot.press("f4")
             await pilot.pause()
 
-            session_data = app._session_data
+            session_data = app.state.session.data
             visible_origins = [s.origin for s in session_data.values()]
 
             # User sessions should be visible

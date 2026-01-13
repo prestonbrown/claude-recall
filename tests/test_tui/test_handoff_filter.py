@@ -547,7 +547,7 @@ class TestHandoffFilterStatusIndicator:
             assert filtered_count < total_count, "Filter should reduce count"
 
             # Check internal state tracking
-            assert app._handoff_total_count >= filtered_count, (
+            assert app.state.handoff.total_count >= filtered_count, (
                 "Total count should be tracked for filter status"
             )
 
@@ -566,8 +566,8 @@ class TestHandoffFilterStatusIndicator:
             row_count = handoff_list.row_count
 
             # When not filtered, total should equal visible
-            assert app._handoff_total_count == row_count, (
-                f"When not filtered, total ({app._handoff_total_count}) should equal visible ({row_count})"
+            assert app.state.handoff.total_count == row_count, (
+                f"When not filtered, total ({app.state.handoff.total_count}) should equal visible ({row_count})"
             )
 
 

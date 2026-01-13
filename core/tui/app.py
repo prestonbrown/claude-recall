@@ -12,41 +12,11 @@ Provides real-time monitoring of lessons system activity with:
 
 import asyncio
 import os
-import platform
-import subprocess
 import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
-from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
-
-
-@lru_cache(maxsize=1)
-def _get_time_format() -> str:
-    """Get the appropriate time format string based on system preferences.
-
-    On macOS: checks AppleICUForce24HourTime preference
-      - 1 = 24h format → %H:%M:%S
-      - 0 or unset = 12h format → %r (with AM/PM)
-    On other platforms: uses %X (locale-dependent)
-    """
-    if platform.system() != "Darwin":
-        return "%X"  # Trust locale on Linux/other
-
-    try:
-        result = subprocess.run(
-            ["defaults", "read", "NSGlobalDomain", "AppleICUForce24HourTime"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-        if result.returncode == 0 and result.stdout.strip() == "1":
-            return "%H:%M:%S"  # User prefers 24h
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
-
-    return "%r"  # Default to 12h AM/PM on macOS
 
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
@@ -80,12 +50,29 @@ try:
     from core.tui.state_reader import StateReader
     from core.tui.stats import StatsAggregator
     from core.tui.transcript_reader import TranscriptReader, TranscriptSummary
+    from core.tui.formatting import (
+        _format_event_time,
+        EVENT_TYPE_COLORS,
+        _get_time_format,
+        extract_event_details,
+    )
+    from core.tui.app_state import AppState
 except ImportError:
     from .log_reader import LogReader, format_event_line
     from .models import DebugEvent, HandoffSummary
     from .state_reader import StateReader
     from .stats import StatsAggregator
     from .transcript_reader import TranscriptReader, TranscriptSummary
+    from .formatting import (
+        _format_event_time,
+        EVENT_TYPE_COLORS,
+        _get_time_format,
+        extract_event_details,
+    )
+    from .app_state import AppState
+
+# Backward compatibility alias for EVENT_COLORS
+EVENT_COLORS = EVENT_TYPE_COLORS
 
 
 def _get_lessons_manager():
@@ -122,22 +109,6 @@ def _get_lessons_manager():
 
     return LessonsManager(lessons_base, project_root)
 
-
-# Textual Rich markup colors for event types
-EVENT_COLORS = {
-    "session_start": "cyan",
-    "citation": "green",
-    "error": "bold red",
-    "decay_result": "yellow",
-    "handoff_created": "magenta",
-    "handoff_change": "magenta",
-    "handoff_completed": "magenta",
-    "timing": "dim",
-    "hook_start": "dim",
-    "hook_end": "dim",
-    "hook_phase": "dim",
-    "lesson_added": "bright_green",
-}
 
 # Sparkline characters for mini charts (8 levels)
 SPARKLINE_CHARS = "▁▂▃▄▅▆▇█"
@@ -182,22 +153,6 @@ def make_sparkline(values: List[float], width: int = 0) -> str:
     return "".join(result)
 
 
-def _format_event_time(event: DebugEvent) -> str:
-    """Format event timestamp in locale-aware format, converted to local timezone."""
-    dt = event.timestamp_dt
-    if dt is None:
-        # Fallback to raw timestamp extraction
-        ts = event.timestamp
-        if "T" in ts:
-            return ts.split("T")[1][:8]
-        return ts[:8] if len(ts) >= 8 else ts
-    # Ensure timezone-aware and convert to local
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    local_dt = dt.astimezone()
-    return local_dt.strftime(_get_time_format())
-
-
 def format_event_rich(event: DebugEvent) -> str:
     """
     Format an event as a Rich-markup string for Textual widgets.
@@ -224,65 +179,52 @@ def format_event_rich(event: DebugEvent) -> str:
 
 
 def _format_event_details(event: DebugEvent) -> str:
-    """Extract event-specific details for display."""
-    raw = event.raw
+    """Format event-specific details for Rich display.
 
-    if event.event == "session_start":
-        total = raw.get("total_lessons", 0)
-        sys_count = raw.get("system_count", 0)
-        proj_count = raw.get("project_count", 0)
-        return f"{sys_count}S/{proj_count}L ({total} total)"
+    Uses shared extract_event_details for data extraction, then formats
+    for Rich/Textual output (similar to ANSI but uses -> instead of arrow).
+    """
+    d = extract_event_details(event)
 
-    elif event.event == "citation":
-        lesson_id = raw.get("lesson_id", "?")
-        uses_before = raw.get("uses_before", 0)
-        uses_after = raw.get("uses_after", 0)
-        promo = " PROMO!" if raw.get("promotion_ready") else ""
-        return f"{lesson_id} ({uses_before}->{uses_after}){promo}"
-
-    elif event.event == "decay_result":
-        uses = raw.get("decayed_uses", 0)
-        vel = raw.get("decayed_velocity", 0)
-        return f"{uses} uses, {vel} velocity decayed"
-
-    elif event.event == "error":
-        op = raw.get("op", "")
-        err = str(raw.get("err", ""))[:50]
-        return f"{op}: {err}"
-
-    elif event.event == "hook_end":
-        hook = raw.get("hook", "")
-        total_ms = raw.get("total_ms", 0)
-        return f"{hook}: {total_ms:.0f}ms"
-
-    elif event.event == "handoff_created":
-        hid = raw.get("handoff_id", "")
-        title = raw.get("title", "")[:30]
-        return f"{hid} {title}"
-
-    elif event.event == "handoff_completed":
-        hid = raw.get("handoff_id", "")
-        tried = raw.get("tried_count", 0)
-        return f"{hid} ({tried} steps)"
-
-    elif event.event == "lesson_added":
-        lid = raw.get("lesson_id", "")
-        level = raw.get("lesson_level", "")
-        return f"{lid} ({level})"
-
-    elif event.event == "hook_phase":
-        hook = raw.get("hook", "")
-        phase = raw.get("phase", "")
-        ms = raw.get("ms", 0)
-        return f"{hook}.{phase}: {ms:.0f}ms"
-
-    else:
-        # Generic: show first interesting key
+    if not d:
+        # Generic fallback: show first interesting key
         skip_keys = {"event", "level", "timestamp", "session_id", "pid", "project"}
-        for k, v in raw.items():
+        for k, v in event.raw.items():
             if k not in skip_keys:
                 return f"{k}={v}"
         return ""
+
+    if event.event == "session_start":
+        return f"{d['system_count']}S/{d['project_count']}L ({d['total']} total)"
+
+    elif event.event == "citation":
+        promo = f" {d['promo']}" if "promo" in d else ""
+        return f"{d['lesson_id']} ({d['uses_before']}->{d['uses_after']}){promo}"
+
+    elif event.event == "decay_result":
+        return f"{d['decayed_uses']} uses, {d['decayed_velocity']} velocity decayed"
+
+    elif event.event == "error":
+        return f"{d['op']}: {d['err']}"
+
+    elif event.event == "hook_end":
+        ms = float(d["total_ms"])
+        return f"{d['hook']}: {ms:.0f}ms"
+
+    elif event.event == "hook_phase":
+        ms = float(d["ms"])
+        return f"{d['hook']}.{d['phase']}: {ms:.0f}ms"
+
+    elif event.event == "handoff_created":
+        return f"{d['handoff_id']} {d['title']}"
+
+    elif event.event == "handoff_completed":
+        return f"{d['handoff_id']} ({d['tried_count']} steps)"
+
+    elif event.event == "lesson_added":
+        return f"{d['lesson_id']} ({d['level']})"
+
+    return ""
 
 
 # Session tab formatting helpers
@@ -624,21 +566,39 @@ class HandoffActionScreen(ModalScreen[str]):
     def action_set_status(self) -> None:
         """Open status selection sub-menu."""
         self.app.push_screen(
-            StatusSelectScreen(self.handoff_id, self.handoff_title),
+            GenericSelectModal(
+                handoff_id=self.handoff_id,
+                handoff_title=self.handoff_title,
+                options=["not_started", "in_progress", "blocked", "ready_for_review", "completed"],
+                field_name="status",
+                update_method="handoff_update_status",
+            ),
             callback=self._on_submenu_result,
         )
 
     def action_set_phase(self) -> None:
         """Open phase selection sub-menu."""
         self.app.push_screen(
-            PhaseSelectScreen(self.handoff_id, self.handoff_title),
+            GenericSelectModal(
+                handoff_id=self.handoff_id,
+                handoff_title=self.handoff_title,
+                options=["research", "planning", "implementing", "review"],
+                field_name="phase",
+                update_method="handoff_update_phase",
+            ),
             callback=self._on_submenu_result,
         )
 
     def action_set_agent(self) -> None:
         """Open agent selection sub-menu."""
         self.app.push_screen(
-            AgentSelectScreen(self.handoff_id, self.handoff_title),
+            GenericSelectModal(
+                handoff_id=self.handoff_id,
+                handoff_title=self.handoff_title,
+                options=["explore", "general-purpose", "plan", "review", "user"],
+                field_name="agent",
+                update_method="handoff_update_agent",
+            ),
             callback=self._on_submenu_result,
         )
 
@@ -656,200 +616,109 @@ class HandoffActionScreen(ModalScreen[str]):
             self.dismiss(result)
 
 
-class StatusSelectScreen(ModalScreen[str]):
-    """Sub-menu for selecting handoff status.
+class GenericSelectModal(ModalScreen[str]):
+    """Generic modal for selecting from a list of options.
 
-    Supports both arrow key navigation with Enter and direct number key bindings.
+    Unified replacement for StatusSelectScreen, PhaseSelectScreen, and AgentSelectScreen.
+    Supports both arrow key navigation with Enter and direct number key bindings (1-5).
+
+    Args:
+        handoff_id: The handoff ID being updated
+        handoff_title: Display title of the handoff
+        options: List of option values to display
+        field_name: Name of the field being updated (e.g., "status", "phase", "agent")
+        update_method: Name of manager method to call (e.g., "handoff_update_status")
     """
 
     BINDINGS = [
-        Binding("escape", "dismiss", "Cancel"),
-        Binding("1", "select_1", "not_started"),
-        Binding("2", "select_2", "in_progress"),
-        Binding("3", "select_3", "blocked"),
-        Binding("4", "select_4", "ready_for_review"),
-        Binding("5", "select_5", "completed"),
+        Binding("escape", "cancel", "Cancel"),
+        Binding("1", "select_1", "Select 1", show=False),
+        Binding("2", "select_2", "Select 2", show=False),
+        Binding("3", "select_3", "Select 3", show=False),
+        Binding("4", "select_4", "Select 4", show=False),
+        Binding("5", "select_5", "Select 5", show=False),
     ]
 
-    def __init__(self, handoff_id: str, handoff_title: str) -> None:
+    def __init__(
+        self,
+        handoff_id: str,
+        handoff_title: str,
+        options: List[str],
+        field_name: str,
+        update_method: str,
+    ) -> None:
         super().__init__()
         self.handoff_id = handoff_id
         self.handoff_title = handoff_title
+        self.options = options
+        self.field_name = field_name
+        self.update_method = update_method
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="status-select-modal"):
-            yield Static("[bold]Select Status[/bold]", classes="modal-title")
-            yield OptionList(
-                Option("[1] not_started", id="not_started"),
-                Option("[2] in_progress", id="in_progress"),
-                Option("[3] blocked", id="blocked"),
-                Option("[4] ready_for_review", id="ready_for_review"),
-                Option("[5] completed", id="completed"),
-                id="status-options",
+        with Vertical(id="select-modal"):
+            yield Static(
+                f"[bold]Select {self.field_name.title()}[/bold]",
+                classes="modal-title",
             )
+            yield Static(
+                f"For: {self.handoff_title[:50]}",
+                classes="modal-subtitle",
+            )
+            option_list = OptionList(
+                *[
+                    Option(f"[{i + 1}] {opt}", id=opt)
+                    for i, opt in enumerate(self.options)
+                ],
+                id="select-options",
+            )
+            yield option_list
             yield Static("[dim][Esc] Cancel[/dim]")
 
     def on_option_list_option_selected(
         self, event: OptionList.OptionSelected
     ) -> None:
         """Handle option selection from OptionList."""
-        status = str(event.option.id)
-        self._select_status(status)
+        self._select(str(event.option.id))
+
+    def action_cancel(self) -> None:
+        """Cancel selection and dismiss."""
+        self.dismiss("")
 
     def action_select_1(self) -> None:
-        self._select_status("not_started")
+        if len(self.options) >= 1:
+            self._select(self.options[0])
 
     def action_select_2(self) -> None:
-        self._select_status("in_progress")
+        if len(self.options) >= 2:
+            self._select(self.options[1])
 
     def action_select_3(self) -> None:
-        self._select_status("blocked")
+        if len(self.options) >= 3:
+            self._select(self.options[2])
 
     def action_select_4(self) -> None:
-        self._select_status("ready_for_review")
+        if len(self.options) >= 4:
+            self._select(self.options[3])
 
     def action_select_5(self) -> None:
-        self._select_status("completed")
+        if len(self.options) >= 5:
+            self._select(self.options[4])
 
-    def _select_status(self, status: str) -> None:
-        """Apply status change and dismiss."""
+    def _select(self, value: str) -> None:
+        """Apply selection and dismiss.
+
+        Returns the result in "field:value" format regardless of whether
+        the manager update succeeds. The notification shows any errors.
+        """
+        result = f"{self.field_name}:{value}"
         try:
             mgr = _get_lessons_manager()
-            mgr.handoff_update_status(self.handoff_id, status)
-            self.app.notify(f"Status updated to: {status}")
-            self.dismiss(f"status:{status}")
+            method = getattr(mgr, self.update_method)
+            method(self.handoff_id, value)
+            self.app.notify(f"{self.field_name.title()} updated to: {value}")
         except Exception as e:
             self.app.notify(f"Error: {e}", severity="error")
-            self.dismiss("")
-
-
-class PhaseSelectScreen(ModalScreen[str]):
-    """Sub-menu for selecting handoff phase.
-
-    Supports both arrow key navigation with Enter and direct number key bindings.
-    """
-
-    BINDINGS = [
-        Binding("escape", "dismiss", "Cancel"),
-        Binding("1", "select_1", "research"),
-        Binding("2", "select_2", "planning"),
-        Binding("3", "select_3", "implementing"),
-        Binding("4", "select_4", "review"),
-    ]
-
-    def __init__(self, handoff_id: str, handoff_title: str) -> None:
-        super().__init__()
-        self.handoff_id = handoff_id
-        self.handoff_title = handoff_title
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="phase-select-modal"):
-            yield Static("[bold]Select Phase[/bold]", classes="modal-title")
-            yield OptionList(
-                Option("[1] research", id="research"),
-                Option("[2] planning", id="planning"),
-                Option("[3] implementing", id="implementing"),
-                Option("[4] review", id="review"),
-                id="phase-options",
-            )
-            yield Static("[dim][Esc] Cancel[/dim]")
-
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
-        """Handle option selection from OptionList."""
-        phase = str(event.option.id)
-        self._select_phase(phase)
-
-    def action_select_1(self) -> None:
-        self._select_phase("research")
-
-    def action_select_2(self) -> None:
-        self._select_phase("planning")
-
-    def action_select_3(self) -> None:
-        self._select_phase("implementing")
-
-    def action_select_4(self) -> None:
-        self._select_phase("review")
-
-    def _select_phase(self, phase: str) -> None:
-        """Apply phase change and dismiss."""
-        try:
-            mgr = _get_lessons_manager()
-            mgr.handoff_update_phase(self.handoff_id, phase)
-            self.app.notify(f"Phase updated to: {phase}")
-            self.dismiss(f"phase:{phase}")
-        except Exception as e:
-            self.app.notify(f"Error: {e}", severity="error")
-            self.dismiss("")
-
-
-class AgentSelectScreen(ModalScreen[str]):
-    """Sub-menu for selecting handoff agent.
-
-    Supports both arrow key navigation with Enter and direct number key bindings.
-    """
-
-    BINDINGS = [
-        Binding("escape", "dismiss", "Cancel"),
-        Binding("1", "select_1", "explore"),
-        Binding("2", "select_2", "general-purpose"),
-        Binding("3", "select_3", "plan"),
-        Binding("4", "select_4", "review"),
-        Binding("5", "select_5", "user"),
-    ]
-
-    def __init__(self, handoff_id: str, handoff_title: str) -> None:
-        super().__init__()
-        self.handoff_id = handoff_id
-        self.handoff_title = handoff_title
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="agent-select-modal"):
-            yield Static("[bold]Select Agent[/bold]", classes="modal-title")
-            yield OptionList(
-                Option("[1] explore", id="explore"),
-                Option("[2] general-purpose", id="general-purpose"),
-                Option("[3] plan", id="plan"),
-                Option("[4] review", id="review"),
-                Option("[5] user", id="user"),
-                id="agent-options",
-            )
-            yield Static("[dim][Esc] Cancel[/dim]")
-
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
-        """Handle option selection from OptionList."""
-        agent = str(event.option.id)
-        self._select_agent(agent)
-
-    def action_select_1(self) -> None:
-        self._select_agent("explore")
-
-    def action_select_2(self) -> None:
-        self._select_agent("general-purpose")
-
-    def action_select_3(self) -> None:
-        self._select_agent("plan")
-
-    def action_select_4(self) -> None:
-        self._select_agent("review")
-
-    def action_select_5(self) -> None:
-        self._select_agent("user")
-
-    def _select_agent(self, agent: str) -> None:
-        """Apply agent change and dismiss."""
-        try:
-            mgr = _get_lessons_manager()
-            mgr.handoff_update_agent(self.handoff_id, agent)
-            self.app.notify(f"Agent updated to: {agent}")
-            self.dismiss(f"agent:{agent}")
-        except Exception as e:
-            self.app.notify(f"Error: {e}", severity="error")
-            self.dismiss("")
+        self.dismiss(result)
 
 
 class LoadingScreen(ModalScreen):
@@ -926,48 +795,19 @@ class RecallMonitorApp(App):
             log_path: Override log file path (optional)
         """
         super().__init__()
-        self.project_filter = project_filter
+        # Centralized state management
+        self.state = AppState(project_filter=project_filter)
+        # Readers and aggregators (not part of state - they have methods)
         self.log_reader = LogReader(log_path=log_path)
         self.state_reader = StateReader()
         self.stats = StatsAggregator(self.log_reader, self.state_reader)
-        self._paused = False
-        self._last_event_count = 0
-        self._refresh_timer = None
-        # Session tab state
-        self._session_data: dict = {}  # Raw data by session_id for sorting
-        self._session_sort_column: Optional[str] = None
-        self._session_sort_reverse: bool = False
-        # Transcript reader for session tab
         self.transcript_reader = TranscriptReader()
+        self._refresh_timer = None
+        # Current project path (not part of AppState - it's constant)
         self._current_project = os.environ.get("PROJECT_DIR", os.getcwd())
         # Unified toggle: False = current project, non-empty sessions
         #                 True = all projects, all sessions (including empty)
         self._show_all: bool = False
-        # Handoffs tab state
-        self._handoff_data: dict = {}  # Raw data by handoff_id
-        self._handoff_sort_column: Optional[str] = None
-        self._handoff_sort_reverse: bool = False
-        self._show_completed_handoffs: bool = False
-        self._current_handoff_id: Optional[str] = None  # Track currently displayed handoff
-        self._enter_confirmed_handoff_id: Optional[str] = None  # Track Enter-confirmed selection for double-action
-        self._handoff_filter: str = ""  # Current filter text
-        self._handoff_total_count: int = 0  # Total handoffs before filtering
-        # Session tab refresh state
-        self._current_session_id: Optional[str] = None  # Track currently displayed session
-        self._user_selected_session_id: Optional[str] = None  # Track user's row selection
-        # Handoff tab refresh state
-        self._user_selected_handoff_id: Optional[str] = None  # Track user's handoff row selection
-        # Live activity tab scroll state - tracks if user scrolled away from bottom
-        self._live_activity_user_scrolled: bool = False
-        # System sessions toggle - False = hide System/Warmup, True = show all
-        self._show_system_sessions: bool = False
-        # Timeline view toggle - False = list view, True = timeline view
-        self._timeline_view: bool = False
-        # Handoff details navigation state
-        self._handoff_detail_sessions: List[dict] = []  # Sessions for 1-9 navigation
-        self._handoff_detail_blockers: List[str] = []  # Blocked-by IDs for 'b' navigation
-        # Lazy tab loading tracking
-        self._tabs_loaded: Dict[str, bool] = {}
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         """Add custom commands to the command palette."""
@@ -1143,8 +983,8 @@ class RecallMonitorApp(App):
         event_log = self.query_one("#event-log", RichLog)
 
         # Get events (filtered if needed)
-        if self.project_filter:
-            events = self.log_reader.filter_by_project(self.project_filter)
+        if self.state.project_filter:
+            events = self.log_reader.filter_by_project(self.state.project_filter)
         else:
             events = self.log_reader.read_recent(100)
 
@@ -1153,12 +993,12 @@ class RecallMonitorApp(App):
         for event in events:
             event_log.write(format_event_rich(event))
 
-        self._last_event_count = self.log_reader.buffer_size
+        self.state.last_event_count = self.log_reader.buffer_size
 
     def _on_refresh_timer(self) -> None:
         """Sync timer callback - updates subtitle and triggers async refresh."""
         self._update_subtitle()
-        if not self._paused:
+        if not self.state.paused:
             self._refresh_events()
             # Only refresh the currently visible tab for performance
             try:
@@ -1193,25 +1033,25 @@ class RecallMonitorApp(App):
         # Update tracking based on scroll position
         if at_bottom:
             # User scrolled back to bottom - resume auto-scroll
-            self._live_activity_user_scrolled = False
+            self.state.live_activity_user_scrolled = False
             event_log.auto_scroll = True
         else:
             # User scrolled away - preserve their position
-            self._live_activity_user_scrolled = True
+            self.state.live_activity_user_scrolled = True
 
         # Save scroll position if user has scrolled away
-        saved_scroll_y = event_log.scroll_y if self._live_activity_user_scrolled else None
+        saved_scroll_y = event_log.scroll_y if self.state.live_activity_user_scrolled else None
 
         # Access buffer directly - don't use read_recent() which calls load_buffer() again
         buffer = list(self.log_reader._buffer)
         events = buffer[-count:] if count <= len(buffer) else buffer
 
         # Filter if needed
-        if self.project_filter:
-            events = [e for e in events if e.project.lower() == self.project_filter.lower()]
+        if self.state.project_filter:
+            events = [e for e in events if e.project.lower() == self.state.project_filter.lower()]
 
         # Temporarily disable auto_scroll if user has scrolled away
-        if self._live_activity_user_scrolled:
+        if self.state.live_activity_user_scrolled:
             event_log.auto_scroll = False
 
         for event in events:
@@ -1404,7 +1244,7 @@ class RecallMonitorApp(App):
             return True
 
         # Show system sessions if toggle is on
-        return self._show_system_sessions
+        return self.state.session.show_system
 
     def _get_session_counts(self, sessions: List[TranscriptSummary]) -> tuple:
         """Calculate counts for user and system sessions.
@@ -1439,7 +1279,7 @@ class RecallMonitorApp(App):
 
             user_count, system_count = self._get_session_counts(sessions)
 
-            if system_count > 0 and not self._show_system_sessions:
+            if system_count > 0 and not self.state.session.show_system:
                 title_widget.update(
                     f"Sessions ({user_count} user, {system_count} system hidden)"
                 )
@@ -1470,7 +1310,7 @@ class RecallMonitorApp(App):
         session_table.add_column("Msgs", key="messages")
 
         # Clear any existing session data
-        self._session_data.clear()
+        self.state.session.data.clear()
 
         # Get sessions from TranscriptReader
         # _show_all toggles: all projects + all sessions (including empty) vs current project + non-empty
@@ -1490,7 +1330,7 @@ class RecallMonitorApp(App):
                 continue
 
             session_id = summary.session_id
-            self._session_data[session_id] = summary
+            self.state.session.data[session_id] = summary
 
             self._populate_session_row(session_table, session_id, summary)
 
@@ -1536,11 +1376,11 @@ class RecallMonitorApp(App):
 
         if event.data_table.id == "session-list":
             # Track user's selection for persistence during refresh
-            self._user_selected_session_id = row_key
+            self.state.session.user_selected_id = row_key
             self._show_session_events(row_key)
         elif event.data_table.id == "handoff-list":
             # Track user's selection for persistence during refresh
-            self._user_selected_handoff_id = row_key
+            self.state.handoff.user_selected_id = row_key
             # Note: Don't set _current_handoff_id here - that breaks double-action [L007]
             # _current_handoff_id is only set in on_data_table_row_selected (Enter press)
             self._show_handoff_details(row_key)
@@ -1560,12 +1400,12 @@ class RecallMonitorApp(App):
 
         # Only handle for handoff-list - open action menu with double-action
         if event.data_table.id == "handoff-list":
-            handoff = self._handoff_data.get(row_key)
+            handoff = self.state.handoff.data.get(row_key)
             if not handoff:
                 return
 
             # Only show popup if this row was ALREADY selected (double-action)
-            if row_key == self._current_handoff_id:
+            if row_key == self.state.handoff.current_id:
                 # Second Enter/click - open popup
                 self.push_screen(
                     HandoffActionScreen(handoff.id, handoff.title),
@@ -1574,14 +1414,14 @@ class RecallMonitorApp(App):
             else:
                 # First Enter/click - just select and show details
                 # (clicking bypasses row_highlighted, so handle it here too)
-                self._current_handoff_id = row_key
-                self._user_selected_handoff_id = row_key
+                self.state.handoff.current_id = row_key
+                self.state.handoff.user_selected_id = row_key
                 self._show_handoff_details(row_key)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle input changes in filter fields."""
         if event.input.id == "handoff-filter":
-            self._handoff_filter = event.value
+            self.state.handoff.filter_text = event.value
             self._refresh_handoff_list()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -1590,7 +1430,7 @@ class RecallMonitorApp(App):
             try:
                 filter_input = self.query_one("#handoff-filter", Input)
                 filter_input.value = ""
-                self._handoff_filter = ""
+                self.state.handoff.filter_text = ""
                 self._refresh_handoff_list()
             except Exception:
                 pass
@@ -1609,9 +1449,9 @@ class RecallMonitorApp(App):
         if event.key == "escape":
             try:
                 filter_input = self.query_one("#handoff-filter", Input)
-                if filter_input.has_focus and self._handoff_filter:
+                if filter_input.has_focus and self.state.handoff.filter_text:
                     filter_input.value = ""
-                    self._handoff_filter = ""
+                    self.state.handoff.filter_text = ""
                     self._refresh_handoff_list()
                     event.prevent_default()
                     event.stop()
@@ -1622,7 +1462,7 @@ class RecallMonitorApp(App):
         """Handle tab activation to reset scroll state for live activity tab."""
         if event.pane.id == "live":
             # Reset auto-scroll when switching to live tab
-            self._live_activity_user_scrolled = False
+            self.state.live_activity_user_scrolled = False
             try:
                 event_log = self.query_one("#event-log", RichLog)
                 event_log.auto_scroll = True
@@ -1640,7 +1480,7 @@ class RecallMonitorApp(App):
         if not result:
             return
 
-        handoff_id = self._current_handoff_id
+        handoff_id = self.state.handoff.current_id
         if not handoff_id:
             self.notify("No handoff selected", severity="error")
             return
@@ -1678,13 +1518,13 @@ class RecallMonitorApp(App):
         column_key = event.column_key.value
 
         # Toggle sort direction if clicking same column
-        if column_key == self._session_sort_column:
-            self._session_sort_reverse = not self._session_sort_reverse
+        if column_key == self.state.session.sort.column:
+            self.state.session.sort.reverse = not self.state.session.sort.reverse
         else:
-            self._session_sort_column = column_key
-            self._session_sort_reverse = False
+            self.state.session.sort.column = column_key
+            self.state.session.sort.reverse = False
 
-        self._sort_session_table(column_key, self._session_sort_reverse)
+        self._sort_session_table(column_key, self.state.session.sort.reverse)
 
     def _sort_session_table(self, column_key: str, reverse: bool) -> None:
         """Sort the session table by the given column."""
@@ -1692,7 +1532,7 @@ class RecallMonitorApp(App):
 
         # Define sort key based on column (using TranscriptSummary)
         def get_sort_value(session_id: str):
-            summary = self._session_data.get(session_id)
+            summary = self.state.session.data.get(session_id)
             if not isinstance(summary, TranscriptSummary):
                 return ""
             if column_key == "session_id":
@@ -1717,7 +1557,7 @@ class RecallMonitorApp(App):
 
         # Get sorted session IDs
         sorted_sessions = sorted(
-            self._session_data.keys(),
+            self.state.session.data.keys(),
             key=get_sort_value,
             reverse=reverse,
         )
@@ -1725,7 +1565,7 @@ class RecallMonitorApp(App):
         # Clear and repopulate table in sorted order
         session_table.clear()
         for session_id in sorted_sessions:
-            summary = self._session_data[session_id]
+            summary = self.state.session.data[session_id]
             if not isinstance(summary, TranscriptSummary):
                 continue
 
@@ -1736,15 +1576,15 @@ class RecallMonitorApp(App):
         session_log = self.query_one("#session-events", RichLog)
 
         # Check if we're viewing the same session (to avoid scroll reset)
-        is_same_session = self._current_session_id == session_id
+        is_same_session = self.state.session.current_id == session_id
 
         session_log.clear()
 
         # Update tracking
-        self._current_session_id = session_id
+        self.state.session.current_id = session_id
 
         # Get the summary from cached data
-        summary = self._session_data.get(session_id)
+        summary = self.state.session.data.get(session_id)
         if summary is None or not isinstance(summary, TranscriptSummary):
             session_log.write("[dim]No transcript data available[/dim]")
             return
@@ -1944,7 +1784,7 @@ class RecallMonitorApp(App):
             return True
 
         # Show all completed if toggle is on
-        if self._show_completed_handoffs:
+        if self.state.handoff.show_completed:
             return True
 
         # Show recently completed (within 48 hours) even when toggle is off
@@ -1968,7 +1808,7 @@ class RecallMonitorApp(App):
                 active_count += 1
             else:
                 completed_count += 1
-                if not self._show_completed_handoffs and not self._is_recently_completed(handoff):
+                if not self.state.handoff.show_completed and not self._is_recently_completed(handoff):
                     hidden_count += 1
 
         return active_count, completed_count, hidden_count
@@ -2021,7 +1861,7 @@ class RecallMonitorApp(App):
         timeline.display = False
 
         # Clear any existing handoff data
-        self._handoff_data.clear()
+        self.state.handoff.data.clear()
 
         # Get handoffs from StateReader
         handoffs = self.state_reader.get_handoffs()
@@ -2030,7 +1870,7 @@ class RecallMonitorApp(App):
         self._update_handoff_title(handoffs)
 
         # Parse the current filter
-        parsed_filter = self._parse_handoff_filter(self._handoff_filter)
+        parsed_filter = self._parse_handoff_filter(self.state.handoff.filter_text)
 
         # Track total for filter status
         total_visible = 0
@@ -2048,11 +1888,11 @@ class RecallMonitorApp(App):
                 continue
 
             visible_count += 1
-            self._handoff_data[handoff.id] = handoff
+            self.state.handoff.data[handoff.id] = handoff
             self._populate_handoff_row(handoff_table, handoff)
 
         # Store total for filter status updates
-        self._handoff_total_count = total_visible
+        self.state.handoff.total_count = total_visible
         self._update_filter_status(visible_count, total_visible)
 
     def _populate_handoff_row(
@@ -2116,10 +1956,10 @@ class RecallMonitorApp(App):
         details_log.clear()
 
         # Clear navigation state
-        self._handoff_detail_sessions = []
-        self._handoff_detail_blockers = []
+        self.state.handoff.detail_sessions = []
+        self.state.handoff.detail_blockers = []
 
-        handoff = self._handoff_data.get(handoff_id)
+        handoff = self.state.handoff.data.get(handoff_id)
         if handoff is None:
             details_log.write("[dim]No handoff data available[/dim]")
             return
@@ -2173,7 +2013,7 @@ class RecallMonitorApp(App):
 
         # Blocked by (store for navigation)
         if handoff.blocked_by:
-            self._handoff_detail_blockers = list(handoff.blocked_by)
+            self.state.handoff.detail_blockers = list(handoff.blocked_by)
             details_log.write(
                 f"[bold red]Blocked By:[/bold red] {', '.join(handoff.blocked_by)} "
                 f"[dim](press 'b' to view)[/dim]"
@@ -2292,7 +2132,7 @@ class RecallMonitorApp(App):
 
         # Sessions section with numbered navigation
         if sessions:
-            self._handoff_detail_sessions = sessions
+            self.state.handoff.detail_sessions = sessions
             details_log.write(f"[bold cyan]Sessions ({len(sessions)})[/bold cyan] [dim](press 1-9 to navigate)[/dim]")
             for i, session in enumerate(sessions[:9], 1):  # Limit to 9 for single-digit nav
                 session_id = session.get("session_id", "")
@@ -2403,7 +2243,7 @@ class RecallMonitorApp(App):
             return
 
         # Get current session ID
-        if self._current_session_id is None:
+        if self.state.session.current_id is None:
             self.notify("No session selected")
             return
 
@@ -2417,7 +2257,7 @@ class RecallMonitorApp(App):
         if session_handoffs_file.exists():
             try:
                 data = json.loads(session_handoffs_file.read_text())
-                entry = data.get(self._current_session_id)
+                entry = data.get(self.state.session.current_id)
                 if isinstance(entry, dict):
                     handoff_id = entry.get("handoff_id")
             except (json.JSONDecodeError, OSError):
@@ -2427,7 +2267,7 @@ class RecallMonitorApp(App):
             self._navigate_to_handoff(handoff_id)
         else:
             # Try date-based matching as fallback
-            summary = self._session_data.get(self._current_session_id)
+            summary = self.state.session.data.get(self.state.session.current_id)
             if summary and summary.start_time:
                 project_root = _decode_project_path(summary.path)
                 if project_root:
@@ -2451,11 +2291,11 @@ class RecallMonitorApp(App):
         except Exception:
             return
 
-        if not self._handoff_detail_blockers:
+        if not self.state.handoff.detail_blockers:
             return
 
         # Navigate to first blocker
-        blocker_id = self._handoff_detail_blockers[0]
+        blocker_id = self.state.handoff.detail_blockers[0]
         self._navigate_to_handoff(blocker_id)
 
     def _action_goto_session(self, index: int) -> None:
@@ -2468,10 +2308,10 @@ class RecallMonitorApp(App):
         except Exception:
             return
 
-        if not self._handoff_detail_sessions or index >= len(self._handoff_detail_sessions):
+        if not self.state.handoff.detail_sessions or index >= len(self.state.handoff.detail_sessions):
             return
 
-        session_id = self._handoff_detail_sessions[index].get("session_id", "")
+        session_id = self.state.handoff.detail_sessions[index].get("session_id", "")
         if session_id:
             self._navigate_to_session(session_id)
 
@@ -2518,11 +2358,12 @@ class RecallMonitorApp(App):
         """
         handoff_table = self.query_one("#handoff-list", DataTable)
 
-        # Save scroll position before clearing
-        scroll_y = handoff_table.scroll_y
+        # Save scroll position and cursor row before clearing
+        saved_scroll_y = handoff_table.scroll_y
+        saved_cursor_row = handoff_table.cursor_row
 
         handoff_table.clear()
-        self._handoff_data.clear()
+        self.state.handoff.data.clear()
 
         # Get handoffs from StateReader
         handoffs = self.state_reader.get_handoffs()
@@ -2531,7 +2372,7 @@ class RecallMonitorApp(App):
         self._update_handoff_title(handoffs)
 
         # Parse the current filter
-        parsed_filter = self._parse_handoff_filter(self._handoff_filter)
+        parsed_filter = self._parse_handoff_filter(self.state.handoff.filter_text)
 
         # Track total for filter status
         total_visible = 0
@@ -2549,41 +2390,49 @@ class RecallMonitorApp(App):
                 continue
 
             visible_count += 1
-            self._handoff_data[handoff.id] = handoff
+            self.state.handoff.data[handoff.id] = handoff
             self._populate_handoff_row(handoff_table, handoff)
 
         # Store total for filter status updates
-        self._handoff_total_count = total_visible
+        self.state.handoff.total_count = total_visible
         self._update_filter_status(visible_count, total_visible)
 
-        # Restore scroll position
-        handoff_table.scroll_y = scroll_y
-
-        # Preserve user's selection if it still exists in the new data
-        if self._user_selected_handoff_id is not None:
-            if self._user_selected_handoff_id in self._handoff_data:
-                # Find the row index for the previously selected handoff
-                row_keys = list(handoff_table.rows.keys())
-                for idx, row_key in enumerate(row_keys):
-                    if row_key.value == self._user_selected_handoff_id:
-                        handoff_table.move_cursor(row=idx)
-                        break
-                # Re-render details for the highlighted handoff
-                self._show_handoff_details(self._user_selected_handoff_id)
+        # Defer position restoration until widget is refreshed
+        def restore_position() -> None:
+            # Preserve user's selection if it still exists in the new data
+            if self.state.handoff.user_selected_id is not None:
+                if self.state.handoff.user_selected_id in self.state.handoff.data:
+                    # Find the row index for the previously selected handoff
+                    row_keys = list(handoff_table.rows.keys())
+                    for idx, row_key in enumerate(row_keys):
+                        if row_key.value == self.state.handoff.user_selected_id:
+                            handoff_table.move_cursor(row=idx)
+                            break
+                    # Re-render details for the highlighted handoff
+                    self._show_handoff_details(self.state.handoff.user_selected_id)
+                else:
+                    # Handoff was removed/archived, clear the details panel
+                    details_log = self.query_one("#handoff-details", RichLog)
+                    details_log.clear()
+                    details_log.write("[dim]Handoff no longer available[/dim]")
+                    # Also clear the confirmed selection if it was the same
+                    if self.state.handoff.current_id == self.state.handoff.user_selected_id:
+                        self.state.handoff.current_id = None
+                    self.state.handoff.user_selected_id = None
             else:
-                # Handoff was removed/archived, clear the details panel
-                details_log = self.query_one("#handoff-details", RichLog)
-                details_log.clear()
-                details_log.write("[dim]Handoff no longer available[/dim]")
-                # Also clear the confirmed selection if it was the same
-                if self._current_handoff_id == self._user_selected_handoff_id:
-                    self._current_handoff_id = None
-                self._user_selected_handoff_id = None
+                # No explicit selection - restore cursor row if valid
+                if saved_cursor_row is not None and saved_cursor_row < handoff_table.row_count:
+                    handoff_table.move_cursor(row=saved_cursor_row)
+                elif saved_scroll_y > 0:
+                    # Fallback: restore scroll position
+                    handoff_table.scroll_y = min(saved_scroll_y, handoff_table.max_scroll_y)
 
-        # Clear confirmed selection if the handoff was removed but user moved to another
-        if self._current_handoff_id is not None:
-            if self._current_handoff_id not in self._handoff_data:
-                self._current_handoff_id = None
+            # Clear confirmed selection if the handoff was removed but user moved to another
+            if self.state.handoff.current_id is not None:
+                if self.state.handoff.current_id not in self.state.handoff.data:
+                    self.state.handoff.current_id = None
+
+        self.call_after_refresh(restore_position)
 
     def action_toggle_completed(self) -> None:
         """Toggle visibility of completed handoffs."""
@@ -2595,10 +2444,10 @@ class RecallMonitorApp(App):
         except Exception:
             return
 
-        self._show_completed_handoffs = not self._show_completed_handoffs
+        self.state.handoff.show_completed = not self.state.handoff.show_completed
         self._refresh_handoff_list()
 
-        status = "shown" if self._show_completed_handoffs else "hidden"
+        status = "shown" if self.state.handoff.show_completed else "hidden"
         self.notify(f"Completed handoffs: {status}")
 
     def action_toggle_timeline(self) -> None:
@@ -2611,16 +2460,16 @@ class RecallMonitorApp(App):
         except Exception:
             return
 
-        self._timeline_view = not self._timeline_view
+        self.state.session.timeline_view = not self.state.session.timeline_view
 
         # Show/hide the appropriate widgets
         table = self.query_one("#handoff-list", DataTable)
         timeline = self.query_one("#handoff-timeline", RichLog)
 
-        table.display = not self._timeline_view
-        timeline.display = self._timeline_view
+        table.display = not self.state.session.timeline_view
+        timeline.display = self.state.session.timeline_view
 
-        if self._timeline_view:
+        if self.state.session.timeline_view:
             self._render_timeline()
             self.notify("Timeline view")
         else:
@@ -2632,7 +2481,7 @@ class RecallMonitorApp(App):
         timeline.clear()
 
         # Get handoffs data
-        handoffs = list(self._handoff_data.values())
+        handoffs = list(self.state.handoff.data.values())
         if not handoffs:
             timeline.write("[dim]No handoffs to display[/dim]")
             return
@@ -2842,8 +2691,8 @@ class RecallMonitorApp(App):
 
     def action_toggle_pause(self) -> None:
         """Toggle pause/resume of auto-refresh."""
-        self._paused = not self._paused
-        status = "PAUSED" if self._paused else "RUNNING"
+        self.state.paused = not self.state.paused
+        status = "PAUSED" if self.state.paused else "RUNNING"
         self.notify(f"Auto-refresh: {status}")
 
     def action_refresh(self) -> None:
@@ -2867,9 +2716,9 @@ class RecallMonitorApp(App):
 
     def action_toggle_system_sessions(self) -> None:
         """Toggle visibility of system/warmup sessions."""
-        self._show_system_sessions = not self._show_system_sessions
+        self.state.session.show_system = not self.state.session.show_system
         self._refresh_session_list()
-        self.notify(f"System sessions {'shown' if self._show_system_sessions else 'hidden'}")
+        self.notify(f"System sessions {'shown' if self.state.session.show_system else 'hidden'}")
 
     def action_expand_session(self) -> None:
         """Context-sensitive 'e' key action.
@@ -2908,12 +2757,12 @@ class RecallMonitorApp(App):
             self.notify("Could not get session ID", severity="error")
             return
 
-        if not session_id or session_id not in self._session_data:
+        if not session_id or session_id not in self.state.session.data:
             self.notify("Session data not found", severity="error")
             return
 
         # Get session data and open modal
-        summary = self._session_data[session_id]
+        summary = self.state.session.data[session_id]
         if isinstance(summary, TranscriptSummary):
             self.push_screen(SessionDetailModal(session_id, summary))
         else:
@@ -2924,7 +2773,7 @@ class RecallMonitorApp(App):
         """Enrich the currently selected handoff with context extraction."""
         # Use _user_selected_handoff_id (set on arrow navigation) so 'e' works
         # without requiring a prior Enter press
-        handoff_id = self._user_selected_handoff_id or self._current_handoff_id
+        handoff_id = self.state.handoff.user_selected_id or self.state.handoff.current_id
         if not handoff_id:
             self.call_from_thread(self.notify, "No handoff selected", severity="warning")
             return
@@ -2969,12 +2818,12 @@ class RecallMonitorApp(App):
             self.notify("Could not get session ID", severity="error")
             return
 
-        if not session_id or session_id not in self._session_data:
+        if not session_id or session_id not in self.state.session.data:
             self.notify("Session data not found", severity="error")
             return
 
         # Format session data for clipboard (using TranscriptSummary)
-        summary = self._session_data[session_id]
+        summary = self.state.session.data[session_id]
         if isinstance(summary, TranscriptSummary):
             text = (
                 f"Session: {session_id} | "
@@ -3046,7 +2895,7 @@ class RecallMonitorApp(App):
             # Just clear rows, keep columns
             session_table.clear()
 
-        self._session_data.clear()
+        self.state.session.data.clear()
 
         # Get sessions from TranscriptReader
         # _show_all toggles: all projects + all sessions (including empty) vs current project + non-empty
@@ -3066,7 +2915,7 @@ class RecallMonitorApp(App):
                 continue
 
             session_id = summary.session_id
-            self._session_data[session_id] = summary
+            self.state.session.data[session_id] = summary
 
             self._populate_session_row(session_table, session_id, summary)
 
@@ -3074,12 +2923,12 @@ class RecallMonitorApp(App):
         session_table.scroll_y = scroll_y
 
         # Preserve user's selection if it still exists in the new data
-        if self._user_selected_session_id is not None:
-            if self._user_selected_session_id in self._session_data:
+        if self.state.session.user_selected_id is not None:
+            if self.state.session.user_selected_id in self.state.session.data:
                 # Find the row index for the previously selected session
                 row_keys = list(session_table.rows.keys())
                 for idx, row_key in enumerate(row_keys):
-                    if row_key.value == self._user_selected_session_id:
+                    if row_key.value == self.state.session.user_selected_id:
                         session_table.move_cursor(row=idx)
                         break
 
@@ -3106,9 +2955,9 @@ class RecallMonitorApp(App):
     def _get_dynamic_subtitle(self) -> str:
         """Build dynamic subtitle showing status."""
         parts = []
-        if self.project_filter:
-            parts.append(f"Project: {self.project_filter}")
-        if self._paused:
+        if self.state.project_filter:
+            parts.append(f"Project: {self.state.project_filter}")
+        if self.state.paused:
             parts.append("[PAUSED]")
 
         now = datetime.now().strftime(_get_time_format())

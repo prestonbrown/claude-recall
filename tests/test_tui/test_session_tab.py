@@ -676,7 +676,7 @@ class TestSessionTableIntegration:
 
             # First, show one session (this may have been done during mount)
             # Then switch to a DIFFERENT session and verify scroll_home is called
-            app._current_session_id = "sess-older"  # Set to a different session
+            app.state.session.current_id = "sess-older"  # Set to a different session
 
             # Track if scroll_home was called by patching
             scroll_home_called = False
@@ -806,13 +806,13 @@ class TestSessionTableIntegration:
             await pilot.pause()
 
             # Check that session data is cached
-            assert len(app._session_data) == 4, (
+            assert len(app.state.session.data) == 4, (
                 f"Expected 4 sessions in _session_data cache, "
-                f"got {len(app._session_data)}"
+                f"got {len(app.state.session.data)}"
             )
 
             # Verify cached data is TranscriptSummary
-            for session_id, summary in app._session_data.items():
+            for session_id, summary in app.state.session.data.items():
                 assert isinstance(summary, TranscriptSummary), (
                     f"Cached data for {session_id} should be TranscriptSummary, "
                     f"got {type(summary)}"
@@ -1682,7 +1682,7 @@ class TestOriginColumn:
             session_table = app.query_one("#session-list", DataTable)
 
             # Get the session data from the cached data
-            session_data = app._session_data
+            session_data = app.state.session.data
 
             # Check each session has expected origin
             explore_session = session_data.get("sess-explore")

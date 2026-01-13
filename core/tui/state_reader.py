@@ -27,6 +27,7 @@ LEGACY_HANDOFFS_FILENAME = "APPROACHES.md"
 DECAY_STATE_FILENAME = "decay_state"
 
 try:
+    from core.tui.analytics import HandoffAnalytics
     from core.tui.models import (
         DecayInfo,
         HandoffContextSummary,
@@ -35,6 +36,7 @@ try:
         TriedStep,
     )
 except ImportError:
+    from .analytics import HandoffAnalytics
     from .models import (
         DecayInfo,
         HandoffContextSummary,
@@ -188,6 +190,7 @@ class StateReader:
         """
         self.state_dir = state_dir or get_state_dir()
         self.project_root = project_root or get_project_root()
+        self._analytics = HandoffAnalytics()
 
     @property
     def system_lessons_file(self) -> Path:
@@ -745,14 +748,8 @@ class StateReader:
         Returns:
             Dict with 'system', 'project', and 'total' counts
         """
-        system_lessons = self.get_system_lessons()
-        project_lessons = self.get_project_lessons(project_root)
-
-        return {
-            "system": len(system_lessons),
-            "project": len(project_lessons),
-            "total": len(system_lessons) + len(project_lessons),
-        }
+        lessons = self.get_lessons(project_root)
+        return self._analytics.compute_lesson_counts(lessons)
 
     def get_handoff_counts(self, project_root: Optional[Path] = None) -> dict:
         """
@@ -827,50 +824,4 @@ class StateReader:
             - by_phase: Dict mapping phase to count
             - age_stats: Dict with min_age_days, max_age_days, avg_age_days
         """
-        if not handoffs:
-            return {
-                "total_count": 0,
-                "active_count": 0,
-                "blocked_count": 0,
-                "stale_count": 0,
-                "by_status": {},
-                "by_phase": {},
-                "age_stats": {
-                    "min_age_days": 0,
-                    "max_age_days": 0,
-                    "avg_age_days": 0.0,
-                },
-            }
-
-        # Count by status
-        by_status: Dict[str, int] = {}
-        for h in handoffs:
-            by_status[h.status] = by_status.get(h.status, 0) + 1
-
-        # Count by phase
-        by_phase: Dict[str, int] = {}
-        for h in handoffs:
-            by_phase[h.phase] = by_phase.get(h.phase, 0) + 1
-
-        # Age statistics
-        ages = [h.age_days for h in handoffs]
-        min_age = min(ages) if ages else 0
-        max_age = max(ages) if ages else 0
-        avg_age = sum(ages) / len(ages) if ages else 0.0
-
-        # Stale count (7+ days since update)
-        stale_count = sum(1 for h in handoffs if h.updated_age_days >= 7)
-
-        return {
-            "total_count": len(handoffs),
-            "active_count": sum(1 for h in handoffs if h.is_active),
-            "blocked_count": sum(1 for h in handoffs if h.is_blocked),
-            "stale_count": stale_count,
-            "by_status": by_status,
-            "by_phase": by_phase,
-            "age_stats": {
-                "min_age_days": min_age,
-                "max_age_days": max_age,
-                "avg_age_days": avg_age,
-            },
-        }
+        return self._analytics.compute_handoff_stats(handoffs)

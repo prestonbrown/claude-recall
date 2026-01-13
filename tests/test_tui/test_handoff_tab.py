@@ -2139,8 +2139,8 @@ class TestHandoffDetailsDisplay:
 
             # Render the content and check for project
             # The project field should be displayed if non-empty
-            # Note: We check app._handoff_data for the handoff object
-            handoff = app._handoff_data.get("hf-full001")
+            # Note: We check app.state.handoff.data for the handoff object
+            handoff = app.state.handoff.data.get("hf-full001")
             if handoff and handoff.project:
                 # The display method should show it
                 assert True  # Project field exists and can be displayed
@@ -2168,7 +2168,7 @@ class TestHandoffDetailsDisplay:
             await pilot.pause()
 
             # Verify handoff with blocked_by is parsed
-            handoff = app._handoff_data.get("hf-full001")
+            handoff = app.state.handoff.data.get("hf-full001")
             if handoff:
                 assert hasattr(handoff, "blocked_by"), (
                     "Handoff should have blocked_by field"
@@ -2202,7 +2202,7 @@ class TestHandoffDetailsDisplay:
             await pilot.pause()
 
             # Verify handoff with context is parsed
-            handoff = app._handoff_data.get("hf-full001")
+            handoff = app.state.handoff.data.get("hf-full001")
             if handoff:
                 assert hasattr(handoff, "handoff"), (
                     "HandoffSummary should have 'handoff' field for context"
@@ -2240,7 +2240,7 @@ class TestHandoffDetailsDisplay:
             await pilot.pause()
 
             # hf-minimal should exist without context
-            handoff = app._handoff_data.get("hf-minimal")
+            handoff = app.state.handoff.data.get("hf-minimal")
             if handoff:
                 # Should be None or handle gracefully
                 assert handoff.handoff is None, (
@@ -2269,7 +2269,7 @@ class TestHandoffDetailsDisplay:
             await pilot.press("f6")
             await pilot.pause()
 
-            handoff = app._handoff_data.get("hf-full001")
+            handoff = app.state.handoff.data.get("hf-full001")
             if handoff and handoff.handoff:
                 git_ref = handoff.handoff.git_ref
                 # Full ref is 40 chars, but display should use first 8

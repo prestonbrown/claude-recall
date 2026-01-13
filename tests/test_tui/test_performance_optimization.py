@@ -398,15 +398,14 @@ class TestLazyTabLoading:
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            # Should have _tabs_loaded dict
-            assert hasattr(app, "_tabs_loaded"), (
-                "App should have _tabs_loaded dict to track lazy loading state. "
-                "Add: self._tabs_loaded: Dict[str, bool] = {} in __init__"
+            # Should have state.tabs_loaded dict
+            assert hasattr(app.state, "tabs_loaded"), (
+                "App should have state.tabs_loaded dict to track lazy loading state."
             )
 
-            tabs_loaded = getattr(app, "_tabs_loaded", None)
+            tabs_loaded = getattr(app.state, "tabs_loaded", None)
             assert isinstance(tabs_loaded, dict), (
-                "_tabs_loaded should be a dictionary"
+                "state.tabs_loaded should be a dictionary"
             )
 
     @pytest.mark.asyncio

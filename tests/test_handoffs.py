@@ -471,6 +471,108 @@ class TestHandoffUpdateDesc:
         assert handoff.description == "New description text"
 
 
+class TestHandoffFieldUpdater:
+    """Tests for the generic _update_handoff_field helper method."""
+
+    def test_update_field_updates_status(self, manager_with_handoffs: "LessonsManager"):
+        """Using generic updater should update status field."""
+        # Get initial state
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == "not_started"
+
+        # Use the generic field updater
+        manager_with_handoffs._update_handoff_field("hf-0000001", "status", "in_progress")
+
+        # Verify update
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == "in_progress"
+
+    def test_update_field_updates_phase(self, manager_with_handoffs: "LessonsManager"):
+        """Using generic updater should update phase field."""
+        # Get initial state
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.phase == "research"
+
+        # Use the generic field updater
+        manager_with_handoffs._update_handoff_field("hf-0000001", "phase", "implementing")
+
+        # Verify update
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.phase == "implementing"
+
+    def test_update_field_updates_agent(self, manager_with_handoffs: "LessonsManager"):
+        """Using generic updater should update agent field."""
+        # Get initial state
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.agent == "user"
+
+        # Use the generic field updater
+        manager_with_handoffs._update_handoff_field("hf-0000001", "agent", "explore")
+
+        # Verify update
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.agent == "explore"
+
+    def test_update_field_updates_next_steps(self, manager_with_handoffs: "LessonsManager"):
+        """Using generic updater should update next_steps field."""
+        # Use the generic field updater
+        manager_with_handoffs._update_handoff_field(
+            "hf-0000001", "next_steps", "Write more tests"
+        )
+
+        # Verify update
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.next_steps == "Write more tests"
+
+    def test_update_field_updates_description(self, manager_with_handoffs: "LessonsManager"):
+        """Using generic updater should update description field."""
+        # Use the generic field updater
+        manager_with_handoffs._update_handoff_field(
+            "hf-0000001", "description", "Updated description"
+        )
+
+        # Verify update
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.description == "Updated description"
+
+    def test_update_field_preserves_other_fields(self, manager_with_handoffs: "LessonsManager"):
+        """Updating one field should not change other fields."""
+        # Set up initial values for multiple fields
+        manager_with_handoffs._update_handoff_field("hf-0000001", "status", "in_progress")
+        manager_with_handoffs._update_handoff_field("hf-0000001", "phase", "planning")
+        manager_with_handoffs._update_handoff_field("hf-0000001", "next_steps", "Original next steps")
+
+        # Now update just the status
+        manager_with_handoffs._update_handoff_field("hf-0000001", "status", "blocked")
+
+        # Verify only status changed
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == "blocked"
+        assert handoff.phase == "planning"  # Should be unchanged
+        assert handoff.next_steps == "Original next steps"  # Should be unchanged
+
+    def test_update_field_invalid_handoff_id(self, manager: "LessonsManager"):
+        """Invalid handoff ID should raise ValueError."""
+        with pytest.raises(ValueError, match="not found"):
+            manager._update_handoff_field("hf-9999999", "status", "in_progress")
+
+    def test_update_field_updates_refs_list(self, manager_with_handoffs: "LessonsManager"):
+        """Using generic updater should update refs list field."""
+        refs = ["file1.py:10", "file2.py:20-30"]
+        manager_with_handoffs._update_handoff_field("hf-0000001", "refs", refs)
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.refs == refs
+
+    def test_update_field_updates_blocked_by_list(self, manager_with_handoffs: "LessonsManager"):
+        """Using generic updater should update blocked_by list field."""
+        blocked_by = ["hf-0000002", "hf-0000003"]
+        manager_with_handoffs._update_handoff_field("hf-0000001", "blocked_by", blocked_by)
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.blocked_by == blocked_by
+
+
 class TestHandoffUpdateSetsDate:
     """Tests for automatic date updates."""
 

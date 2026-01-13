@@ -321,20 +321,20 @@ class TestTimelineState:
             await pilot.pause()
 
             # Initially, timeline view should be False
-            assert hasattr(app, "_timeline_view"), "App should have _timeline_view attribute"
-            assert app._timeline_view is False, "Timeline view should be False initially"
+            assert hasattr(app.state.session, "timeline_view"), "App should have state.session.timeline_view attribute"
+            assert app.state.session.timeline_view is False, "Timeline view should be False initially"
 
             # After toggle, should be True
             await pilot.press("t")
             await pilot.pause()
 
-            assert app._timeline_view is True, "Timeline view should be True after toggle"
+            assert app.state.session.timeline_view is True, "Timeline view should be True after toggle"
 
             # After second toggle, back to False
             await pilot.press("t")
             await pilot.pause()
 
-            assert app._timeline_view is False, "Timeline view should be False after second toggle"
+            assert app.state.session.timeline_view is False, "Timeline view should be False after second toggle"
 
 
 # --- Tests for Key Binding ---

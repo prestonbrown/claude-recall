@@ -13,7 +13,7 @@ import subprocess
 import time
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
 # Handle both module import and direct script execution
 try:
@@ -237,8 +237,8 @@ class LessonsMixin:
         Returns:
             The Lesson object, or None if not found.
         """
-        level = "system" if lesson_id.startswith("S") else "project"
-        file_path = self.system_lessons_file if level == "system" else self.project_lessons_file
+        level = self._get_level_from_id(lesson_id)
+        file_path = self._get_file_path_for_id(lesson_id)
 
         if not file_path.exists():
             return None
@@ -266,66 +266,72 @@ class LessonsMixin:
         if not re.match(r'^[LS]\d{3}$', lesson_id):
             raise ValueError(f"Invalid lesson ID format: {lesson_id}")
 
-        level = "system" if lesson_id.startswith("S") else "project"
-        file_path = self.system_lessons_file if level == "system" else self.project_lessons_file
+        level = self._get_level_from_id(lesson_id)
+        file_path = self._get_file_path_for_id(lesson_id)
 
         if not file_path.exists():
             raise ValueError(f"Lesson {lesson_id} not found")
 
-        with FileLock(file_path):
-            lessons = self._parse_lessons_file(file_path, level)
+        # State to capture values from update function
+        state = {
+            "found": False,
+            "uses_before": 0,
+            "velocity_before": 0,
+            "new_uses": 0,
+            "new_velocity": 0,
+            "promotable": True,
+        }
 
-            target = None
+        def update_fn(lessons):
             for lesson in lessons:
                 if lesson.id == lesson_id:
-                    target = lesson
+                    # Capture old values for logging
+                    state["uses_before"] = lesson.uses
+                    state["velocity_before"] = lesson.velocity
+                    state["promotable"] = lesson.promotable
+
+                    # Update metrics (cap uses at 100)
+                    state["new_uses"] = min(lesson.uses + 1, MAX_USES)
+                    state["new_velocity"] = lesson.velocity + 1
+
+                    lesson.uses = state["new_uses"]
+                    lesson.velocity = state["new_velocity"]
+                    lesson.last_used = date.today()
+
+                    state["found"] = True
                     break
 
-            if target is None:
-                raise ValueError(f"Lesson {lesson_id} not found")
+        self._atomic_update_lessons_file(file_path, update_fn, level)
 
-            # Capture old values for logging
-            uses_before = target.uses
-            velocity_before = target.velocity
-
-            # Update metrics (cap uses at 100)
-            new_uses = min(target.uses + 1, MAX_USES)
-            new_velocity = target.velocity + 1
-            today = date.today()
-
-            target.uses = new_uses
-            target.velocity = new_velocity
-            target.last_used = today
-
-            # Write back all lessons
-            self._write_lessons_file(file_path, lessons, level)
+        if not state["found"]:
+            raise ValueError(f"Lesson {lesson_id} not found")
 
         # Use configurable threshold from settings (default: 50)
         threshold = getattr(self, "promotion_threshold", SYSTEM_PROMOTION_THRESHOLD)
         promotion_ready = (
             lesson_id.startswith("L")
-            and new_uses >= threshold
-            and target.promotable
+            and state["new_uses"] >= threshold
+            and state["promotable"]
         )
 
         # Log citation
         logger = get_logger()
         logger.citation(
             lesson_id=lesson_id,
-            uses_before=uses_before,
-            uses_after=new_uses,
-            velocity_before=velocity_before,
-            velocity_after=new_velocity,
+            uses_before=state["uses_before"],
+            uses_after=state["new_uses"],
+            velocity_before=state["velocity_before"],
+            velocity_after=state["new_velocity"],
             promotion_ready=promotion_ready,
         )
 
         return CitationResult(
             success=True,
             lesson_id=lesson_id,
-            uses=new_uses,
-            velocity=new_velocity,
+            uses=state["new_uses"],
+            velocity=state["new_velocity"],
             promotion_ready=promotion_ready,
-            message="OK" if not promotion_ready else f"PROMOTION_READY:{lesson_id}:{new_uses}",
+            message="OK" if not promotion_ready else f"PROMOTION_READY:{lesson_id}:{state['new_uses']}",
         )
 
     def edit_lesson(self, lesson_id: str, new_content: str) -> None:
@@ -339,31 +345,30 @@ class LessonsMixin:
         Raises:
             ValueError: If the lesson is not found
         """
-        level = "system" if lesson_id.startswith("S") else "project"
-        file_path = self.system_lessons_file if level == "system" else self.project_lessons_file
+        level = self._get_level_from_id(lesson_id)
+        file_path = self._get_file_path_for_id(lesson_id)
 
         if not file_path.exists():
             raise ValueError(f"Lesson {lesson_id} not found")
 
-        old_len = 0
-        with FileLock(file_path):
-            lessons = self._parse_lessons_file(file_path, level)
+        # Capture old_len in closure for logging
+        state = {"old_len": 0, "found": False}
 
-            found = False
+        def update_fn(lessons):
             for lesson in lessons:
                 if lesson.id == lesson_id:
-                    old_len = len(lesson.content)
+                    state["old_len"] = len(lesson.content)
                     lesson.content = new_content
-                    found = True
+                    state["found"] = True
                     break
 
-            if not found:
-                raise ValueError(f"Lesson {lesson_id} not found")
+        self._atomic_update_lessons_file(file_path, update_fn, level)
 
-            self._write_lessons_file(file_path, lessons, level)
+        if not state["found"]:
+            raise ValueError(f"Lesson {lesson_id} not found")
 
         logger = get_logger()
-        logger.mutation("edit", lesson_id, {"old_len": old_len, "new_len": len(new_content)})
+        logger.mutation("edit", lesson_id, {"old_len": state["old_len"], "new_len": len(new_content)})
 
     def delete_lesson(self, lesson_id: str) -> None:
         """
@@ -375,22 +380,26 @@ class LessonsMixin:
         Raises:
             ValueError: If the lesson is not found
         """
-        level = "system" if lesson_id.startswith("S") else "project"
-        file_path = self.system_lessons_file if level == "system" else self.project_lessons_file
+        level = self._get_level_from_id(lesson_id)
+        file_path = self._get_file_path_for_id(lesson_id)
 
         if not file_path.exists():
             raise ValueError(f"Lesson {lesson_id} not found")
 
-        with FileLock(file_path):
-            lessons = self._parse_lessons_file(file_path, level)
+        state = {"found": False}
 
-            original_count = len(lessons)
-            lessons = [l for l in lessons if l.id != lesson_id]
+        def update_fn(lessons):
+            # Find and remove the lesson by index
+            for i, lesson in enumerate(lessons):
+                if lesson.id == lesson_id:
+                    del lessons[i]
+                    state["found"] = True
+                    break
 
-            if len(lessons) == original_count:
-                raise ValueError(f"Lesson {lesson_id} not found")
+        self._atomic_update_lessons_file(file_path, update_fn, level)
 
-            self._write_lessons_file(file_path, lessons, level)
+        if not state["found"]:
+            raise ValueError(f"Lesson {lesson_id} not found")
 
         logger = get_logger()
         logger.mutation("delete", lesson_id)
@@ -422,11 +431,14 @@ class LessonsMixin:
         # Initialize system file
         self.init_lessons_file("system")
 
+        # Capture new_id in closure for return value
+        state = {"new_id": ""}
+
         # Step 1: Add to system file (separate lock to avoid nested locks)
-        with FileLock(self.system_lessons_file):
-            new_id = self._get_next_id(self.system_lessons_file, "S")
+        def add_to_system(system_lessons):
+            state["new_id"] = self._get_next_id(self.system_lessons_file, "S")
             new_lesson = Lesson(
-                id=new_id,
+                id=state["new_id"],
                 title=lesson.title,
                 content=lesson.content,
                 uses=lesson.uses,
@@ -437,20 +449,27 @@ class LessonsMixin:
                 source=lesson.source,
                 level="system",
             )
-            system_lessons = self._parse_lessons_file(self.system_lessons_file, "system")
             system_lessons.append(new_lesson)
-            self._write_lessons_file(self.system_lessons_file, system_lessons, "system")
+
+        self._atomic_update_lessons_file(
+            self.system_lessons_file, add_to_system, level="system"
+        )
 
         # Step 2: Remove from project file (separate lock)
-        with FileLock(self.project_lessons_file):
-            project_lessons = self._parse_lessons_file(self.project_lessons_file, "project")
-            project_lessons = [l for l in project_lessons if l.id != lesson_id]
-            self._write_lessons_file(self.project_lessons_file, project_lessons, "project")
+        def remove_from_project(project_lessons):
+            for i, l in enumerate(project_lessons):
+                if l.id == lesson_id:
+                    del project_lessons[i]
+                    break
+
+        self._atomic_update_lessons_file(
+            self.project_lessons_file, remove_from_project, level="project"
+        )
 
         logger = get_logger()
-        logger.mutation("promote", lesson_id, {"new_id": new_id})
+        logger.mutation("promote", lesson_id, {"new_id": state["new_id"]})
 
-        return new_id
+        return state["new_id"]
 
     def list_lessons(
         self,
@@ -882,40 +901,53 @@ No explanations, just ID: SCORE lines."""
         return evicted_count
 
     # -------------------------------------------------------------------------
+    # Level/ID Parser Helpers
+    # -------------------------------------------------------------------------
+
+    def _get_level_from_id(self, lesson_id: str) -> str:
+        """Extract level from lesson ID (S###=system, L###=project)."""
+        return "system" if lesson_id.startswith("S") else "project"
+
+    def _get_file_path_for_id(self, lesson_id: str) -> Path:
+        """Get lesson file path from ID."""
+        level = self._get_level_from_id(lesson_id)
+        return self.system_lessons_file if level == "system" else self.project_lessons_file
+
+    # -------------------------------------------------------------------------
     # Helper Methods for Testing
     # -------------------------------------------------------------------------
 
     def _update_lesson_date(self, lesson_id: str, last_used: date) -> None:
         """Update a lesson's last-used date (for testing)."""
-        level = "system" if lesson_id.startswith("S") else "project"
-        file_path = self.system_lessons_file if level == "system" else self.project_lessons_file
+        level = self._get_level_from_id(lesson_id)
+        file_path = self._get_file_path_for_id(lesson_id)
 
         if not file_path.exists():
             return
 
-        with FileLock(file_path):
-            lessons = self._parse_lessons_file(file_path, level)
+        def update_fn(lessons):
             for lesson in lessons:
                 if lesson.id == lesson_id:
                     lesson.last_used = last_used
                     break
-            self._write_lessons_file(file_path, lessons, level)
+
+        self._atomic_update_lessons_file(file_path, update_fn, level)
 
     def _set_lesson_uses(self, lesson_id: str, uses: int) -> None:
         """Set a lesson's uses count (for testing)."""
-        level = "system" if lesson_id.startswith("S") else "project"
-        file_path = self.system_lessons_file if level == "system" else self.project_lessons_file
+        level = self._get_level_from_id(lesson_id)
+        file_path = self._get_file_path_for_id(lesson_id)
 
         if not file_path.exists():
             return
 
-        with FileLock(file_path):
-            lessons = self._parse_lessons_file(file_path, level)
+        def update_fn(lessons):
             for lesson in lessons:
                 if lesson.id == lesson_id:
                     lesson.uses = uses
                     break
-            self._write_lessons_file(file_path, lessons, level)
+
+        self._atomic_update_lessons_file(file_path, update_fn, level)
 
     def _set_last_decay_time(self) -> None:
         """Set the last decay timestamp (for testing)."""
@@ -974,6 +1006,30 @@ No explanations, just ID: SCORE lines."""
                         pass
 
         return f"{prefix}{max_id + 1:03d}"
+
+    def _atomic_update_lessons_file(
+        self,
+        file_path: Path,
+        update_fn: Callable[[List[Lesson]], None],
+        level: str = "project"
+    ) -> None:
+        """Atomically update a lessons file with locking.
+
+        This helper consolidates the common pattern of:
+        1. Acquire file lock
+        2. Parse lessons from file
+        3. Modify lessons list (via update_fn)
+        4. Write lessons back to file
+
+        Args:
+            file_path: Path to the lessons file
+            update_fn: Function that modifies the lessons list in-place
+            level: "system" or "project"
+        """
+        with FileLock(file_path):
+            lessons = self._parse_lessons_file(file_path, level)
+            update_fn(lessons)
+            self._write_lessons_file(file_path, lessons, level)
 
     def _parse_lessons_file(self, file_path: Path, level: str) -> List[Lesson]:
         """Parse all lessons from a file."""

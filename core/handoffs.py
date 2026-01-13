@@ -12,12 +12,13 @@ import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 # Handle both module import and direct script execution
 try:
     from core.debug_logger import get_logger
     from core.file_lock import FileLock
+    from core.paths import PathResolver
     from core.models import (
         # Constants
         HANDOFF_MAX_COMPLETED,
@@ -47,6 +48,7 @@ try:
 except ImportError:
     from debug_logger import get_logger
     from file_lock import FileLock
+    from paths import PathResolver
     from models import (
         # Constants
         HANDOFF_MAX_COMPLETED,
@@ -73,21 +75,6 @@ except ImportError:
         APPROACH_STALE_DAYS,
         APPROACH_COMPLETED_ARCHIVE_DAYS,
     )
-
-
-def _get_claude_recall_dir() -> str:
-    """Get the per-project data directory name for Claude Recall."""
-    return ".claude-recall"
-
-
-def _get_recall_dir() -> str:
-    """Get the fallback per-project data directory name."""
-    return ".recall"
-
-
-def _get_legacy_dir() -> str:
-    """Get the legacy per-project data directory name."""
-    return ".coding-agent-lessons"
 
 
 def _validate_ref(ref: str) -> bool:
@@ -340,20 +327,7 @@ class HandoffsMixin:
         Checks for directories in order of precedence:
         .claude-recall/ → .recall/ → .coding-agent-lessons/ → default (.claude-recall/)
         """
-        claude_recall_dir = self.project_root / _get_claude_recall_dir()
-        recall_dir = self.project_root / _get_recall_dir()
-        legacy_dir = self.project_root / _get_legacy_dir()
-
-        # Prefer new directory if it exists, otherwise check legacy paths
-        if claude_recall_dir.exists():
-            return claude_recall_dir
-        elif recall_dir.exists():
-            return recall_dir
-        elif legacy_dir.exists():
-            return legacy_dir
-        else:
-            # Default to new directory for new projects
-            return claude_recall_dir
+        return PathResolver.project_data_dir(self.project_root)
 
     @property
     def project_handoffs_file(self) -> Path:
@@ -368,7 +342,7 @@ class HandoffsMixin:
             return old_path
         else:
             # Default to new name for new files in .claude-recall/
-            return self.project_root / _get_claude_recall_dir() / "HANDOFFS.md"
+            return self.project_root / ".claude-recall" / "HANDOFFS.md"
 
     @property
     def project_handoffs_archive(self) -> Path:
@@ -383,7 +357,7 @@ class HandoffsMixin:
             return old_path
         else:
             # Default to new name for new files in .claude-recall/
-            return self.project_root / _get_claude_recall_dir() / "HANDOFFS_ARCHIVE.md"
+            return self.project_root / ".claude-recall" / "HANDOFFS_ARCHIVE.md"
 
     @property
     def project_stealth_handoffs_file(self) -> Path:
@@ -1043,6 +1017,25 @@ class HandoffsMixin:
 
         raise ValueError(f"Handoff {handoff_id} not found")
 
+    def _update_handoff_field(self, handoff_id: str, field: str, value: Any) -> None:
+        """
+        Update a single field on a handoff.
+
+        This is a generic helper that simplifies field updates by using setattr.
+        It delegates to _update_handoff_in_file for the actual file manipulation.
+
+        Args:
+            handoff_id: The handoff ID
+            field: Field name (e.g., "status", "phase", "agent", "next_steps")
+            value: New value for the field
+
+        Raises:
+            ValueError: If handoff not found
+        """
+        def update_fn(h: Handoff) -> None:
+            setattr(h, field, value)
+        self._update_handoff_in_file(handoff_id, update_fn)
+
     def handoff_update_status(self, handoff_id: str, status: str) -> None:
         """
         Update a handoff's status.
@@ -1305,10 +1298,7 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        def update_fn(h: Handoff) -> None:
-            h.next_steps = text
-
-        self._update_handoff_in_file(handoff_id, update_fn)
+        self._update_handoff_field(handoff_id, "next_steps", text)
 
     def handoff_update_refs(self, handoff_id: str, refs_list: List[str]) -> None:
         """
@@ -1321,10 +1311,7 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        def update_fn(h: Handoff) -> None:
-            h.refs = refs_list
-
-        self._update_handoff_in_file(handoff_id, update_fn)
+        self._update_handoff_field(handoff_id, "refs", refs_list)
 
     def handoff_update_files(self, handoff_id: str, files_list: List[str]) -> None:
         """
@@ -1350,10 +1337,7 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        def update_fn(h: Handoff) -> None:
-            h.description = description
-
-        self._update_handoff_in_file(handoff_id, update_fn)
+        self._update_handoff_field(handoff_id, "description", description)
 
     def handoff_update_checkpoint(self, handoff_id: str, checkpoint: str) -> None:
         """
@@ -1400,10 +1384,7 @@ class HandoffsMixin:
         Raises:
             ValueError: If handoff not found
         """
-        def update_fn(h: Handoff) -> None:
-            h.blocked_by = blocked_by
-
-        self._update_handoff_in_file(handoff_id, update_fn)
+        self._update_handoff_field(handoff_id, "blocked_by", blocked_by)
 
     def handoff_complete(self, handoff_id: str) -> HandoffCompleteResult:
         """
@@ -2057,8 +2038,8 @@ Consider extracting lessons about:
         if not handoff_id and len(todos) >= 3 and not explicit_handoff_ids:
             # Only auto-create handoff if 3+ todos (avoid noise for small tasks)
             first_todo = todos[0].get("content", "Work in progress")
-            # Truncate title to 50 chars
-            title = first_todo[:50] + ("..." if len(first_todo) > 50 else "")
+            # Truncate title to 100 chars (preserve meaningful info)
+            title = first_todo[:100] + ("..." if len(first_todo) > 100 else "")
 
             # Infer phase from todo content
             combined_content = " ".join(t.get("content", "") for t in todos).lower()

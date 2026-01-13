@@ -42,70 +42,11 @@ def _read_claude_recall_settings() -> dict:
 try:
     from core.lessons import LessonsMixin
     from core.handoffs import HandoffsMixin
+    from core.paths import PathResolver
 except ImportError:
     from lessons import LessonsMixin
     from handoffs import HandoffsMixin
-
-
-def _get_lessons_base() -> Path:
-    """Get the system lessons base directory for Claude Recall (code location).
-
-    Checks environment variables in order of precedence:
-    CLAUDE_RECALL_BASE → RECALL_BASE → LESSONS_BASE → default
-
-    Note: This is where the code lives (~/.config/claude-recall/).
-    For mutable state data, use _get_state_dir() instead.
-    """
-    base_path = (
-        os.environ.get("CLAUDE_RECALL_BASE") or
-        os.environ.get("RECALL_BASE") or
-        os.environ.get("LESSONS_BASE")
-    )
-    if base_path:
-        return Path(base_path)
-    return Path.home() / ".config" / "claude-recall"
-
-
-def _get_state_dir() -> Path:
-    """Get the XDG state directory for mutable data.
-
-    This is where system lessons and state files are stored:
-    - LESSONS.md (system lessons)
-    - .decay-last-run (decay timestamp)
-    - .citation-state/ (session checkpoints)
-
-    Checks environment variables in order of precedence:
-    CLAUDE_RECALL_STATE → XDG_STATE_HOME/claude-recall → ~/.local/state/claude-recall
-    """
-    state_path = os.environ.get("CLAUDE_RECALL_STATE")
-    if state_path:
-        return Path(state_path)
-    xdg_state = os.environ.get("XDG_STATE_HOME")
-    if xdg_state:
-        return Path(xdg_state) / "claude-recall"
-    return Path.home() / ".local" / "state" / "claude-recall"
-
-
-def _get_project_data_dir(project_root: Path) -> Path:
-    """Get the project data directory, preferring .claude-recall/ over legacy paths.
-
-    Checks for directories in order of precedence:
-    .claude-recall/ → .recall/ → .coding-agent-lessons/ → default (.claude-recall/)
-    """
-    claude_recall_dir = project_root / ".claude-recall"
-    recall_dir = project_root / ".recall"
-    legacy_dir = project_root / ".coding-agent-lessons"
-
-    # Prefer new directory if it exists, otherwise check legacy paths
-    if claude_recall_dir.exists():
-        return claude_recall_dir
-    elif recall_dir.exists():
-        return recall_dir
-    elif legacy_dir.exists():
-        return legacy_dir
-    else:
-        # Default to new directory for new projects
-        return claude_recall_dir
+    from paths import PathResolver
 
 
 class LessonsManager(LessonsMixin, HandoffsMixin):
@@ -132,7 +73,7 @@ class LessonsManager(LessonsMixin, HandoffsMixin):
         self.project_root = Path(project_root)
 
         # State directory for mutable data (XDG compliant)
-        self.state_dir = _get_state_dir()
+        self.state_dir = PathResolver.state_dir()
         self.state_dir.mkdir(parents=True, exist_ok=True)
 
         # Auto-migrate system lessons from old location
@@ -155,7 +96,7 @@ class LessonsManager(LessonsMixin, HandoffsMixin):
             )
 
         # Get project data directory (prefers .claude-recall/ over legacy paths)
-        project_data_dir = _get_project_data_dir(self.project_root)
+        project_data_dir = PathResolver.project_data_dir(self.project_root)
         self.project_lessons_file = project_data_dir / "LESSONS.md"
 
         # Ensure project directory exists with auto-gitignore

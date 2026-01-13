@@ -4,106 +4,33 @@
 
 set -euo pipefail
 
-# Timing support - capture start time immediately
-HOOK_START_MS=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0)
-PHASE_TIMES_JSON="{}"  # Build JSON incrementally (bash 3.x compatible)
+# Source shared library
+HOOK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HOOK_LIB_DIR/hook-lib.sh"
 
-# Guard against recursive calls from Haiku subprocesses
-[[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
+# Check for recursion guard early
+hook_lib_check_recursion
 
-# Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
-CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
-CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
-# Debug level: env var > settings.json > default (1)
-_env_debug="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
-if [[ -n "$_env_debug" ]]; then
-    CLAUDE_RECALL_DEBUG="$_env_debug"
-elif [[ -f "$HOME/.claude/settings.json" ]]; then
-    _settings_debug=$(jq -r '.claudeRecall.debugLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
-    CLAUDE_RECALL_DEBUG="${_settings_debug:-1}"
-else
-    CLAUDE_RECALL_DEBUG="1"
-fi
-# Export legacy names for downstream compatibility
-LESSONS_BASE="$CLAUDE_RECALL_BASE"
-LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
-export CLAUDE_RECALL_STATE
-BASH_MANAGER="$CLAUDE_RECALL_BASE/lessons-manager.sh"
-# Python manager - try installed locations first, fall back to dev location
-if [[ -f "$CLAUDE_RECALL_BASE/core/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/core/cli.py"
-elif [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"  # Legacy flat structure
-else
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
-fi
+# Initialize timing immediately
+init_timing
+
+# Setup environment variables
+setup_env
+
 # Get decayIntervalDays from settings (default: 7)
-get_decay_interval_days() {
-    local config="$HOME/.claude/settings.json"
-    if [[ -f "$config" ]]; then
-        jq -r '.claudeRecall.decayIntervalDays // 7' "$config" 2>/dev/null || echo "7"
-    else
-        echo "7"
-    fi
-}
-DECAY_INTERVAL_DAYS=$(get_decay_interval_days)
+DECAY_INTERVAL_DAYS=$(get_setting "decayIntervalDays" 7)
 DECAY_INTERVAL=$((DECAY_INTERVAL_DAYS * 86400))  # Convert to seconds
-
-# Timing helpers (bash 3.x compatible - no associative arrays)
-get_ms() {
-    python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0
-}
-
-log_phase() {
-    local phase="$1"
-    local start_ms="$2"
-    local end_ms=$(get_ms)
-    local duration=$((end_ms - start_ms))
-    # Append to JSON (handles first entry vs subsequent)
-    if [[ "$PHASE_TIMES_JSON" == "{}" ]]; then
-        PHASE_TIMES_JSON="{\"$phase\":$duration"
-    else
-        PHASE_TIMES_JSON="$PHASE_TIMES_JSON,\"$phase\":$duration"
-    fi
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-        PROJECT_DIR="${cwd:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-phase inject "$phase" "$duration" 2>/dev/null &
-    fi
-}
-
-log_hook_end() {
-    local end_ms=$(get_ms)
-    local total_ms=$((end_ms - HOOK_START_MS))
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-        # Close the JSON object
-        local phases_json="${PHASE_TIMES_JSON}}"
-        PROJECT_DIR="${cwd:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end inject "$total_ms" --phases "$phases_json" 2>/dev/null &
-    fi
-}
-
-# Check if enabled
-is_enabled() {
-    local config="$HOME/.claude/settings.json"
-    [[ -f "$config" ]] || return 0  # Enabled by default if no config
-    # Note: jq // operator treats false as falsy, so we check explicitly
-    local enabled=$(jq -r '.claudeRecall.enabled' "$config" 2>/dev/null)
-    [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
-}
 
 # Get topLessonsToShow setting (default: 3)
 get_top_lessons_count() {
-    local config="$HOME/.claude/settings.json"
-    if [[ -f "$config" ]]; then
-        jq -r '.claudeRecall.topLessonsToShow // 3' "$config" 2>/dev/null || echo "3"
-    else
-        echo "3"
-    fi
+    get_setting "topLessonsToShow" 3
 }
 
 # Run decay if it's been more than DECAY_INTERVAL since last run
 run_decay_if_due() {
     local decay_state="$CLAUDE_RECALL_STATE/.decay-last-run"
-    local now=$(date +%s)
+    local now
+    now=$(date +%s)
     local last_run=0
 
     # Read and validate decay state (must be numeric)
@@ -128,7 +55,8 @@ run_decay_if_due() {
 generate_context() {
     local cwd="$1"
     local summary=""
-    local top_n=$(get_top_lessons_count)
+    local top_n
+    top_n=$(get_top_lessons_count)
 
     # Try Python manager first
     if [[ -f "$PYTHON_MANAGER" ]]; then
@@ -167,19 +95,24 @@ generate_context() {
 main() {
     is_enabled || exit 0
 
-    local input=$(cat)
-    local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
+    local input
+    input=$(cat)
+    local cwd
+    cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
 
     # Extract session_id from Claude Code hook input for event correlation
-    local claude_session_id=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+    local claude_session_id
+    claude_session_id=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
     if [[ -n "$claude_session_id" ]]; then
         export CLAUDE_RECALL_SESSION="$claude_session_id"
     fi
 
     # Generate lessons context (with timing)
-    local phase_start=$(get_ms)
-    local summary=$(generate_context "$cwd")
-    log_phase "load_lessons" "$phase_start"
+    local phase_start
+    phase_start=$(get_ms)
+    local summary
+    summary=$(generate_context "$cwd")
+    log_phase "load_lessons" "$phase_start" "inject"
 
     # Also get active handoffs (project-level only)
     local handoffs=""
@@ -187,7 +120,7 @@ main() {
     if [[ -f "$PYTHON_MANAGER" ]]; then
         phase_start=$(get_ms)
         handoffs=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
-        log_phase "load_handoffs" "$phase_start"
+        log_phase "load_handoffs" "$phase_start" "inject"
 
         # Generate todo continuation prompt if there are active handoffs
         if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
@@ -305,7 +238,8 @@ HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
 $todo_continuation"
         fi
 
-        local escaped=$(printf '%s' "$summary" | jq -Rs .)
+        local escaped
+        escaped=$(printf '%s' "$summary" | jq -Rs .)
         # NOTE: $feedback contains user-visible summary like "4 system + 4 project lessons, 3 active handoffs"
         # Currently disabled - Claude Code doesn't surface systemMessage or stderr to users.
         # When/if Claude Code adds hook feedback display, uncomment:
@@ -321,7 +255,7 @@ EOF
     run_decay_if_due
 
     # Log timing summary
-    log_hook_end
+    log_hook_end "inject"
 
     exit 0
 }

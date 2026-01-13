@@ -9,77 +9,54 @@ capabilities.
 
 import json
 import os
-import platform
-import subprocess
 from collections import deque
-from functools import lru_cache
 from pathlib import Path
 from typing import Deque, Iterator, List, Optional
 
 try:
     from core.tui.models import DebugEvent
+    from core.tui.formatting import _format_event_time, ANSI_COLORS, extract_event_details
 except ImportError:
     from .models import DebugEvent
+    from .formatting import _format_event_time, ANSI_COLORS, extract_event_details
+
+# Backward compatibility alias for COLORS
+COLORS = ANSI_COLORS
 
 
-@lru_cache(maxsize=1)
-def _get_time_format() -> str:
-    """Get the appropriate time format string based on system preferences.
+def _format_details_from_extracted(event: DebugEvent, d: dict) -> str:
+    """Format extracted details dict into display string for ANSI output."""
+    if event.event == "session_start":
+        return f"{d['system_count']}S/{d['project_count']}L ({d['total']} total)"
 
-    On macOS: checks AppleICUForce24HourTime preference
-      - 1 = 24h format → %H:%M:%S
-      - 0 or unset = 12h format → %r (with AM/PM)
-    On other platforms: uses %X (locale-dependent)
-    """
-    if platform.system() != "Darwin":
-        return "%X"  # Trust locale on Linux/other
+    elif event.event == "citation":
+        promo = f" {d['promo']}" if "promo" in d else ""
+        return f"{d['lesson_id']} ({d['uses_before']}\u2192{d['uses_after']}){promo}"
 
-    try:
-        result = subprocess.run(
-            ["defaults", "read", "NSGlobalDomain", "AppleICUForce24HourTime"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-        if result.returncode == 0 and result.stdout.strip() == "1":
-            return "%H:%M:%S"  # User prefers 24h
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
+    elif event.event == "decay_result":
+        return f"{d['decayed_uses']} uses, {d['decayed_velocity']} velocity decayed"
 
-    return "%r"  # Default to 12h AM/PM on macOS
+    elif event.event == "error":
+        return f"{d['op']}: {d['err']}"
 
-# ANSI color codes for terminal output
-COLORS = {
-    "session_start": "\033[36m",  # cyan
-    "citation": "\033[32m",       # green
-    "error": "\033[1;31m",        # bold red
-    "decay_result": "\033[33m",   # yellow
-    "handoff_created": "\033[35m",  # magenta
-    "handoff_change": "\033[35m",
-    "handoff_completed": "\033[35m",
-    "timing": "\033[2m",          # dim
-    "hook_start": "\033[2m",
-    "hook_end": "\033[2m",
-    "hook_phase": "\033[2m",
-    "reset": "\033[0m",
-}
+    elif event.event == "hook_end":
+        ms = float(d["total_ms"])
+        return f"{d['hook']}: {ms:.0f}ms"
 
+    elif event.event == "hook_phase":
+        ms = float(d["ms"])
+        return f"{d['hook']}.{d['phase']}: {ms:.0f}ms"
 
-def _format_event_time(event: DebugEvent) -> str:
-    """Format event timestamp using system time format preference, in local timezone."""
-    from datetime import timezone
-    dt = event.timestamp_dt
-    if dt is None:
-        # Fallback to raw timestamp extraction
-        ts = event.timestamp
-        if "T" in ts:
-            return ts.split("T")[1][:8]
-        return ts[:8] if len(ts) >= 8 else ts
-    # Ensure timezone-aware and convert to local
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    local_dt = dt.astimezone()
-    return local_dt.strftime(_get_time_format())
+    elif event.event == "handoff_created":
+        return f"{d['handoff_id']} {d['title']}"
+
+    elif event.event == "handoff_completed":
+        return f"{d['handoff_id']} ({d['tried_count']} steps)"
+
+    elif event.event == "lesson_added":
+        return f"{d['lesson_id']} ({d['level']})"
+
+    return ""
 
 
 def format_event_line(event: DebugEvent, color: bool = True) -> str:
@@ -99,63 +76,17 @@ def format_event_line(event: DebugEvent, color: bool = True) -> str:
     event_color = COLORS.get(event.event, "") if color else ""
     reset = COLORS["reset"] if color else ""
 
-    # Format event-specific details
-    details = ""
-    raw = event.raw
+    # Extract event details using shared extractor
+    d = extract_event_details(event)
 
-    if event.event == "session_start":
-        total = raw.get("total_lessons", 0)
-        sys_count = raw.get("system_count", 0)
-        proj_count = raw.get("project_count", 0)
-        details = f"{sys_count}S/{proj_count}L ({total} total)"
-
-    elif event.event == "citation":
-        lesson_id = raw.get("lesson_id", "?")
-        uses_before = raw.get("uses_before", 0)
-        uses_after = raw.get("uses_after", 0)
-        promo = " PROMO!" if raw.get("promotion_ready") else ""
-        details = f"{lesson_id} ({uses_before}→{uses_after}){promo}"
-
-    elif event.event == "decay_result":
-        uses = raw.get("decayed_uses", 0)
-        vel = raw.get("decayed_velocity", 0)
-        details = f"{uses} uses, {vel} velocity decayed"
-
-    elif event.event == "error":
-        op = raw.get("op", "")
-        err = raw.get("err", "")[:50]
-        details = f"{op}: {err}"
-
-    elif event.event == "hook_end":
-        hook = raw.get("hook", "")
-        total_ms = raw.get("total_ms", 0)
-        details = f"{hook}: {total_ms:.0f}ms"
-
-    elif event.event == "hook_phase":
-        hook = raw.get("hook", "")
-        phase = raw.get("phase", "")
-        ms = raw.get("ms", 0)
-        details = f"{hook}.{phase}: {ms:.0f}ms"
-
-    elif event.event == "handoff_created":
-        hid = raw.get("handoff_id", "")
-        title = raw.get("title", "")[:30]
-        details = f"{hid} {title}"
-
-    elif event.event == "handoff_completed":
-        hid = raw.get("handoff_id", "")
-        tried = raw.get("tried_count", 0)
-        details = f"{hid} ({tried} steps)"
-
-    elif event.event == "lesson_added":
-        lid = raw.get("lesson_id", "")
-        level = raw.get("lesson_level", "")
-        details = f"{lid} ({level})"
-
+    # Format details string from extracted data
+    if d:
+        details = _format_details_from_extracted(event, d)
     else:
-        # Generic: show first interesting key
+        # Generic fallback: show first interesting key
+        details = ""
         skip_keys = {"event", "level", "timestamp", "session_id", "pid", "project"}
-        for k, v in raw.items():
+        for k, v in event.raw.items():
             if k not in skip_keys:
                 details = f"{k}={v}"
                 break
