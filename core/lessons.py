@@ -528,9 +528,11 @@ class LessonsMixin:
         """
         all_lessons = self.list_lessons(scope="all")
 
-        # Sort by uses (descending) if we have lessons
+        # Sort by weighted score (uses * 0.7 + velocity * 0.3) descending
+        # This balances lifetime value (uses) with recent activity (velocity)
+        # Tiebreakers: uses (lifetime value), then id (determinism)
         if all_lessons:
-            all_lessons.sort(key=lambda l: l.uses, reverse=True)
+            all_lessons.sort(key=lambda l: (l.uses * 0.7 + l.velocity * 0.3, l.uses, l.id), reverse=True)
 
         top_lessons = all_lessons[:top_n]
         system_count = len([l for l in all_lessons if l.level == "system"])
@@ -945,6 +947,22 @@ No explanations, just ID: SCORE lines."""
             for lesson in lessons:
                 if lesson.id == lesson_id:
                     lesson.uses = uses
+                    break
+
+        self._atomic_update_lessons_file(file_path, update_fn, level)
+
+    def _set_lesson_velocity(self, lesson_id: str, velocity: float) -> None:
+        """Set a lesson's velocity (for testing)."""
+        level = self._get_level_from_id(lesson_id)
+        file_path = self._get_file_path_for_id(lesson_id)
+
+        if not file_path.exists():
+            return
+
+        def update_fn(lessons):
+            for lesson in lessons:
+                if lesson.id == lesson_id:
+                    lesson.velocity = velocity
                     break
 
         self._atomic_update_lessons_file(file_path, update_fn, level)

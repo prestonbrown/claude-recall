@@ -422,6 +422,49 @@ class TestInjection:
         assert result.top_lessons[0].id == "L003"
         assert result.top_lessons[1].id == "L002"
 
+    def test_inject_uses_velocity_weighted_ranking(self, manager: "LessonsManager"):
+        """Injection should sort by weighted score: uses * 0.7 + velocity * 0.3.
+
+        High-velocity lessons can outrank high-uses lessons when the weighted
+        score favors recent activity over lifetime popularity.
+        """
+        # Add two lessons
+        manager.add_lesson("project", "pattern", "Old popular", "Content")  # L001
+        manager.add_lesson("project", "pattern", "Recent active", "Content")  # L002
+
+        # Set up:
+        # L001: uses=10, velocity=1 -> score = 10 * 0.7 + 1 * 0.3 = 7.3
+        # L002: uses=5, velocity=30 -> score = 5 * 0.7 + 30 * 0.3 = 12.5
+        # L002 should rank higher despite fewer uses
+        manager._set_lesson_uses("L001", 10)
+        manager._set_lesson_velocity("L001", 1)
+        manager._set_lesson_uses("L002", 5)
+        manager._set_lesson_velocity("L002", 30)
+
+        result = manager.inject_context(top_n=2)
+
+        # L002 should be first due to higher weighted score
+        assert len(result.top_lessons) == 2
+        assert result.top_lessons[0].id == "L002", (
+            f"Expected L002 (score=12.5) to rank above L001 (score=7.3), "
+            f"but got {result.top_lessons[0].id} first"
+        )
+        assert result.top_lessons[1].id == "L001"
+
+    def test_inject_zero_velocity_ranks_by_uses(self, manager: "LessonsManager"):
+        """When velocity is zero, lessons rank by uses alone."""
+        manager.add_lesson("project", "pattern", "High uses", "Content")
+        manager.add_lesson("project", "pattern", "Low uses", "Content")
+
+        manager._set_lesson_uses("L001", 20)
+        manager._set_lesson_velocity("L001", 0)
+        manager._set_lesson_uses("L002", 5)
+        manager._set_lesson_velocity("L002", 0)
+
+        result = manager.inject_context(top_n=2)
+        assert result.top_lessons[0].id == "L001"
+        assert result.top_lessons[1].id == "L002"
+
     def test_inject_shows_robot_for_ai_lessons(self, manager: "LessonsManager"):
         """Injected AI lessons should show the robot emoji."""
         manager.add_lesson(
