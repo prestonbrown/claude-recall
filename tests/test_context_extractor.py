@@ -422,3 +422,134 @@ class TestExtractContextCLI:
         # Should return empty object
         result = json.loads(output)
         assert result == {}
+
+
+class TestLightweightContextExtraction:
+    """Tests for extract_lightweight_context function (no LLM)."""
+
+    def test_extracts_tool_counts(self, tmp_path: Path):
+        """Should count tool usage by type."""
+        from core.context_extractor import extract_lightweight_context
+
+        transcript = tmp_path / "test.jsonl"
+        transcript.write_text(
+            json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}},
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/b.py"}},
+                {"type": "tool_use", "name": "Edit", "input": {"file_path": "/a.py"}},
+            ]}}) + "\n"
+        )
+
+        result = extract_lightweight_context(transcript)
+
+        assert result is not None
+        assert result.tool_counts.get("Read") == 2
+        assert result.tool_counts.get("Edit") == 1
+
+    def test_extracts_files_touched(self, tmp_path: Path):
+        """Should extract unique files from Read/Edit/Write tools."""
+        from core.context_extractor import extract_lightweight_context
+
+        transcript = tmp_path / "test.jsonl"
+        transcript.write_text(
+            json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/path/to/foo.py"}},
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/path/to/bar.py"}},
+                {"type": "tool_use", "name": "Edit", "input": {"file_path": "/path/to/foo.py"}},
+            ]}}) + "\n"
+        )
+
+        result = extract_lightweight_context(transcript)
+
+        assert result is not None
+        assert "foo.py" in result.files_touched
+        assert "bar.py" in result.files_touched
+        assert "foo.py" in result.files_modified
+        assert "bar.py" not in result.files_modified
+
+    def test_extracts_last_user_message(self, tmp_path: Path):
+        """Should capture the last user message."""
+        from core.context_extractor import extract_lightweight_context
+
+        transcript = tmp_path / "test.jsonl"
+        transcript.write_text(
+            '{"type": "user", "message": {"content": "First message"}}\n'
+            '{"type": "user", "message": {"content": "Last message"}}\n'
+        )
+
+        result = extract_lightweight_context(transcript)
+
+        assert result is not None
+        assert result.last_user_message == "Last message"
+
+    def test_counts_messages(self, tmp_path: Path):
+        """Should count total messages in transcript."""
+        from core.context_extractor import extract_lightweight_context
+
+        transcript = tmp_path / "test.jsonl"
+        transcript.write_text(
+            '{"type": "user", "message": {"content": "Hello"}}\n'
+            '{"type": "assistant", "message": {"content": "Hi there"}}\n'
+            '{"type": "user", "message": {"content": "Thanks"}}\n'
+        )
+
+        result = extract_lightweight_context(transcript)
+
+        assert result is not None
+        assert result.message_count == 3
+
+    def test_truncates_long_user_message(self, tmp_path: Path):
+        """Should truncate long user messages to 100 chars."""
+        from core.context_extractor import extract_lightweight_context
+
+        long_message = "x" * 200
+        transcript = tmp_path / "test.jsonl"
+        transcript.write_text(
+            json.dumps({"type": "user", "message": {"content": long_message}}) + "\n"
+        )
+
+        result = extract_lightweight_context(transcript)
+
+        assert result is not None
+        assert len(result.last_user_message) == 103  # 100 + "..."
+        assert result.last_user_message.endswith("...")
+
+    def test_returns_none_for_missing_file(self):
+        """Should return None for non-existent transcript."""
+        from core.context_extractor import extract_lightweight_context
+
+        result = extract_lightweight_context("/nonexistent/path.jsonl")
+
+        assert result is None
+
+    def test_returns_none_for_empty_transcript(self, tmp_path: Path):
+        """Should return valid context even for empty/minimal transcript."""
+        from core.context_extractor import extract_lightweight_context
+
+        transcript = tmp_path / "empty.jsonl"
+        transcript.write_text("")
+
+        result = extract_lightweight_context(transcript)
+
+        # Empty file should return a LightweightContext with zero counts
+        assert result is not None
+        assert result.message_count == 0
+        assert result.files_touched == []
+        assert result.tool_counts == {}
+
+    def test_handles_malformed_json_gracefully(self, tmp_path: Path):
+        """Should skip malformed JSON lines without crashing."""
+        from core.context_extractor import extract_lightweight_context
+
+        transcript = tmp_path / "malformed.jsonl"
+        transcript.write_text(
+            'not valid json\n'
+            '{"type": "user", "message": {"content": "Valid message"}}\n'
+            '{broken\n'
+        )
+
+        result = extract_lightweight_context(transcript)
+
+        assert result is not None
+        assert result.message_count == 1
+        assert result.last_user_message == "Valid message"

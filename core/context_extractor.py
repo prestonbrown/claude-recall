@@ -37,6 +37,28 @@ class HandoffContext:
     git_ref: str = ""
 
 
+@dataclass
+class LightweightContext:
+    """Lightweight context extracted from transcript without LLM.
+
+    Fast extraction of stats and file info directly from transcript parsing.
+    No API calls required.
+
+    Attributes:
+        files_touched: Unique files accessed via Read/Edit/Write
+        files_modified: Files modified via Edit/Write only
+        tool_counts: Dict of tool name -> usage count
+        last_user_message: Most recent user message (truncated)
+        message_count: Total messages in transcript
+    """
+
+    files_touched: List[str] = field(default_factory=list)
+    files_modified: List[str] = field(default_factory=list)
+    tool_counts: dict = field(default_factory=dict)
+    last_user_message: str = ""
+    message_count: int = 0
+
+
 # Maximum messages to include in extraction prompt
 MAX_MESSAGES = 20
 
@@ -342,4 +364,91 @@ Conversation:
         learnings=data.get("learnings", []),
         blockers=data.get("blockers", []),
         git_ref=git_ref,
+    )
+
+
+def extract_lightweight_context(transcript_path: str | Path) -> Optional[LightweightContext]:
+    """Extract lightweight context from transcript without LLM.
+
+    Parses transcript JSONL to extract tool usage stats, files touched,
+    and last user message. No API calls - pure file parsing.
+
+    Args:
+        transcript_path: Path to the transcript JSONL file
+
+    Returns:
+        LightweightContext with stats, or None if file not readable
+    """
+    transcript_path = Path(transcript_path)
+    if not transcript_path.exists():
+        return None
+
+    files_touched: set[str] = set()
+    files_modified: set[str] = set()
+    tool_counts: dict[str, int] = {}
+    last_user_message = ""
+    message_count = 0
+
+    try:
+        with open(transcript_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    entry_type = entry.get("type", "")
+
+                    if entry_type == "user":
+                        message_count += 1
+                        # Track last user message
+                        content = entry.get("message", {}).get("content", "")
+                        if isinstance(content, str) and content.strip():
+                            last_user_message = content.strip()
+
+                    elif entry_type == "assistant":
+                        message_count += 1
+                        msg_content = entry.get("message", {}).get("content", [])
+                        if isinstance(msg_content, list):
+                            for block in msg_content:
+                                if not isinstance(block, dict):
+                                    continue
+                                if block.get("type") == "tool_use":
+                                    tool_name = block.get("name", "unknown")
+                                    tool_input = block.get("input", {})
+
+                                    # Count tool usage
+                                    tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+
+                                    # Extract file paths from file-related tools
+                                    file_path = tool_input.get("file_path", "")
+                                    if file_path:
+                                        # Use just filename for brevity
+                                        filename = Path(file_path).name
+                                        files_touched.add(filename)
+                                        if tool_name in ("Edit", "Write"):
+                                            files_modified.add(filename)
+
+                                    # Glob patterns: only add if it's a specific file (no wildcards)
+                                    if tool_name == "Glob":
+                                        pattern = tool_input.get("pattern", "")
+                                        if pattern and "*" not in pattern and "?" not in pattern:
+                                            files_touched.add(Path(pattern).name)
+
+                except json.JSONDecodeError:
+                    continue
+
+    except (OSError, IOError):
+        return None
+
+    # Truncate last user message if too long
+    if len(last_user_message) > 100:
+        last_user_message = last_user_message[:100] + "..."
+
+    return LightweightContext(
+        files_touched=sorted(files_touched)[:15],  # Cap at 15 files
+        files_modified=sorted(files_modified)[:10],  # Cap at 10
+        tool_counts=tool_counts,
+        last_user_message=last_user_message,
+        message_count=message_count,
     )

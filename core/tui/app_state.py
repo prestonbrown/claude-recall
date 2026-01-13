@@ -11,7 +11,7 @@ state together semantically:
 - AppState: Top-level container for all app state
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 
 @dataclass
@@ -59,6 +59,10 @@ class HandoffState:
     total_count: int = 0
     detail_sessions: List[dict] = field(default_factory=list)
     detail_blockers: List[str] = field(default_factory=list)
+    # Cache for lightweight context per handoff (handoff_id -> LightweightContext)
+    lightweight_context: Dict[str, Any] = field(default_factory=dict)
+    # Track which handoffs are currently being extracted
+    extracting_context: Set[str] = field(default_factory=set)
 
 
 @dataclass
