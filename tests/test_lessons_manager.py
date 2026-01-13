@@ -531,12 +531,12 @@ class TestDecay:
     """Tests for lesson decay functionality."""
 
     def test_decay_reduces_velocity(self, manager: "LessonsManager"):
-        """Decay should reduce velocity by 50% (half-life)."""
+        """Decay should reduce velocity by 50% (half-life) with no effectiveness data."""
         manager.add_lesson("project", "pattern", "Test", "Content")
 
-        # Cite to build velocity
-        for _ in range(4):
-            manager.cite_lesson("L001")
+        # Set velocity directly to avoid effectiveness tracking from cite_lesson
+        # (cite_lesson tracks effectiveness as successful=True, which would affect decay rate)
+        manager._set_lesson_velocity("L001", 4.0)
 
         lesson_before = manager.get_lesson("L001")
         velocity_before = lesson_before.velocity  # Should be 4
@@ -545,7 +545,7 @@ class TestDecay:
         manager.decay_lessons()
 
         lesson_after = manager.get_lesson("L001")
-        # Velocity should be halved (4 -> 2)
+        # Velocity should be halved (4 -> 2) when no effectiveness data exists
         assert lesson_after.velocity == pytest.approx(velocity_before * 0.5, abs=0.1)
 
     def test_decay_reduces_uses_for_stale_lessons(self, manager: "LessonsManager"):
@@ -610,6 +610,105 @@ class TestDecay:
 
         # Should indicate skipped due to no activity
         assert result.skipped or "vacation" in result.message.lower()
+
+
+# =============================================================================
+# Adaptive Decay
+# =============================================================================
+
+
+class TestAdaptiveDecay:
+    """Tests for effectiveness-based adaptive decay."""
+
+    def test_high_effectiveness_lesson_decays_slower(self, manager: "LessonsManager"):
+        """High-effectiveness lessons (>=80%) should decay slower (0.3x multiplier)."""
+        manager.add_lesson("project", "pattern", "High eff lesson", "Content")
+
+        # Set velocity directly to avoid effectiveness tracking from cite_lesson
+        manager._set_lesson_velocity("L001", 4.0)
+
+        # Set high effectiveness (90% = 9/10)
+        for _ in range(9):
+            manager.track_effectiveness("L001", successful=True)
+        manager.track_effectiveness("L001", successful=False)
+
+        lesson_before = manager.get_lesson("L001")
+        velocity_before = lesson_before.velocity
+
+        # Run decay
+        manager.decay_lessons()
+
+        lesson_after = manager.get_lesson("L001")
+        # With 0.3x multiplier: effective_decay = 1 - ((1 - 0.5) * 0.3) = 0.85
+        # Normal decay would be 0.5, so high-eff should retain more
+        expected_velocity = velocity_before * 0.85
+        assert lesson_after.velocity == pytest.approx(expected_velocity, abs=0.1)
+
+    def test_low_effectiveness_lesson_decays_faster(self, manager: "LessonsManager"):
+        """Low-effectiveness lessons (<40%) should decay faster (1.5x multiplier)."""
+        manager.add_lesson("project", "pattern", "Low eff lesson", "Content")
+
+        # Set velocity directly to avoid effectiveness tracking from cite_lesson
+        manager._set_lesson_velocity("L001", 4.0)
+
+        # Set low effectiveness (30% = 3/10)
+        for _ in range(3):
+            manager.track_effectiveness("L001", successful=True)
+        for _ in range(7):
+            manager.track_effectiveness("L001", successful=False)
+
+        lesson_before = manager.get_lesson("L001")
+        velocity_before = lesson_before.velocity
+
+        # Run decay
+        manager.decay_lessons()
+
+        lesson_after = manager.get_lesson("L001")
+        # With 1.5x multiplier: effective_decay = 1 - ((1 - 0.5) * 1.5) = 0.25
+        expected_velocity = velocity_before * 0.25
+        assert lesson_after.velocity == pytest.approx(expected_velocity, abs=0.1)
+
+    def test_no_effectiveness_data_decays_normally(self, manager: "LessonsManager"):
+        """Lessons with no effectiveness data should decay normally (1.0x multiplier)."""
+        manager.add_lesson("project", "pattern", "No eff data lesson", "Content")
+
+        # Set velocity directly to avoid effectiveness tracking from cite_lesson
+        manager._set_lesson_velocity("L001", 4.0)
+
+        lesson_before = manager.get_lesson("L001")
+        velocity_before = lesson_before.velocity
+
+        # Run decay (no effectiveness data set)
+        manager.decay_lessons()
+
+        lesson_after = manager.get_lesson("L001")
+        # With 1.0x multiplier: effective_decay = 1 - ((1 - 0.5) * 1.0) = 0.5
+        expected_velocity = velocity_before * 0.5
+        assert lesson_after.velocity == pytest.approx(expected_velocity, abs=0.1)
+
+    def test_medium_effectiveness_decays_normally(self, manager: "LessonsManager"):
+        """Medium-effectiveness lessons (40-79%) should decay normally (1.0x multiplier)."""
+        manager.add_lesson("project", "pattern", "Medium eff lesson", "Content")
+
+        # Set velocity directly to avoid effectiveness tracking from cite_lesson
+        manager._set_lesson_velocity("L001", 4.0)
+
+        # Set medium effectiveness (60% = 6/10)
+        for _ in range(6):
+            manager.track_effectiveness("L001", successful=True)
+        for _ in range(4):
+            manager.track_effectiveness("L001", successful=False)
+
+        lesson_before = manager.get_lesson("L001")
+        velocity_before = lesson_before.velocity
+
+        # Run decay
+        manager.decay_lessons()
+
+        lesson_after = manager.get_lesson("L001")
+        # With 1.0x multiplier: effective_decay = 1 - ((1 - 0.5) * 1.0) = 0.5
+        expected_velocity = velocity_before * 0.5
+        assert lesson_after.velocity == pytest.approx(expected_velocity, abs=0.1)
 
 
 # =============================================================================

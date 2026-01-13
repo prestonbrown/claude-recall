@@ -1083,10 +1083,15 @@ No explanations, just ID: SCORE lines."""
                 lessons = self._parse_lessons_file(file_path, level)
 
                 for lesson in lessons:
-                    # Decay velocity using configured half-life
+                    # Decay velocity using configured half-life with adaptive multiplier
                     if lesson.velocity > VELOCITY_EPSILON:
                         old_velocity = lesson.velocity
-                        lesson.velocity = round(lesson.velocity * VELOCITY_DECAY_FACTOR, 2)
+                        # Get effectiveness-based decay multiplier
+                        multiplier = self._get_decay_multiplier(lesson.id)
+                        # Apply adaptive decay: effective_decay = 1 - ((1 - base_factor) * multiplier)
+                        # For base 0.5: high-eff (0.3x) -> 0.85 retention, low-eff (1.5x) -> 0.25 retention
+                        effective_decay = 1 - ((1 - VELOCITY_DECAY_FACTOR) * multiplier)
+                        lesson.velocity = round(lesson.velocity * effective_decay, 2)
                         if lesson.velocity < VELOCITY_EPSILON:
                             lesson.velocity = 0
                         if lesson.velocity != old_velocity:
@@ -1418,6 +1423,32 @@ No explanations, just ID: SCORE lines."""
         """Update the decay timestamp file."""
         self._decay_state_file.parent.mkdir(parents=True, exist_ok=True)
         self._decay_state_file.write_text(str(date.today().isoformat()))
+
+    # -------------------------------------------------------------------------
+    # Adaptive Decay
+    # -------------------------------------------------------------------------
+
+    def _get_decay_multiplier(self, lesson_id: str) -> float:
+        """Get decay multiplier based on lesson effectiveness.
+
+        High-effectiveness lessons decay slower (0.3x), low-effectiveness
+        lessons decay faster (1.5x), and lessons with no data or medium
+        effectiveness decay normally (1.0x).
+
+        Args:
+            lesson_id: The lesson ID (e.g., 'L001' or 'S001')
+
+        Returns:
+            Decay multiplier: 0.3 (high), 1.0 (medium/none), or 1.5 (low)
+        """
+        rate = self.get_effectiveness(lesson_id)
+        if rate is None:
+            return 1.0  # No data, normal decay
+        if rate >= 0.8:
+            return 0.3  # High effectiveness, slow decay
+        if rate < 0.4:
+            return 1.5  # Low effectiveness, fast decay
+        return 1.0  # Medium effectiveness, normal decay
 
     # -------------------------------------------------------------------------
     # Effectiveness Tracking
