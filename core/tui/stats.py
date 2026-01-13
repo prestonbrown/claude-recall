@@ -8,7 +8,7 @@ Computes system health metrics from buffered log events.
 
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 try:
@@ -127,8 +127,8 @@ class StatsAggregator:
         self.log_reader.load_buffer()
         events = list(self.log_reader.iter_events())
 
-        # Cache today date for comparison
-        today = datetime.now(timezone.utc).date()
+        # Rolling 24-hour window for "today's" stats
+        cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
 
         # Use Counter for efficient counting
         events_by_type: Counter = Counter(e.event for e in events)
@@ -143,20 +143,20 @@ class StatsAggregator:
 
         # Process events
         for event in events:
-            # Check if event is from today
-            is_today = event.timestamp_dt and event.timestamp_dt.date() == today
+            # Check if event is within rolling 24-hour window
+            is_recent = event.timestamp_dt and event.timestamp_dt >= cutoff_24h
 
-            if event.event == EventType.SESSION_START and is_today:
+            if event.event == EventType.SESSION_START and is_recent:
                 sessions_today += 1
 
-            if event.event == EventType.CITATION and is_today:
+            if event.event == EventType.CITATION and is_recent:
                 citations_today += 1
 
-            if event.is_error and is_today:
+            if event.is_error and is_recent:
                 errors_today += 1
 
-            # Collect timing data
-            if event.is_timing:
+            # Collect timing data (also filtered to rolling 24h window)
+            if event.is_timing and is_recent:
                 timing = self._extract_hook_timing(event)
                 if timing is not None:
                     all_hook_timings.append(timing)
