@@ -2524,42 +2524,43 @@ class RecallMonitorApp(App):
         self.state.handoff.total_count = total_visible
         self._update_filter_status(visible_count, total_visible)
 
-        # Defer position restoration until widget is refreshed
-        def restore_position() -> None:
-            # Preserve user's selection if it still exists in the new data
+        # Restore cursor position IMMEDIATELY to prevent flash
+        # (DataTable auto-selects first row when populated, causing visual flicker)
+        if self.state.handoff.user_selected_id is not None:
+            if self.state.handoff.user_selected_id in self.state.handoff.data:
+                # Find the row index for the previously selected handoff
+                row_keys = list(handoff_table.rows.keys())
+                for idx, row_key in enumerate(row_keys):
+                    if row_key.value == self.state.handoff.user_selected_id:
+                        handoff_table.move_cursor(row=idx)
+                        break
+            else:
+                # Handoff was removed/archived, clear the details panel
+                details_log = self.query_one("#handoff-details", RichLog)
+                details_log.clear()
+                details_log.write("[dim]Handoff no longer available[/dim]")
+                if self.state.handoff.current_id == self.state.handoff.user_selected_id:
+                    self.state.handoff.current_id = None
+                self.state.handoff.user_selected_id = None
+        else:
+            # No explicit selection - restore cursor row if valid
+            if saved_cursor_row is not None and saved_cursor_row < handoff_table.row_count:
+                handoff_table.move_cursor(row=saved_cursor_row)
+
+        # Clear confirmed selection if the handoff was removed
+        if self.state.handoff.current_id is not None:
+            if self.state.handoff.current_id not in self.state.handoff.data:
+                self.state.handoff.current_id = None
+
+        # Defer scroll position and details refresh until after layout
+        def restore_scroll_and_details() -> None:
             if self.state.handoff.user_selected_id is not None:
                 if self.state.handoff.user_selected_id in self.state.handoff.data:
-                    # Find the row index for the previously selected handoff
-                    row_keys = list(handoff_table.rows.keys())
-                    for idx, row_key in enumerate(row_keys):
-                        if row_key.value == self.state.handoff.user_selected_id:
-                            handoff_table.move_cursor(row=idx)
-                            break
-                    # Re-render details for the highlighted handoff
                     self._show_handoff_details(self.state.handoff.user_selected_id)
-                else:
-                    # Handoff was removed/archived, clear the details panel
-                    details_log = self.query_one("#handoff-details", RichLog)
-                    details_log.clear()
-                    details_log.write("[dim]Handoff no longer available[/dim]")
-                    # Also clear the confirmed selection if it was the same
-                    if self.state.handoff.current_id == self.state.handoff.user_selected_id:
-                        self.state.handoff.current_id = None
-                    self.state.handoff.user_selected_id = None
-            else:
-                # No explicit selection - restore cursor row if valid
-                if saved_cursor_row is not None and saved_cursor_row < handoff_table.row_count:
-                    handoff_table.move_cursor(row=saved_cursor_row)
-                elif saved_scroll_y > 0:
-                    # Fallback: restore scroll position
-                    handoff_table.scroll_y = min(saved_scroll_y, handoff_table.max_scroll_y)
+            elif saved_scroll_y > 0:
+                handoff_table.scroll_y = min(saved_scroll_y, handoff_table.max_scroll_y)
 
-            # Clear confirmed selection if the handoff was removed but user moved to another
-            if self.state.handoff.current_id is not None:
-                if self.state.handoff.current_id not in self.state.handoff.data:
-                    self.state.handoff.current_id = None
-
-        self.call_after_refresh(restore_position)
+        self.call_after_refresh(restore_scroll_and_details)
 
     def action_toggle_completed(self) -> None:
         """Toggle visibility of completed handoffs."""
