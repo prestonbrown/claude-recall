@@ -225,7 +225,7 @@ class TestHandoffDetailsRefresh:
             await pilot.pause()
 
             # Should have _current_handoff_id attribute
-            assert hasattr(app, "_current_handoff_id"), (
+            assert hasattr(app, "state") and hasattr(app.state, "handoff"), (
                 "RecallMonitorApp should have '_current_handoff_id' attribute to track "
                 "the currently displayed handoff. Add: _current_handoff_id: Optional[str] = None"
             )
@@ -258,10 +258,10 @@ class TestHandoffDetailsRefresh:
             await pilot.pause()
 
             # Verify _current_handoff_id is NOT set (double-action behavior)
-            assert hasattr(app, "_current_handoff_id"), (
+            assert hasattr(app, "state") and hasattr(app.state, "handoff"), (
                 "App should have _current_handoff_id attribute"
             )
-            assert app._current_handoff_id is None, (
+            assert app.state.handoff.current_id is None, (
                 "_current_handoff_id should NOT be set after arrow navigation. "
                 "It is only set after explicit Enter/click to enable double-action popup trigger."
             )
@@ -293,14 +293,14 @@ class TestHandoffDetailsRefresh:
             await pilot.pause()
 
             # Ensure fresh state
-            app._current_handoff_id = None
+            app.state.handoff.current_id = None
 
             # Press Enter to confirm selection
             await pilot.press("enter")
             await pilot.pause()
 
             # Verify _current_handoff_id IS set after Enter
-            assert app._current_handoff_id is not None, (
+            assert app.state.handoff.current_id is not None, (
                 "_current_handoff_id should be set after pressing Enter. "
                 "This enables the double-action popup trigger."
             )
@@ -380,9 +380,9 @@ class TestHandoffDetailsRefresh:
             await pilot.pause()
 
             # Ensure _current_handoff_id is set
-            if hasattr(app, "_current_handoff_id"):
+            if hasattr(app, "state") and hasattr(app.state, "handoff"):
                 # Simulate handoff being removed by setting a non-existent ID
-                app._current_handoff_id = "hf-nonexistent"
+                app.state.handoff.current_id = "hf-nonexistent"
 
                 # Call refresh
                 app._refresh_handoff_list()
@@ -393,7 +393,7 @@ class TestHandoffDetailsRefresh:
 
                 # Either _current_handoff_id should be None or details should be cleared
                 # This test verifies the fix handles removed handoffs gracefully
-                if app._current_handoff_id == "hf-nonexistent":
+                if app.state.handoff.current_id == "hf-nonexistent":
                     # If ID wasn't cleared, check if details panel was cleared
                     lines_text = str(details_log.lines)
                     has_content = (
@@ -428,7 +428,7 @@ class TestSessionEventsAutoScroll:
             await pilot.pause()
 
             # Should have _current_session_id attribute
-            assert hasattr(app, "_current_session_id"), (
+            assert hasattr(app, "state") and hasattr(app.state, "session"), (
                 "RecallMonitorApp should have '_current_session_id' attribute to track "
                 "the currently displayed session. Add: _current_session_id: Optional[str] = None"
             )
@@ -452,10 +452,10 @@ class TestSessionEventsAutoScroll:
             await pilot.pause()
 
             # Verify _current_session_id is set
-            assert hasattr(app, "_current_session_id"), (
+            assert hasattr(app, "state") and hasattr(app.state, "session"), (
                 "App should have _current_session_id attribute"
             )
-            assert app._current_session_id == "sess-recent", (
+            assert app.state.session.current_id == "sess-recent", (
                 f"_current_session_id should be 'sess-recent' after showing that session, "
                 f"got '{getattr(app, '_current_session_id', None)}'. "
                 "Fix: In _show_session_events(), add: self._current_session_id = session_id"
@@ -563,7 +563,7 @@ class TestSessionListSelectionPersistence:
             await pilot.pause()
 
             # Should have _user_selected_session_id attribute
-            assert hasattr(app, "_user_selected_session_id"), (
+            assert hasattr(app, "state") and hasattr(app.state.session, "user_selected_id"), (
                 "RecallMonitorApp should have '_user_selected_session_id' attribute to track "
                 "user's row selection. Add: _user_selected_session_id: Optional[str] = None"
             )
@@ -591,10 +591,10 @@ class TestSessionListSelectionPersistence:
             await pilot.pause()
 
             # Verify _user_selected_session_id is set
-            assert hasattr(app, "_user_selected_session_id"), (
+            assert hasattr(app, "state") and hasattr(app.state.session, "user_selected_id"), (
                 "App should have _user_selected_session_id attribute"
             )
-            assert app._user_selected_session_id is not None, (
+            assert app.state.session.user_selected_id is not None, (
                 "_user_selected_session_id should be set after user navigates with arrow keys. "
                 "Fix: In on_data_table_row_highlighted(), for session-list table, "
                 "store the session ID: self._user_selected_session_id = row_key"
@@ -632,8 +632,8 @@ class TestSessionListSelectionPersistence:
                     selected_before = str(row_keys[session_table.cursor_row].value)
 
                     # Manually set _user_selected_session_id if not already tracked
-                    if hasattr(app, "_user_selected_session_id"):
-                        app._user_selected_session_id = selected_before
+                    if hasattr(app, "state") and hasattr(app.state.session, "user_selected_id"):
+                        app.state.session.user_selected_id = selected_before
 
                     # Call refresh
                     app._refresh_session_list()
@@ -691,11 +691,11 @@ class TestSessionListSelectionPersistence:
                 )
 
                 # Store current selection
-                if hasattr(app, "_user_selected_session_id"):
+                if hasattr(app, "state") and hasattr(app.state.session, "user_selected_id"):
                     row_keys = list(session_table.rows.keys())
                     if initial_row is not None and initial_row < len(row_keys):
                         selected_id = str(row_keys[initial_row].value)
-                        app._user_selected_session_id = selected_id
+                        app.state.session.user_selected_id = selected_id
 
                         # Refresh (which would pick up the new session)
                         app._refresh_session_list()
@@ -734,31 +734,27 @@ class TestRefreshBehaviorIntegration:
         app = RecallMonitorApp()
 
         # Check instance variables exist before running
-        assert hasattr(app, "_current_handoff_id") or True, (
+        assert hasattr(app, "state") and hasattr(app.state, "handoff") or True, (
             "Add _current_handoff_id: Optional[str] = None in __init__"
         )
-        assert hasattr(app, "_current_session_id") or True, (
+        assert hasattr(app, "state") and hasattr(app.state, "session") or True, (
             "Add _current_session_id: Optional[str] = None in __init__"
         )
-        assert hasattr(app, "_user_selected_session_id") or True, (
+        assert hasattr(app, "state") and hasattr(app.state.session, "user_selected_id") or True, (
             "Add _user_selected_session_id: Optional[str] = None in __init__"
         )
 
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            # After mount, all should exist
-            tracking_vars = [
-                ("_current_handoff_id", "track currently displayed handoff"),
-                ("_current_session_id", "track currently displayed session"),
-                ("_user_selected_session_id", "track user's row selection"),
-            ]
-
-            for var_name, purpose in tracking_vars:
-                assert hasattr(app, var_name), (
-                    f"RecallMonitorApp should have '{var_name}' to {purpose}. "
-                    f"Add: {var_name}: Optional[str] = None in __init__"
-                )
+            # After mount, AppState should be initialized
+            assert hasattr(app, "state"), "App should have state attribute"
+            assert hasattr(app.state, "handoff"), "AppState should have handoff"
+            assert hasattr(app.state, "session"), "AppState should have session"
+            assert hasattr(app.state.handoff, "current_id"), "HandoffState should have current_id"
+            assert hasattr(app.state.handoff, "user_selected_id"), "HandoffState should have user_selected_id"
+            assert hasattr(app.state.session, "current_id"), "SessionState should have current_id"
+            assert hasattr(app.state.session, "user_selected_id"), "SessionState should have user_selected_id"
 
 
 # ============================================================================
@@ -857,10 +853,10 @@ class TestOptionListNavigationInHandoffActionScreen:
     async def test_option_list_enter_selects_status(
         self, temp_project_with_handoffs: Path, monkeypatch
     ):
-        """Enter on 'status' option should open StatusSelectScreen."""
+        """Enter on 'status' option should open GenericSelectModal."""
         from textual.widgets import OptionList
 
-        from core.tui.app import HandoffActionScreen, StatusSelectScreen
+        from core.tui.app import HandoffActionScreen, GenericSelectModal
 
         app = RecallMonitorApp()
 
@@ -884,9 +880,9 @@ class TestOptionListNavigationInHandoffActionScreen:
             await pilot.press("enter")
             await pilot.pause()
 
-            # Should have opened StatusSelectScreen
-            assert isinstance(app.screen, StatusSelectScreen), (
-                f"Enter on status option should open StatusSelectScreen, "
+            # Should have opened GenericSelectModal
+            assert isinstance(app.screen, GenericSelectModal), (
+                f"Enter on status option should open GenericSelectModal, "
                 f"got {type(app.screen).__name__}"
             )
 
@@ -897,7 +893,7 @@ class TestOptionListNavigationInHandoffActionScreen:
         """Navigate to 'phase' option and select with Enter."""
         from textual.widgets import OptionList
 
-        from core.tui.app import HandoffActionScreen, PhaseSelectScreen
+        from core.tui.app import HandoffActionScreen, GenericSelectModal
 
         app = RecallMonitorApp()
 
@@ -921,9 +917,9 @@ class TestOptionListNavigationInHandoffActionScreen:
             await pilot.press("enter")
             await pilot.pause()
 
-            # Should have opened PhaseSelectScreen
-            assert isinstance(app.screen, PhaseSelectScreen), (
-                f"Enter on phase option should open PhaseSelectScreen, "
+            # Should have opened GenericSelectModal
+            assert isinstance(app.screen, GenericSelectModal), (
+                f"Enter on phase option should open GenericSelectModal, "
                 f"got {type(app.screen).__name__}"
             )
 
@@ -934,7 +930,7 @@ class TestOptionListNavigationInHandoffActionScreen:
         """Navigate to 'agent' option and select with Enter."""
         from textual.widgets import OptionList
 
-        from core.tui.app import AgentSelectScreen, HandoffActionScreen
+        from core.tui.app import GenericSelectModal, HandoffActionScreen
 
         app = RecallMonitorApp()
 
@@ -959,9 +955,9 @@ class TestOptionListNavigationInHandoffActionScreen:
             await pilot.press("enter")
             await pilot.pause()
 
-            # Should have opened AgentSelectScreen
-            assert isinstance(app.screen, AgentSelectScreen), (
-                f"Enter on agent option should open AgentSelectScreen, "
+            # Should have opened GenericSelectModal
+            assert isinstance(app.screen, GenericSelectModal), (
+                f"Enter on agent option should open GenericSelectModal, "
                 f"got {type(app.screen).__name__}"
             )
 
@@ -1035,7 +1031,7 @@ class TestEndToEndDoubleActionFlow:
             await pilot.pause()
 
             # Clear _current_handoff_id to ensure fresh state
-            app._current_handoff_id = None
+            app.state.handoff.current_id = None
 
             # Arrow down to first data row - this shows details but doesn't set _current_handoff_id
             await pilot.press("down")
@@ -1047,7 +1043,7 @@ class TestEndToEndDoubleActionFlow:
             )
 
             # Verify _current_handoff_id is NOT set after arrow navigation
-            assert app._current_handoff_id is None, (
+            assert app.state.handoff.current_id is None, (
                 "_current_handoff_id should NOT be set after arrow navigation only"
             )
 
@@ -1056,7 +1052,7 @@ class TestEndToEndDoubleActionFlow:
             await pilot.pause()
 
             # Verify _current_handoff_id IS now set
-            assert app._current_handoff_id is not None, (
+            assert app.state.handoff.current_id is not None, (
                 "First Enter should set _current_handoff_id to confirm selection"
             )
 
@@ -1101,7 +1097,7 @@ class TestEndToEndDoubleActionFlow:
             await pilot.pause()
 
             # Clear and navigate
-            app._current_handoff_id = None
+            app.state.handoff.current_id = None
             await pilot.press("down")
             await pilot.pause()
 
@@ -1151,7 +1147,7 @@ class TestEndToEndDoubleActionFlow:
             await pilot.pause()
 
             # Open popup via double-action
-            app._current_handoff_id = None
+            app.state.handoff.current_id = None
             await pilot.press("down")
             await pilot.press("enter")
             await pilot.press("enter")
@@ -1204,7 +1200,7 @@ class TestEndToEndDoubleActionFlow:
             await pilot.pause()
 
             # Navigate to first row (row 0) explicitly using Home key
-            app._current_handoff_id = None
+            app.state.handoff.current_id = None
             await pilot.press("home")
             await pilot.pause()
 
@@ -1217,7 +1213,7 @@ class TestEndToEndDoubleActionFlow:
             await pilot.press("enter")
             await pilot.pause()
 
-            first_selected_id = app._current_handoff_id
+            first_selected_id = app.state.handoff.current_id
             assert first_selected_id is not None, "First row should be selected"
 
             # Navigate to second row (row 1)
@@ -1230,7 +1226,7 @@ class TestEndToEndDoubleActionFlow:
             )
 
             # Verify _user_selected_handoff_id changed (from row_highlighted)
-            assert app._user_selected_handoff_id != first_selected_id, (
+            assert app.state.handoff.user_selected_id != first_selected_id, (
                 "Navigation should have changed _user_selected_handoff_id"
             )
 
@@ -1244,6 +1240,6 @@ class TestEndToEndDoubleActionFlow:
             )
 
             # _current_handoff_id should now be the second row
-            assert app._current_handoff_id != first_selected_id, (
+            assert app.state.handoff.current_id != first_selected_id, (
                 "Selection should have changed to the second row"
             )
