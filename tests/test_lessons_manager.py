@@ -2214,6 +2214,333 @@ class TestScoreRelevance:
 
 
 # =============================================================================
+# Relevance Caching Tests
+# =============================================================================
+
+
+class TestRelevanceCaching:
+    """Tests for the hybrid relevance caching system."""
+
+    def test_normalize_query_lowercase(self):
+        """Query normalization should lowercase the input."""
+        from core.lessons import _normalize_query
+
+        assert _normalize_query("Hello WORLD") == "hello world"
+        assert _normalize_query("HOW do I USE git?") == "do git how i use"
+
+    def test_normalize_query_removes_punctuation(self):
+        """Query normalization should remove punctuation."""
+        from core.lessons import _normalize_query
+
+        assert _normalize_query("hello, world!") == "hello world"
+        assert _normalize_query("what's this? (a test)") == "a s test this what"
+
+    def test_normalize_query_sorts_words(self):
+        """Query normalization should sort words alphabetically."""
+        from core.lessons import _normalize_query
+
+        assert _normalize_query("zebra apple banana") == "apple banana zebra"
+        assert _normalize_query("git commit push") == "commit git push"
+
+    def test_normalize_query_handles_empty(self):
+        """Query normalization should handle empty strings."""
+        from core.lessons import _normalize_query
+
+        assert _normalize_query("") == ""
+        assert _normalize_query("   ") == ""
+        assert _normalize_query("...") == ""
+
+    def test_query_hash_deterministic(self):
+        """Same query should produce same hash."""
+        from core.lessons import _query_hash
+
+        hash1 = _query_hash("hello world")
+        hash2 = _query_hash("hello world")
+        assert hash1 == hash2
+
+    def test_query_hash_normalized(self):
+        """Differently formatted but equivalent queries should have same hash."""
+        from core.lessons import _query_hash
+
+        hash1 = _query_hash("Hello World!")
+        hash2 = _query_hash("hello, world")
+        hash3 = _query_hash("WORLD HELLO")
+        assert hash1 == hash2 == hash3
+
+    def test_jaccard_similarity_identical(self):
+        """Identical queries should have similarity of 1.0."""
+        from core.lessons import _jaccard_similarity
+
+        assert _jaccard_similarity("apple banana cherry", "apple banana cherry") == 1.0
+
+    def test_jaccard_similarity_disjoint(self):
+        """Completely different queries should have similarity of 0.0."""
+        from core.lessons import _jaccard_similarity
+
+        assert _jaccard_similarity("apple banana cherry", "dog cat mouse") == 0.0
+
+    def test_jaccard_similarity_partial(self):
+        """Partially overlapping queries should have appropriate similarity."""
+        from core.lessons import _jaccard_similarity
+
+        # 2 common words out of 4 unique: 2/4 = 0.5
+        sim = _jaccard_similarity("apple banana cherry", "apple banana dog")
+        assert 0.4 < sim < 0.6
+
+    def test_jaccard_similarity_empty(self):
+        """Empty queries should be handled correctly."""
+        from core.lessons import _jaccard_similarity
+
+        assert _jaccard_similarity("", "") == 1.0
+        assert _jaccard_similarity("apple", "") == 0.0
+        assert _jaccard_similarity("", "banana") == 0.0
+
+    def test_cache_hit_exact_match(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Cache hit on exact query match should not call Haiku."""
+        from core import LessonsManager
+        from core.lessons import _save_relevance_cache, _query_hash
+        import time
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Git Safety", "Never force push")
+
+        # Pre-populate cache
+        query = "How do I use git?"
+        cache = {
+            "entries": {
+                _query_hash(query): {
+                    "normalized_query": "do git how i use",
+                    "scores": {"L001": 8},
+                    "timestamp": time.time(),
+                }
+            }
+        }
+        _save_relevance_cache(cache)
+
+        # Track if subprocess.run is called
+        haiku_called = []
+
+        def mock_run(*args, **kwargs):
+            haiku_called.append(True)
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 5\n"  # Different score to verify cache is used
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance(query)
+
+        assert len(haiku_called) == 0, "Haiku should not be called on cache hit"
+        assert len(result.scored_lessons) == 1
+        assert result.scored_lessons[0].score == 8  # From cache, not mock
+
+    def test_cache_miss_calls_haiku(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Cache miss should call Haiku and cache the result."""
+        from core import LessonsManager
+        from core.lessons import _load_relevance_cache
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test Lesson", "Test content")
+
+        # Track if subprocess.run is called
+        haiku_called = []
+
+        def mock_run(*args, **kwargs):
+            haiku_called.append(True)
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 7\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance("new unique query")
+
+        assert len(haiku_called) == 1, "Haiku should be called on cache miss"
+        assert result.scored_lessons[0].score == 7
+
+        # Verify result was cached
+        cache = _load_relevance_cache()
+        assert len(cache.get("entries", {})) == 1
+
+    def test_cache_ttl_expiration(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Expired cache entries should trigger Haiku call."""
+        from core import LessonsManager
+        from core.lessons import _save_relevance_cache, _query_hash, RELEVANCE_CACHE_TTL_DAYS
+        import time
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Pre-populate cache with expired entry
+        query = "test query"
+        expired_time = time.time() - (RELEVANCE_CACHE_TTL_DAYS + 1) * 24 * 60 * 60
+        cache = {
+            "entries": {
+                _query_hash(query): {
+                    "normalized_query": "query test",
+                    "scores": {"L001": 9},
+                    "timestamp": expired_time,
+                }
+            }
+        }
+        _save_relevance_cache(cache)
+
+        haiku_called = []
+
+        def mock_run(*args, **kwargs):
+            haiku_called.append(True)
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 3\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.score_relevance(query)
+
+        assert len(haiku_called) == 1, "Haiku should be called for expired cache"
+        assert result.scored_lessons[0].score == 3  # From Haiku, not old cache
+
+    def test_cache_similarity_match(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Similar query should hit cache via Jaccard similarity."""
+        from core import LessonsManager
+        from core.lessons import _save_relevance_cache, _query_hash
+        import time
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Git Lesson", "Content")
+
+        # Cache a query
+        original_query = "how do I use git branches"
+        cache = {
+            "entries": {
+                _query_hash(original_query): {
+                    "normalized_query": "branches do git how i use",
+                    "scores": {"L001": 8},
+                    "timestamp": time.time(),
+                }
+            }
+        }
+        _save_relevance_cache(cache)
+
+        haiku_called = []
+
+        def mock_run(*args, **kwargs):
+            haiku_called.append(True)
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 2\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        # Similar query - same words with minor variation
+        similar_query = "how do I use git branch"
+        result = manager.score_relevance(similar_query)
+
+        # Should hit cache due to high Jaccard similarity
+        assert len(haiku_called) == 0, "Similar query should hit cache"
+        assert result.scored_lessons[0].score == 8
+
+    def test_cache_similarity_below_threshold(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Dissimilar query should miss cache despite having some overlap."""
+        from core import LessonsManager
+        from core.lessons import _save_relevance_cache, _query_hash
+        import time
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Cache a query
+        original_query = "git branch merge"
+        cache = {
+            "entries": {
+                _query_hash(original_query): {
+                    "normalized_query": "branch git merge",
+                    "scores": {"L001": 9},
+                    "timestamp": time.time(),
+                }
+            }
+        }
+        _save_relevance_cache(cache)
+
+        haiku_called = []
+
+        def mock_run(*args, **kwargs):
+            haiku_called.append(True)
+            class MockResult:
+                returncode = 0
+                stdout = "L001: 4\n"
+                stderr = ""
+            return MockResult()
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        # Very different query - should not hit cache
+        different_query = "python async await coroutines"
+        result = manager.score_relevance(different_query)
+
+        assert len(haiku_called) == 1, "Different query should miss cache"
+        assert result.scored_lessons[0].score == 4
+
+    def test_cache_handles_deleted_lessons(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Cache should gracefully handle references to deleted lessons."""
+        from core import LessonsManager
+        from core.lessons import _save_relevance_cache, _query_hash
+        import time
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Cache has scores for lessons that no longer exist
+        query = "test query"
+        cache = {
+            "entries": {
+                _query_hash(query): {
+                    "normalized_query": "query test",
+                    "scores": {"L001": 8, "L002": 5, "L003": 3},  # L002, L003 don't exist
+                    "timestamp": time.time(),
+                }
+            }
+        }
+        _save_relevance_cache(cache)
+
+        result = manager.score_relevance(query)
+
+        # Should only return L001 which exists
+        assert len(result.scored_lessons) == 1
+        assert result.scored_lessons[0].lesson.id == "L001"
+        assert result.scored_lessons[0].score == 8
+
+    def test_cache_handles_corrupted_file(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path
+    ):
+        """Corrupted cache file should be handled gracefully."""
+        # Create corrupted cache file
+        cache_path = temp_state_dir / "relevance-cache.json"
+        cache_path.write_text("{ invalid json here")
+
+        # Import and call the load function
+        from core.lessons import _load_relevance_cache
+        cache = _load_relevance_cache()
+
+        # Should return empty cache structure
+        assert cache == {"entries": {}}
+
+
+# =============================================================================
 # Lesson Classification and Framing Tests
 # =============================================================================
 
@@ -2450,8 +2777,8 @@ class TestInjectionFraming:
         # Should see NEVER framing in output
         assert "NEVER:" in output
 
-    def test_remaining_constraint_lessons_show_content(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
-        """Constraint lessons not in top_n should still show content."""
+    def test_remaining_lessons_show_title_only(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Remaining lessons (not in top_n) show only title, not content."""
         from core import LessonsManager
 
         monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
@@ -2473,9 +2800,62 @@ class TestInjectionFraming:
         result = manager.inject(3)  # positional arg - top 3 by uses
         output = result.format()
 
-        # The constraint lesson (L006) should show content even though it's in remaining
-        # because constraint lessons always show their content
-        assert "dangerous thing" in output or "NEVER:" in output
+        # Remaining lessons only show title, not content (for compactness)
+        assert "[L006]" in output  # ID is shown
+        assert "Critical Rule" in output  # Title is shown
+        assert "dangerous thing" not in output  # Content is NOT shown
+
+    def test_remaining_lessons_capped_at_10(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Remaining lessons (not in top_n) should be capped at 10 displayed."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add 20 lessons with distinct titles to avoid duplicate detection
+        # Using letters to make titles sufficiently different
+        alphabet = "ABCDEFGHIJKLMNOPQRST"
+        for i in range(20):
+            manager.add_lesson("project", "pattern", f"{alphabet[i]} Unique Lesson Title", f"Content for lesson {i}")
+
+        # Cite the first 3 lessons to ensure they're in top_n
+        for lesson_id in ["L001", "L002", "L003"]:
+            for _ in range(3):
+                manager.cite_lesson(lesson_id)
+
+        result = manager.inject(3)  # top 3 by uses
+        output = result.format()
+
+        # Count how many remaining lesson IDs appear (L004-L020 are remaining)
+        remaining_count = sum(1 for i in range(4, 21) if f"[L{i:03d}]" in output)
+
+        # Should show only 10 remaining lessons, not all 17
+        assert remaining_count == 10, f"Expected 10 remaining lessons shown, got {remaining_count}"
+
+        # Verify "+7 more" message appears (17 remaining - 10 shown = 7 more)
+        assert "+7 more" in output, "Should show '+7 more' message for remaining lessons beyond cap"
+
+    def test_remaining_lessons_show_read_instruction(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
+        """Remaining lessons section should show emphatic READ instruction."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add 10 lessons (more than top_n so we have remaining)
+        for i in range(10):
+            manager.add_lesson("project", "pattern", f"Lesson {i}", f"Content {i}")
+
+        # Cite the first 3 lessons to ensure they're in top_n
+        for lesson_id in ["L001", "L002", "L003"]:
+            for _ in range(3):
+                manager.cite_lesson(lesson_id)
+
+        result = manager.inject(3)  # top 3 by uses
+        output = result.format()
+
+        # Should show the emphatic READ instruction
+        assert "READ any lesson that looks relevant" in output
 
 
 class TestSessionStartLogging:

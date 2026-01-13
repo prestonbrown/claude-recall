@@ -6,6 +6,8 @@ Lessons mixin for the LessonsManager class.
 This module contains all lesson-related methods as a mixin class.
 """
 
+import hashlib
+import json
 import os
 import re
 import string
@@ -13,7 +15,7 @@ import subprocess
 import time
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 # Handle both module import and direct script execution
 try:
@@ -58,6 +60,234 @@ except ImportError:
         ScoredLesson,
         RelevanceResult,
     )
+
+
+# =============================================================================
+# Relevance Cache Configuration
+# =============================================================================
+
+RELEVANCE_CACHE_FILE = "relevance-cache.json"
+RELEVANCE_CACHE_TTL_DAYS = 7
+RELEVANCE_CACHE_SIMILARITY_THRESHOLD = 0.7
+
+
+# =============================================================================
+# Relevance Cache Helper Functions
+# =============================================================================
+
+
+def _normalize_query(query: str) -> str:
+    """Normalize query for cache key generation.
+
+    - Lowercase
+    - Remove punctuation
+    - Sort words alphabetically
+
+    Args:
+        query: The raw query string
+
+    Returns:
+        Normalized query string
+    """
+    # Lowercase
+    normalized = query.lower()
+    # Remove punctuation
+    for char in string.punctuation:
+        normalized = normalized.replace(char, " ")
+    # Split, filter empty, sort, and join
+    words = sorted(word for word in normalized.split() if word)
+    return " ".join(words)
+
+
+def _query_hash(query: str) -> str:
+    """Generate a hash of the normalized query for cache lookup.
+
+    Args:
+        query: The raw query string (will be normalized internally)
+
+    Returns:
+        SHA-256 hash of the normalized query (first 16 chars)
+    """
+    normalized = _normalize_query(query)
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
+def _jaccard_similarity(a: str, b: str) -> float:
+    """Calculate Jaccard similarity between two normalized query strings.
+
+    Jaccard similarity = |intersection| / |union|
+
+    Args:
+        a: First normalized query string
+        b: Second normalized query string
+
+    Returns:
+        Similarity score between 0.0 and 1.0
+    """
+    words_a = set(a.split())
+    words_b = set(b.split())
+
+    if not words_a and not words_b:
+        return 1.0
+    if not words_a or not words_b:
+        return 0.0
+
+    intersection = words_a & words_b
+    union = words_a | words_b
+
+    return len(intersection) / len(union)
+
+
+def _get_relevance_cache_path() -> Path:
+    """Get the path to the relevance cache file.
+
+    Uses the same state directory resolution as other state files.
+
+    Returns:
+        Path to the relevance cache JSON file
+    """
+    # Use environment variable or default location
+    state = os.environ.get("CLAUDE_RECALL_STATE")
+    if state:
+        state_dir = Path(state)
+    else:
+        xdg_state = os.environ.get("XDG_STATE_HOME")
+        if xdg_state:
+            state_dir = Path(xdg_state) / "claude-recall"
+        else:
+            state_dir = Path.home() / ".local" / "state" / "claude-recall"
+
+    return state_dir / RELEVANCE_CACHE_FILE
+
+
+def _load_relevance_cache() -> Dict:
+    """Load the relevance cache from disk.
+
+    Returns:
+        Cache dictionary with structure:
+        {
+            "entries": {
+                "<query_hash>": {
+                    "normalized_query": str,
+                    "scores": {"L001": 8, "L002": 3, ...},
+                    "timestamp": float (epoch seconds)
+                },
+                ...
+            }
+        }
+    """
+    cache_path = _get_relevance_cache_path()
+    if not cache_path.exists():
+        return {"entries": {}}
+
+    try:
+        with open(cache_path) as f:
+            cache = json.load(f)
+        # Ensure structure
+        if "entries" not in cache:
+            cache["entries"] = {}
+        return cache
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {"entries": {}}
+
+
+def _save_relevance_cache(cache: Dict) -> None:
+    """Save the relevance cache to disk.
+
+    Args:
+        cache: The cache dictionary to save
+    """
+    # Evict expired entries before saving
+    now = time.time()
+    ttl_seconds = RELEVANCE_CACHE_TTL_DAYS * 24 * 60 * 60
+    if "entries" in cache:
+        cache["entries"] = {
+            k: v for k, v in cache["entries"].items()
+            if now - v.get("timestamp", 0) < ttl_seconds
+        }
+
+    cache_path = _get_relevance_cache_path()
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with FileLock(cache_path):
+            with open(cache_path, "w") as f:
+                json.dump(cache, f, indent=2)
+    except OSError:
+        # Silently fail - caching is best-effort
+        pass
+
+
+def _find_cache_hit(
+    query: str, cache: Dict, ttl_days: int = RELEVANCE_CACHE_TTL_DAYS
+) -> Optional[Tuple[str, Dict[str, int]]]:
+    """Find a cache hit for the given query.
+
+    Checks for exact hash match first, then looks for similar queries
+    using Jaccard similarity.
+
+    Args:
+        query: The raw query string
+        cache: The loaded cache dictionary
+        ttl_days: TTL in days for cache entries
+
+    Returns:
+        Tuple of (cache_key, scores_dict) if hit found, None otherwise
+    """
+    normalized = _normalize_query(query)
+    query_key = _query_hash(query)
+    now = time.time()
+    ttl_seconds = ttl_days * 24 * 60 * 60
+
+    entries = cache.get("entries", {})
+
+    # Check for exact hash match
+    if query_key in entries:
+        entry = entries[query_key]
+        if now - entry.get("timestamp", 0) < ttl_seconds:
+            return (query_key, entry.get("scores", {}))
+
+    # Look for similar queries via Jaccard similarity
+    best_key = None
+    best_similarity = 0.0
+
+    for key, entry in entries.items():
+        if now - entry.get("timestamp", 0) >= ttl_seconds:
+            # Entry expired
+            continue
+
+        cached_normalized = entry.get("normalized_query", "")
+        similarity = _jaccard_similarity(normalized, cached_normalized)
+
+        if similarity > best_similarity and similarity >= RELEVANCE_CACHE_SIMILARITY_THRESHOLD:
+            best_similarity = similarity
+            best_key = key
+
+    if best_key:
+        return (best_key, entries[best_key].get("scores", {}))
+
+    return None
+
+
+def _update_cache(query: str, scores: Dict[str, int], cache: Dict) -> None:
+    """Update the cache with new scores.
+
+    Args:
+        query: The raw query string
+        scores: Dictionary of lesson_id -> score
+        cache: The cache dictionary to update (modified in place)
+    """
+    normalized = _normalize_query(query)
+    query_key = _query_hash(query)
+
+    if "entries" not in cache:
+        cache["entries"] = {}
+
+    cache["entries"][query_key] = {
+        "normalized_query": normalized,
+        "scores": scores,
+        "timestamp": time.time(),
+    }
 
 
 class LessonsMixin:
@@ -565,8 +795,11 @@ class LessonsMixin:
         """
         Score all lessons by relevance to query text using Haiku.
 
-        Calls `claude -p --model haiku` to evaluate which lessons are most
-        relevant to the given text (typically the user's first message).
+        Uses a hybrid caching strategy:
+        1. Check cache for exact query hash match
+        2. Check cache for similar queries (Jaccard similarity > 0.7)
+        3. Fall back to Haiku API call on cache miss
+        4. Cache results for future use (7-day TTL)
 
         Args:
             query_text: Text to score lessons against (e.g., user's question)
@@ -592,6 +825,38 @@ class LessonsMixin:
                 query_text=query_text,
             )
 
+        # Build lesson map for score construction
+        lesson_map = {l.id: l for l in all_lessons}
+
+        # Check cache first
+        cache = _load_relevance_cache()
+        cache_hit = _find_cache_hit(query_text, cache)
+
+        if cache_hit:
+            cache_key, cached_scores = cache_hit
+            # Reconstruct scored_lessons from cached scores
+            scored_lessons = []
+            for lesson_id, score in cached_scores.items():
+                if lesson_id in lesson_map:
+                    scored_lessons.append(
+                        ScoredLesson(lesson=lesson_map[lesson_id], score=score)
+                    )
+
+            # Sort by score descending, then by uses descending
+            scored_lessons.sort(key=lambda sl: (-sl.score, -sl.lesson.uses))
+
+            duration_ms = int((time.time() - start_time) * 1000)
+            top_scores = [(sl.lesson.id, sl.score) for sl in scored_lessons[:3]]
+            logger.relevance_score(
+                query_len, lesson_count, duration_ms, top_scores, cache_hit=True
+            )
+
+            return RelevanceResult(
+                scored_lessons=scored_lessons,
+                query_text=query_text,
+            )
+
+        # Cache miss - call Haiku
         # Build the prompt for Haiku
         lessons_text = "\n".join(
             f"[{lesson.id}] {lesson.title}: {lesson.content}"
@@ -650,8 +915,8 @@ No explanations, just ID: SCORE lines."""
                 )
 
             # Parse the output: ID: SCORE
-            lesson_map = {l.id: l for l in all_lessons}
             scored_lessons = []
+            scores_dict = {}  # For caching
             score_pattern = re.compile(r"^\[?([LS]\d{3})\]?:\s*(\d+)")
 
             for line in output.splitlines():
@@ -663,9 +928,14 @@ No explanations, just ID: SCORE lines."""
                         scored_lessons.append(
                             ScoredLesson(lesson=lesson_map[lesson_id], score=score)
                         )
+                        scores_dict[lesson_id] = score
 
             # Sort by score descending, then by uses descending
             scored_lessons.sort(key=lambda sl: (-sl.score, -sl.lesson.uses))
+
+            # Cache the results
+            _update_cache(query_text, scores_dict, cache)
+            _save_relevance_cache(cache)
 
             duration_ms = int((time.time() - start_time) * 1000)
             top_scores = [(sl.lesson.id, sl.score) for sl in scored_lessons[:3]]
