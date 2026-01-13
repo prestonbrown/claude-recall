@@ -1850,7 +1850,6 @@ class RecallMonitorApp(App):
         handoff_table.add_column("Title", key="title")
         handoff_table.add_column("Status", key="status")
         handoff_table.add_column("Phase", key="phase")
-        handoff_table.add_column("Agent", key="agent")
         handoff_table.add_column("Age", key="age")
         handoff_table.add_column("Updated", key="updated")
         handoff_table.add_column("Tried", key="tried")
@@ -1926,14 +1925,14 @@ class RecallMonitorApp(App):
 
         # Count tried and next steps
         tried_count = str(len(handoff.tried_steps))
-        next_count = str(len(handoff.next_steps))
+        # For completed handoffs, show "-" instead of next count
+        next_count = "-" if handoff.status == "completed" else str(len(handoff.next_steps))
 
         row_data = [
             handoff.id[:12] if len(handoff.id) > 12 else handoff.id,
             title,
             status_display,
             handoff.phase,
-            handoff.agent[:10] if len(handoff.agent) > 10 else handoff.agent,
             age_display,
             updated_display,
             tried_count,
@@ -2067,12 +2066,64 @@ class RecallMonitorApp(App):
                     details_log.write(f"  [dim]○[/dim] {item}")
                 details_log.write("")
 
+        # Completed section - show tried steps with outcome="success"
+        if handoff.tried_steps:
+            completed_steps = [s for s in handoff.tried_steps if s.outcome == "success"]
+            if completed_steps:
+                details_log.write(f"[bold green]Completed ({len(completed_steps)}):[/bold green]")
+                for step in completed_steps:
+                    details_log.write(f"  [green][/green] {step.description}")
+                details_log.write("")
+
         # Refs
         if handoff.refs:
             details_log.write(f"[bold]Refs:[/bold] {', '.join(handoff.refs)}")
             details_log.write("")
 
-        # Handoff Context section
+        # Transcript Stats section (lightweight context, no LLM)
+        # Check if we've already tried extraction (key exists, even if None)
+        if handoff_id in self.state.handoff.lightweight_context:
+            lw_ctx = self.state.handoff.lightweight_context[handoff_id]
+            if lw_ctx:
+                details_log.write("[bold cyan]Transcript Stats[/bold cyan]")
+                # Tool usage summary
+                if lw_ctx.tool_counts:
+                    tool_summary = ", ".join(
+                        f"{count} {name}" for name, count in
+                        sorted(lw_ctx.tool_counts.items(), key=lambda x: -x[1])[:6]
+                    )
+                    details_log.write(f"  [bold]Tools:[/bold] {tool_summary}")
+                # Files modified (most important)
+                if lw_ctx.files_modified:
+                    files_str = ", ".join(lw_ctx.files_modified[:8])
+                    if len(lw_ctx.files_modified) > 8:
+                        files_str += f" +{len(lw_ctx.files_modified) - 8} more"
+                    details_log.write(f"  [bold]Modified:[/bold] {files_str}")
+                # Files touched (read)
+                read_only = [f for f in lw_ctx.files_touched if f not in lw_ctx.files_modified]
+                if read_only:
+                    files_str = ", ".join(read_only[:6])
+                    if len(read_only) > 6:
+                        files_str += f" +{len(read_only) - 6} more"
+                    details_log.write(f"  [bold]Read:[/bold] {files_str}")
+                # Message count
+                details_log.write(f"  [bold]Messages:[/bold] {lw_ctx.message_count}")
+                # Last user message
+                if lw_ctx.last_user_message:
+                    details_log.write(f"  [bold]Last:[/bold] [dim]{lw_ctx.last_user_message}[/dim]")
+                details_log.write("")
+            # else: lw_ctx is None means no transcript - show nothing
+        elif handoff_id in self.state.handoff.extracting_context:
+            details_log.write("[dim]Loading transcript stats...[/dim]")
+            details_log.write("")
+        else:
+            # Mark as extracting in main thread BEFORE dispatching to avoid race
+            self.state.handoff.extracting_context.add(handoff_id)
+            self._extract_lightweight_context(handoff_id)
+            details_log.write("[dim]Loading transcript stats...[/dim]")
+            details_log.write("")
+
+        # Handoff Context section (enriched via LLM)
         if handoff.handoff:
             ctx = handoff.handoff
             # Only show section header if we have content (and not already shown completion summary)
@@ -2231,6 +2282,82 @@ class RecallMonitorApp(App):
                 })
 
         return sessions
+
+    def _get_transcript_path_for_handoff(self, handoff_id: str) -> Optional[str]:
+        """Get the most recent transcript path for a handoff.
+
+        Args:
+            handoff_id: The handoff ID to find transcript for
+
+        Returns:
+            Path to transcript file, or None if not found
+        """
+        import json
+
+        session_handoffs_file = self.state_reader.state_dir / "session-handoffs.json"
+        if not session_handoffs_file.exists():
+            return None
+
+        try:
+            data = json.loads(session_handoffs_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+
+        # Find sessions linked to this handoff, sorted by created time
+        linked = []
+        for session_id, entry in data.items():
+            if isinstance(entry, dict) and entry.get("handoff_id") == handoff_id:
+                transcript_path = entry.get("transcript_path")
+                created = entry.get("created", "")
+                if transcript_path:
+                    linked.append((created, transcript_path))
+
+        if not linked:
+            return None
+
+        # Return most recent transcript
+        linked.sort(key=lambda x: x[0], reverse=True)
+        return linked[0][1]
+
+    @work(thread=True)
+    def _extract_lightweight_context(self, handoff_id: str) -> None:
+        """Extract lightweight context for a handoff in background thread.
+
+        Note: Caller should add handoff_id to extracting_context before calling
+        to avoid race conditions between check and dispatch.
+
+        Args:
+            handoff_id: The handoff ID to extract context for
+        """
+        # Skip if already cached (another extraction may have completed)
+        if handoff_id in self.state.handoff.lightweight_context:
+            self.state.handoff.extracting_context.discard(handoff_id)
+            return
+
+        try:
+            # Get transcript path
+            transcript_path = self._get_transcript_path_for_handoff(handoff_id)
+            if not transcript_path:
+                # Cache as "no transcript" so we don't keep trying
+                self.state.handoff.lightweight_context[handoff_id] = None
+            else:
+                # Import the extractor
+                try:
+                    from core.context_extractor import extract_lightweight_context
+                except ImportError:
+                    from context_extractor import extract_lightweight_context
+
+                # Extract context (file parsing only, no API)
+                context = extract_lightweight_context(transcript_path)
+                # Cache result (even if None, to avoid retrying)
+                self.state.handoff.lightweight_context[handoff_id] = context
+
+            # Always refresh display when done
+            current_id = self.state.handoff.user_selected_id or self.state.handoff.current_id
+            if current_id == handoff_id:
+                self.call_from_thread(self._show_handoff_details, handoff_id)
+        finally:
+            self.state.handoff.extracting_context.discard(handoff_id)
 
     def action_goto_handoff(self) -> None:
         """Navigate from current session to its linked handoff (if any)."""

@@ -1360,6 +1360,9 @@ class HandoffsMixin:
         """
         Update a handoff's context (rich structured context for session handoffs).
 
+        Also populates the description field with the summary if the description
+        is empty, so that the summary is visible in the handoff list.
+
         Args:
             handoff_id: The handoff ID
             context: HandoffContext with summary, critical_files, etc.
@@ -1370,6 +1373,9 @@ class HandoffsMixin:
         def update_fn(h: Handoff) -> None:
             h.handoff = context
             h.last_session = date.today()
+            # Populate description from summary if description is empty
+            if context.summary and not h.description:
+                h.description = context.summary
 
         self._update_handoff_in_file(handoff_id, update_fn)
 
