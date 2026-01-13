@@ -277,3 +277,227 @@ class TestHandoffStats:
         result = HandoffAnalytics.compute_handoff_stats(handoffs)
 
         assert result["stale_count"] == 1
+
+
+class TestFlowMetrics:
+    """Tests for compute_flow_metrics function (handoff lifecycle health)."""
+
+    def test_compute_flow_metrics_empty_list(self):
+        """Empty list returns zeroed flow metrics."""
+        from core.tui.analytics import HandoffAnalytics, HandoffFlowMetrics
+
+        result = HandoffAnalytics.compute_flow_metrics([])
+
+        assert isinstance(result, HandoffFlowMetrics)
+        assert result.total == 0
+        assert result.by_status == {}
+        assert result.by_phase == {}
+        assert result.avg_cycle_days == 0.0
+        assert result.blocked_over_threshold == []
+        assert result.completion_rate == 0.0
+
+    def test_compute_flow_metrics_status_distribution(self):
+        """Status distribution (funnel) computed correctly."""
+        from core.tui.analytics import HandoffAnalytics
+        from core.tui.models import HandoffSummary
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-001", title="Task 1", status="not_started",
+                phase="research", created="2025-01-01", updated="2025-01-01"
+            ),
+            HandoffSummary(
+                id="hf-002", title="Task 2", status="in_progress",
+                phase="implementing", created="2025-01-02", updated="2025-01-05"
+            ),
+            HandoffSummary(
+                id="hf-003", title="Task 3", status="in_progress",
+                phase="planning", created="2025-01-03", updated="2025-01-06"
+            ),
+            HandoffSummary(
+                id="hf-004", title="Task 4", status="completed",
+                phase="review", created="2025-01-04", updated="2025-01-10"
+            ),
+        ]
+
+        result = HandoffAnalytics.compute_flow_metrics(handoffs)
+
+        assert result.by_status["not_started"] == 1
+        assert result.by_status["in_progress"] == 2
+        assert result.by_status["completed"] == 1
+
+    def test_compute_flow_metrics_phase_distribution(self):
+        """Phase distribution excludes completed handoffs."""
+        from core.tui.analytics import HandoffAnalytics
+        from core.tui.models import HandoffSummary
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-001", title="Task 1", status="in_progress",
+                phase="research", created="2025-01-01", updated="2025-01-01"
+            ),
+            HandoffSummary(
+                id="hf-002", title="Task 2", status="in_progress",
+                phase="implementing", created="2025-01-02", updated="2025-01-05"
+            ),
+            HandoffSummary(
+                id="hf-003", title="Task 3", status="blocked",
+                phase="implementing", created="2025-01-03", updated="2025-01-06"
+            ),
+            HandoffSummary(
+                id="hf-004", title="Task 4", status="completed",
+                phase="review", created="2025-01-04", updated="2025-01-10"
+            ),
+        ]
+
+        result = HandoffAnalytics.compute_flow_metrics(handoffs)
+
+        # Completed should not be counted in phase distribution
+        assert result.by_phase["research"] == 1
+        assert result.by_phase["implementing"] == 2
+        assert "review" not in result.by_phase  # Completed handoff's phase not counted
+
+    def test_compute_flow_metrics_avg_cycle_time(self):
+        """Average cycle time computed for completed handoffs only."""
+        from core.tui.analytics import HandoffAnalytics
+        from core.tui.models import HandoffSummary
+
+        handoffs = [
+            # 5 days to complete (Jan 1 -> Jan 6)
+            HandoffSummary(
+                id="hf-001", title="Task 1", status="completed",
+                phase="review", created="2025-01-01", updated="2025-01-06"
+            ),
+            # 10 days to complete (Jan 2 -> Jan 12)
+            HandoffSummary(
+                id="hf-002", title="Task 2", status="completed",
+                phase="review", created="2025-01-02", updated="2025-01-12"
+            ),
+            # Not completed, should be excluded
+            HandoffSummary(
+                id="hf-003", title="Task 3", status="in_progress",
+                phase="implementing", created="2025-01-03", updated="2025-01-06"
+            ),
+        ]
+
+        result = HandoffAnalytics.compute_flow_metrics(handoffs)
+
+        # Average of 5 and 10 = 7.5 days
+        assert result.avg_cycle_days == 7.5
+
+    def test_compute_flow_metrics_blocked_alerts(self):
+        """Blocked alerts flag handoffs blocked > threshold days."""
+        from core.tui.analytics import HandoffAnalytics
+        from core.tui.models import HandoffSummary
+
+        old_date = "2020-01-01"  # Very old, definitely > 3 days
+        today = date.today().isoformat()
+
+        handoffs = [
+            # Blocked for a long time
+            HandoffSummary(
+                id="hf-001", title="Long blocked", status="blocked",
+                phase="implementing", created=old_date, updated=old_date
+            ),
+            # Recently blocked (should not trigger alert)
+            HandoffSummary(
+                id="hf-002", title="Recent blocked", status="blocked",
+                phase="research", created=today, updated=today
+            ),
+            # Not blocked (should not appear)
+            HandoffSummary(
+                id="hf-003", title="Active", status="in_progress",
+                phase="planning", created=old_date, updated=old_date
+            ),
+        ]
+
+        result = HandoffAnalytics.compute_flow_metrics(handoffs)
+
+        # Only hf-001 should be in blocked_over_threshold
+        assert len(result.blocked_over_threshold) == 1
+        assert result.blocked_over_threshold[0][0] == "hf-001"
+        assert result.blocked_over_threshold[0][2] > 3  # Days blocked > 3
+
+    def test_compute_flow_metrics_completion_rate(self):
+        """Completion rate computed as completed / total."""
+        from core.tui.analytics import HandoffAnalytics
+        from core.tui.models import HandoffSummary
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-001", title="Task 1", status="completed",
+                phase="review", created="2025-01-01", updated="2025-01-06"
+            ),
+            HandoffSummary(
+                id="hf-002", title="Task 2", status="completed",
+                phase="review", created="2025-01-02", updated="2025-01-12"
+            ),
+            HandoffSummary(
+                id="hf-003", title="Task 3", status="in_progress",
+                phase="implementing", created="2025-01-03", updated="2025-01-06"
+            ),
+            HandoffSummary(
+                id="hf-004", title="Task 4", status="not_started",
+                phase="research", created="2025-01-04", updated="2025-01-04"
+            ),
+        ]
+
+        result = HandoffAnalytics.compute_flow_metrics(handoffs)
+
+        # 2 completed out of 4 total = 0.5
+        assert result.completion_rate == 0.5
+
+    def test_compute_flow_metrics_counts(self):
+        """Active and blocked counts included."""
+        from core.tui.analytics import HandoffAnalytics
+        from core.tui.models import HandoffSummary
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-001", title="Task 1", status="in_progress",
+                phase="implementing", created="2025-01-01", updated="2025-01-06"
+            ),
+            HandoffSummary(
+                id="hf-002", title="Task 2", status="blocked",
+                phase="research", created="2025-01-02", updated="2025-01-05"
+            ),
+            HandoffSummary(
+                id="hf-003", title="Task 3", status="completed",
+                phase="review", created="2025-01-03", updated="2025-01-10"
+            ),
+        ]
+
+        result = HandoffAnalytics.compute_flow_metrics(handoffs)
+
+        assert result.total == 3
+        assert result.active_count == 2  # in_progress + blocked
+        assert result.blocked_count == 1
+
+    def test_compute_flow_metrics_malformed_dates(self):
+        """Malformed dates handled gracefully."""
+        from core.tui.analytics import HandoffAnalytics
+        from core.tui.models import HandoffSummary
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-001", title="Bad dates", status="completed",
+                phase="review", created="invalid", updated="also-invalid",
+            ),
+        ]
+        result = HandoffAnalytics.compute_flow_metrics(handoffs)
+        assert result.avg_cycle_days == 0.0
+        assert result.completion_rate == 1.0  # Still counts as completed
+
+    def test_compute_flow_metrics_datetime_strings(self):
+        """Datetime strings with time component handled correctly."""
+        from core.tui.analytics import HandoffAnalytics
+        from core.tui.models import HandoffSummary
+
+        handoffs = [
+            HandoffSummary(
+                id="hf-001", title="Task 1", status="completed",
+                phase="review", created="2025-01-01T10:30:00", updated="2025-01-05T14:00:00",
+            ),
+        ]
+        result = HandoffAnalytics.compute_flow_metrics(handoffs)
+        assert result.avg_cycle_days == 4.0

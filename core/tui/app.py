@@ -45,6 +45,7 @@ except ImportError:
     PlotextPlot = None  # type: ignore
 
 try:
+    from core.tui.analytics import BLOCKED_ALERT_THRESHOLD_DAYS
     from core.tui.log_reader import LogReader, format_event_line
     from core.tui.models import DebugEvent, HandoffSummary
     from core.tui.state_reader import StateReader
@@ -58,6 +59,7 @@ try:
     )
     from core.tui.app_state import AppState
 except ImportError:
+    from .analytics import BLOCKED_ALERT_THRESHOLD_DAYS
     from .log_reader import LogReader, format_event_line
     from .models import DebugEvent, HandoffSummary
     from .state_reader import StateReader
@@ -1196,6 +1198,52 @@ class RecallMonitorApp(App):
                     f"Stale: {stats['stale_count']}"
                 )
             lines.append("")
+
+            # Handoff Analytics section
+            if handoffs:
+                flow_metrics = self.state_reader.get_handoff_flow_metrics(handoffs)
+
+                lines.append("[bold]Handoff Analytics[/bold]")
+
+                # Status funnel - compact single line
+                status_parts = []
+                for status in ["not_started", "in_progress", "blocked", "ready_for_review", "completed"]:
+                    count = flow_metrics.by_status.get(status, 0)
+                    if count > 0:
+                        # Short labels for compact display
+                        label_map = {
+                            "not_started": "new",
+                            "in_progress": "active",
+                            "blocked": "blocked",
+                            "ready_for_review": "review",
+                            "completed": "done",
+                        }
+                        status_parts.append(f"{count} {label_map[status]}")
+                if status_parts:
+                    lines.append(f"  Status: {' | '.join(status_parts)}")
+
+                # Phase distribution (only for non-completed) - show percentages
+                if flow_metrics.by_phase and flow_metrics.active_count > 0:
+                    phase_parts = []
+                    for phase in ["research", "planning", "implementing", "review"]:
+                        count = flow_metrics.by_phase.get(phase, 0)
+                        if count > 0:
+                            pct = (count / flow_metrics.active_count) * 100
+                            phase_parts.append(f"{phase} {pct:.0f}%")
+                    if phase_parts:
+                        lines.append(f"  Phases: {' | '.join(phase_parts)}")
+
+                # Average cycle time (only if we have completed handoffs)
+                if flow_metrics.by_status.get("completed", 0) > 0:
+                    lines.append(f"  Avg cycle: {flow_metrics.avg_cycle_days:.1f} days")
+
+                # Blocked alerts
+                if flow_metrics.blocked_over_threshold:
+                    lines.append(f"  [red]Blocked >{BLOCKED_ALERT_THRESHOLD_DAYS}d:[/red]")
+                    for hf_id, hf_title, days in flow_metrics.blocked_over_threshold[:3]:
+                        lines.append(f"    {hf_id} ({days}d)")
+
+                lines.append("")
 
             if active_handoffs:
                 lines.append("[bold]Active Handoffs[/bold]")

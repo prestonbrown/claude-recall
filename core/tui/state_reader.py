@@ -27,7 +27,7 @@ LEGACY_HANDOFFS_FILENAME = "APPROACHES.md"
 DECAY_STATE_FILENAME = "decay_state"
 
 try:
-    from core.tui.analytics import HandoffAnalytics
+    from core.tui.analytics import HandoffAnalytics, HandoffFlowMetrics
     from core.tui.models import (
         DecayInfo,
         HandoffContextSummary,
@@ -36,7 +36,7 @@ try:
         TriedStep,
     )
 except ImportError:
-    from .analytics import HandoffAnalytics
+    from .analytics import HandoffAnalytics, HandoffFlowMetrics
     from .models import (
         DecayInfo,
         HandoffContextSummary,
@@ -830,3 +830,23 @@ class StateReader:
             - age_stats: Dict with min_age_days, max_age_days, avg_age_days
         """
         return self._analytics.compute_handoff_stats(handoffs)
+
+    def get_handoff_flow_metrics(
+        self, handoffs: List[HandoffSummary]
+    ) -> HandoffFlowMetrics:
+        """
+        Compute handoff flow/lifecycle metrics.
+
+        Provides visibility into handoff pipeline health:
+        - Completion funnel (how many at each status)
+        - Phase distribution (where work is piling up)
+        - Cycle time (how long handoffs take to complete)
+        - Blocked alerts (handoffs stuck too long)
+
+        Args:
+            handoffs: List of HandoffSummary objects
+
+        Returns:
+            HandoffFlowMetrics dataclass with computed analytics
+        """
+        return self._analytics.compute_flow_metrics(handoffs)
