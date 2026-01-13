@@ -130,9 +130,9 @@ class StatsAggregator:
         # Rolling 24-hour window for "today's" stats
         cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
 
-        # Use Counter for efficient counting
-        events_by_type: Counter = Counter(e.event for e in events)
-        events_by_project: Counter = Counter(e.project for e in events if e.project)
+        # Initialize counters - will be populated in loop with 24h filter
+        events_by_type: Counter = Counter()
+        events_by_project: Counter = Counter()
 
         # Initialize counters for today events
         sessions_today = 0
@@ -155,14 +155,21 @@ class StatsAggregator:
             if event.is_error and is_recent:
                 errors_today += 1
 
+            # Count event types and projects (also filtered to 24h)
+            if is_recent:
+                events_by_type[event.event] += 1
+                if event.project:
+                    events_by_project[event.project] += 1
+
             # Collect timing data (also filtered to rolling 24h window)
-            if event.is_timing and is_recent:
+            # Only use HOOK_END for overall stats (not HOOK_PHASE which are sub-timings)
+            if event.event == EventType.HOOK_END and is_recent:
                 timing = self._extract_hook_timing(event)
                 if timing is not None:
                     all_hook_timings.append(timing)
 
-                    # Group by hook name
-                    hook_name = event.get("hook") or event.get("op") or "unknown"
+                    # Group by hook name for breakdown
+                    hook_name = event.get("hook") or "unknown"
                     hook_timings[hook_name].append(timing)
 
         # Calculate timing statistics
