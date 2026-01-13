@@ -209,6 +209,29 @@ class ScoreRelevanceCommand(Command):
         return 0
 
 
+class PrescoreCacheCommand(Command):
+    """Pre-score lessons against transcript queries for cache warmup."""
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        transcript = getattr(args, "transcript", "")
+        max_queries = getattr(args, "max_queries", 3)
+
+        if not transcript:
+            print("Error: --transcript is required", file=sys.stderr)
+            return 1
+
+        scored = manager.prescore_cache(transcript, max_queries=max_queries)
+
+        if scored:
+            print(f"Pre-scored {len(scored)} query(s):")
+            for q in scored:
+                print(f"  - {q}")
+        else:
+            print("No queries pre-scored (none found or all already cached)")
+
+        return 0
+
+
 # =============================================================================
 # Command Registry
 # =============================================================================
@@ -226,6 +249,7 @@ COMMAND_REGISTRY: Dict[str, Type[Command]] = {
     "delete": DeleteCommand,
     "promote": PromoteCommand,
     "score-relevance": ScoreRelevanceCommand,
+    "prescore-cache": PrescoreCacheCommand,
 }
 
 

@@ -3400,5 +3400,261 @@ def make_mock_result(stdout: str = "", returncode: int = 0, stderr: str = ""):
     return result
 
 
+# =============================================================================
+# Pre-scoring Cache Warmup Tests
+# =============================================================================
+
+
+class TestPrescoreCache:
+    """Tests for background cache warmup functionality."""
+
+    def test_prescore_extracts_user_messages(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """prescore_cache should extract user messages from transcript."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(level="project", category="pattern", title="Git Lesson", content="How to use git")
+
+        # Create a mock transcript with user messages
+        transcript_path = temp_state_dir / "test-session.jsonl"
+        transcript_entries = [
+            {"type": "user", "message": {"role": "user", "content": "How do I use git branches?"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Here's how..."}]}},
+            {"type": "user", "message": {"role": "user", "content": "What about rebasing?"}},
+        ]
+        with open(transcript_path, "w") as f:
+            for entry in transcript_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        # Track Haiku calls
+        haiku_calls = []
+
+        def mock_run(*args, **kwargs):
+            haiku_calls.append(args)
+            return make_mock_result(stdout="L001: 8\n")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.prescore_cache(str(transcript_path), max_queries=2)
+
+        # Should have called Haiku for each non-cached query
+        assert len(haiku_calls) == 2
+        assert len(result) == 2
+
+    def test_prescore_skips_meta_messages(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """prescore_cache should skip messages starting with '<' (meta/command output)."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(level="project", category="pattern", title="Test", content="Content")
+
+        # Create transcript with meta messages
+        transcript_path = temp_state_dir / "test-session.jsonl"
+        transcript_entries = [
+            {"type": "user", "message": {"role": "user", "content": "<local-command-stdout>output</local-command-stdout>"}},
+            {"type": "user", "message": {"role": "user", "content": "Real user question about testing"}},
+            {"type": "user", "message": {"role": "user", "content": "<command-name>/clear</command-name>"}},
+        ]
+        with open(transcript_path, "w") as f:
+            for entry in transcript_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        haiku_calls = []
+
+        def mock_run(*args, **kwargs):
+            haiku_calls.append(args)
+            return make_mock_result(stdout="L001: 7\n")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.prescore_cache(str(transcript_path), max_queries=3)
+
+        # Should only score the real user message
+        assert len(haiku_calls) == 1
+        assert len(result) == 1
+
+    def test_prescore_skips_short_queries(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """prescore_cache should skip queries shorter than 10 characters."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(level="project", category="pattern", title="Test", content="Content")
+
+        # Create transcript with short messages
+        transcript_path = temp_state_dir / "test-session.jsonl"
+        transcript_entries = [
+            {"type": "user", "message": {"role": "user", "content": "yes"}},
+            {"type": "user", "message": {"role": "user", "content": "no way"}},
+            {"type": "user", "message": {"role": "user", "content": "This is a longer meaningful query about coding"}},
+        ]
+        with open(transcript_path, "w") as f:
+            for entry in transcript_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        haiku_calls = []
+
+        def mock_run(*args, **kwargs):
+            haiku_calls.append(args)
+            return make_mock_result(stdout="L001: 6\n")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.prescore_cache(str(transcript_path), max_queries=3)
+
+        # Should only score the longer message
+        assert len(haiku_calls) == 1
+        assert len(result) == 1
+
+    def test_prescore_skips_already_cached(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """prescore_cache should skip queries already in cache."""
+        from core import LessonsManager
+        from core.lessons import _save_relevance_cache, _query_hash
+        import time
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(level="project", category="pattern", title="Test", content="Content")
+
+        # Pre-populate cache with existing query
+        existing_query = "How do I use git branches?"
+        cache = {
+            "entries": {
+                _query_hash(existing_query): {
+                    "normalized_query": "branches do git how i use",
+                    "scores": {"L001": 9},
+                    "timestamp": time.time(),
+                }
+            }
+        }
+        _save_relevance_cache(cache)
+
+        # Create transcript with the cached query
+        transcript_path = temp_state_dir / "test-session.jsonl"
+        transcript_entries = [
+            {"type": "user", "message": {"role": "user", "content": existing_query}},
+            {"type": "user", "message": {"role": "user", "content": "What about rebasing branches?"}},
+        ]
+        with open(transcript_path, "w") as f:
+            for entry in transcript_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        haiku_calls = []
+
+        def mock_run(*args, **kwargs):
+            haiku_calls.append(args)
+            return make_mock_result(stdout="L001: 5\n")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.prescore_cache(str(transcript_path), max_queries=2)
+
+        # Should only call Haiku for the new query
+        assert len(haiku_calls) == 1
+        assert len(result) == 1
+
+    def test_prescore_respects_max_queries(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """prescore_cache should respect max_queries limit."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(level="project", category="pattern", title="Test", content="Content")
+
+        # Create transcript with many user messages
+        transcript_path = temp_state_dir / "test-session.jsonl"
+        transcript_entries = [
+            {"type": "user", "message": {"role": "user", "content": f"Question number {i} about something"}}
+            for i in range(10)
+        ]
+        with open(transcript_path, "w") as f:
+            for entry in transcript_entries:
+                f.write(json.dumps(entry) + "\n")
+
+        haiku_calls = []
+
+        def mock_run(*args, **kwargs):
+            haiku_calls.append(args)
+            return make_mock_result(stdout="L001: 4\n")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.prescore_cache(str(transcript_path), max_queries=3)
+
+        # Should only score first 3 queries
+        assert len(haiku_calls) == 3
+        assert len(result) == 3
+
+    def test_prescore_handles_missing_transcript(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """prescore_cache should handle missing transcript file gracefully."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        result = manager.prescore_cache("/nonexistent/transcript.jsonl")
+
+        assert result == []
+
+    def test_prescore_handles_empty_transcript(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """prescore_cache should handle empty transcript gracefully."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        transcript_path = temp_state_dir / "empty.jsonl"
+        transcript_path.write_text("")
+
+        result = manager.prescore_cache(str(transcript_path))
+
+        assert result == []
+
+    def test_prescore_handles_malformed_json(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """prescore_cache should skip malformed JSON lines."""
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        manager.add_lesson(level="project", category="pattern", title="Test", content="Content")
+
+        transcript_path = temp_state_dir / "malformed.jsonl"
+        with open(transcript_path, "w") as f:
+            f.write("{ invalid json }\n")
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": "Valid query about testing"}}) + "\n")
+
+        haiku_calls = []
+
+        def mock_run(*args, **kwargs):
+            haiku_calls.append(args)
+            return make_mock_result(stdout="L001: 7\n")
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+
+        result = manager.prescore_cache(str(transcript_path))
+
+        # Should have processed the valid entry
+        assert len(haiku_calls) == 1
+        assert len(result) == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

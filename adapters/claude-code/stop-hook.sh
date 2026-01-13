@@ -490,6 +490,17 @@ main() {
 
     # Log timing summary
     log_hook_end "stop"
+
+    # Background pre-scoring cache warmup (runs 20% of sessions to avoid spamming Haiku)
+    # This pre-scores user queries from the transcript to warm the relevance cache
+    if (( RANDOM % 5 == 0 )) && [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
+        # Run in background with nohup so it doesn't block session end
+        # Redirect to background.log for debugging
+        nohup python3 "$PYTHON_MANAGER" prescore-cache \
+            --transcript "$transcript_path" \
+            >> "$CLAUDE_RECALL_STATE/background.log" 2>&1 &
+    fi
+
     exit 0
 }
 

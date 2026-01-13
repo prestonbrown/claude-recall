@@ -132,6 +132,17 @@ def main():
         "--timeout", type=int, default=30, help="Timeout in seconds for Haiku call"
     )
 
+    # prescore-cache command - background cache warmup
+    prescore_parser = subparsers.add_parser(
+        "prescore-cache", help="Pre-score lessons against transcript queries (background cache warmup)"
+    )
+    prescore_parser.add_argument(
+        "--transcript", required=True, help="Path to transcript JSONL file"
+    )
+    prescore_parser.add_argument(
+        "--max-queries", type=int, default=3, help="Maximum queries to pre-score"
+    )
+
     # handoff command (with subcommands) - "approach" is kept as alias for backward compat
     handoff_parser = subparsers.add_parser("handoff", aliases=["approach"], help="Manage handoffs (work tracking). 'approach' is a deprecated alias.")
     handoff_subparsers = handoff_parser.add_subparsers(dest="handoff_command", help="Handoff commands")

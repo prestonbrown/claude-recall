@@ -1612,3 +1612,98 @@ No explanations, just ID: SCORE lines."""
         low_effectiveness.sort(key=lambda x: x[1])
 
         return low_effectiveness
+
+    # -------------------------------------------------------------------------
+    # Pre-scoring Cache Warmup
+    # -------------------------------------------------------------------------
+
+    def prescore_cache(
+        self,
+        transcript_path: str,
+        max_queries: int = 3,
+    ) -> List[str]:
+        """Pre-score lessons against queries extracted from transcript.
+
+        Extracts user messages from the transcript and pre-scores lessons
+        against them to warm the relevance cache for future similar queries.
+
+        Args:
+            transcript_path: Path to the transcript JSONL file
+            max_queries: Maximum number of queries to pre-score (default 3)
+
+        Returns:
+            List of queries that were pre-scored
+        """
+        import json as json_module
+        from pathlib import Path
+
+        logger = get_logger()
+
+        transcript_file = Path(transcript_path).expanduser()
+        if not transcript_file.exists():
+            logger.error(
+                operation="prescore_cache",
+                error="Transcript not found",
+                context={"path": str(transcript_file)},
+            )
+            return []
+
+        # Extract user messages from transcript
+        user_messages = []
+        try:
+            with open(transcript_file) as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        entry = json_module.loads(line)
+                        # User messages have type="user" and message.role="user"
+                        if entry.get("type") == "user":
+                            message = entry.get("message", {})
+                            if message.get("role") == "user":
+                                content = message.get("content", "")
+                                # Only process string content (first user message)
+                                # Tool results come as arrays and aren't relevant for pre-scoring
+                                if not isinstance(content, str):
+                                    continue
+                                content = content.strip()
+                                if content and not content.startswith("<"):
+                                    user_messages.append(content)
+                    except json_module.JSONDecodeError:
+                        continue
+        except (OSError, IOError) as e:
+            logger.error(
+                operation="prescore_cache",
+                error=f"Failed to read transcript: {e}",
+                context={"path": str(transcript_file)},
+            )
+            return []
+
+        if not user_messages:
+            return []
+
+        # Take first N user messages (most likely to represent main topics)
+        queries_to_score = user_messages[:max_queries]
+        scored_queries = []
+
+        for query in queries_to_score:
+            # Skip very short queries (likely not meaningful)
+            if len(query.strip()) < 10:
+                continue
+
+            # Truncate very long queries (same as score_relevance does internally)
+            if len(query) > SCORE_RELEVANCE_MAX_QUERY_LEN:
+                query = query[:SCORE_RELEVANCE_MAX_QUERY_LEN]
+
+            # Check if already cached before making API call
+            cache = _load_relevance_cache()
+            if _find_cache_hit(query, cache):
+                # Already cached, skip
+                continue
+
+            # Score the query (this will cache the results)
+            result = self.score_relevance(query)
+            if not result.error:
+                scored_queries.append(query[:50] + "..." if len(query) > 50 else query)
+
+        return scored_queries
