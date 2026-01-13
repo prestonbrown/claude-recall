@@ -868,14 +868,12 @@ class RecallMonitorApp(App):
 
             with TabPane("Handoffs", id="handoffs"):
                 yield Vertical(
-                    Static("Handoffs", classes="section-title"),
                     Horizontal(
                         Static("Filter: ", classes="filter-label"),
                         Input(id="handoff-filter", placeholder="text, status:x, phase:x, agent:x"),
                         Button("X", id="clear-filter", variant="error"),
                         classes="filter-row",
                     ),
-                    Static("", id="handoff-filter-status"),
                     DataTable(id="handoff-list"),
                     RichLog(id="handoff-timeline", highlight=True, markup=True, wrap=True, auto_scroll=False),
                     Static("Handoff Details", classes="section-title"),
@@ -1752,23 +1750,8 @@ class RecallMonitorApp(App):
         return True
 
     def _update_filter_status(self, visible: int, total: int) -> None:
-        """Update the filter status indicator.
-
-        Args:
-            visible: Number of visible handoffs
-            total: Total number of handoffs (before filtering)
-        """
-        try:
-            status = self.query_one("#handoff-filter-status", Static)
-        except NoMatches:
-            return  # Widget not mounted yet, expected during startup
-
-        if visible < total:
-            status.update(f"[dim]Showing {visible} of {total} handoffs[/dim]")
-            status.display = True
-        else:
-            status.update("")
-            status.display = False
+        """Update the filter status indicator (no-op, widget removed for space)."""
+        pass
 
     def _should_show_handoff(self, handoff: HandoffSummary) -> bool:
         """Determine if a handoff should be shown based on current filter settings.

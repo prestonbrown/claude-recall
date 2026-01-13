@@ -188,23 +188,6 @@ class TestHandoffFilterInputExists:
             except Exception as e:
                 pytest.fail(f"Clear filter button not found: {e}")
 
-    @pytest.mark.asyncio
-    async def test_filter_status_indicator_exists(self, mock_project_with_varied_handoffs):
-        """Handoffs tab should have a filter status indicator."""
-        app = RecallMonitorApp()
-
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("f6")
-            await pilot.pause()
-
-            # Look for the filter status indicator
-            try:
-                status_indicator = app.query_one("#handoff-filter-status", Static)
-                assert status_indicator is not None
-            except Exception as e:
-                pytest.fail(f"Filter status indicator not found: {e}")
-
 
 # --- Tests for Text Filter ---
 
@@ -840,40 +823,5 @@ class TestHandoffFilterMatching:
         assert app._matches_filter(handoff, parsed) is False
 
 
-# --- Tests for Filter Status Visibility ---
-
-
-class TestHandoffFilterStatusVisibility:
-    """Tests for filter status indicator visibility (display property)."""
-
-    @pytest.mark.asyncio
-    async def test_status_hidden_when_showing_all(self, mock_project_with_varied_handoffs):
-        """Status indicator should be hidden (display=False) when no filter active."""
-        app = RecallMonitorApp()
-
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("f6")
-            await pilot.pause()
-
-            # Explicitly call to ensure the display property is set
-            app._update_filter_status(5, 5)  # All visible
-
-            status = app.query_one("#handoff-filter-status", Static)
-            assert status.display is False, "Status should be hidden when showing all"
-
-    @pytest.mark.asyncio
-    async def test_status_visible_when_filtering(self, mock_project_with_varied_handoffs):
-        """Status indicator should be visible when filter hides items."""
-        app = RecallMonitorApp()
-
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("f6")
-            await pilot.pause()
-
-            # Directly test the method with filtered results
-            app._update_filter_status(2, 5)  # 2 visible of 5 total
-
-            status = app.query_one("#handoff-filter-status", Static)
-            assert status.display is True, "Status should be visible when filtering"
+# Filter status indicator was removed to save vertical space.
+# Filter count now appears in section title instead.
