@@ -317,6 +317,9 @@ class HandoffsMixin:
     VALID_PHASES = {"research", "planning", "implementing", "review"}
     VALID_AGENTS = {"explore", "general-purpose", "plan", "review", "user"}
 
+    # Sub-agent session origins that should be blocked from creating handoffs
+    SUB_AGENT_ORIGINS = {"Explore", "Plan", "General", "System"}
+
     # -------------------------------------------------------------------------
     # Handoffs Tracking
     # -------------------------------------------------------------------------
@@ -861,7 +864,8 @@ class HandoffsMixin:
         phase: str = "research",
         agent: str = "user",
         stealth: bool = False,
-    ) -> str:
+        session_id: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Add a new handoff.
 
@@ -873,9 +877,10 @@ class HandoffsMixin:
             phase: Initial phase (research, planning, implementing, review)
             agent: Agent working on this (explore, general-purpose, plan, review, user)
             stealth: If True, store in HANDOFFS_LOCAL.md (not committed to git)
+            session_id: Optional session ID for sub-agent guard check
 
         Returns:
-            The assigned handoff ID (e.g., 'hf-a1b2c3d')
+            The assigned handoff ID (e.g., 'hf-a1b2c3d'), or None if blocked
 
         Raises:
             ValueError: If invalid phase or agent
@@ -884,6 +889,37 @@ class HandoffsMixin:
             raise ValueError(f"Invalid phase: {phase}")
         if agent not in self.VALID_AGENTS:
             raise ValueError(f"Invalid agent: {agent}")
+
+        # Sub-agent guard: only User origin can create new handoffs
+        if session_id:
+            origin = self._detect_session_origin(session_id)
+            if origin in self.SUB_AGENT_ORIGINS:
+                logger = get_logger()
+                # Check if existing handoff with same title exists - return that instead
+                existing = self._find_active_handoff_by_title(title, stealth)
+                if existing:
+                    logger.mutation(
+                        op="subagent_handoff_guard",
+                        target=existing.id,
+                        details={
+                            "origin": origin,
+                            "action": "returned_existing",
+                            "title": title,
+                        },
+                    )
+                    return existing.id
+                else:
+                    # No existing handoff - block creation entirely
+                    logger.mutation(
+                        op="subagent_handoff_guard",
+                        target="blocked",
+                        details={
+                            "origin": origin,
+                            "action": "blocked_creation",
+                            "title": title,
+                        },
+                    )
+                    return None
 
         # Check for duplicate - return existing handoff if active one with same title exists
         existing = self._find_active_handoff_by_title(title, stealth)
@@ -1794,6 +1830,8 @@ Consider extracting lessons about:
         cutoff_date = date.today() - timedelta(days=max_age_days)
 
         # Apply hybrid logic: keep if in top N OR recent enough
+        # Cap total to prevent explosion when many handoffs complete in a short time
+        max_total = max_count * 3  # Hard cap at 3x max_count (e.g., 9 if max_count=3)
         visible = []
         for i, handoff in enumerate(completed):
             # In top N by recency
@@ -1803,6 +1841,8 @@ Consider extracting lessons about:
 
             if in_top_n or is_recent:
                 visible.append(handoff)
+                if len(visible) >= max_total:
+                    break
 
         return visible
 
@@ -2849,9 +2889,6 @@ Consider extracting lessons about:
     # -------------------------------------------------------------------------
     # Transcript Parsing (for stop-hook optimization)
     # -------------------------------------------------------------------------
-
-    # Sub-agent session origins that should be blocked from creating handoffs
-    SUB_AGENT_ORIGINS = {"Explore", "Plan", "General", "System"}
 
     @staticmethod
     def _sanitize_text(text: str, max_length: int = 500) -> str:

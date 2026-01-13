@@ -400,7 +400,10 @@ def main():
                     stealth=stealth,
                 )
                 mode = " (stealth)" if stealth else ""
-                print(f"Added handoff {handoff_id}: {args.title}{mode}")
+                if handoff_id:
+                    print(f"Added handoff {handoff_id}: {args.title}{mode}")
+                else:
+                    print(f"Handoff creation blocked (sub-agent session)")
 
             elif args.handoff_command == "update":
                 updated = False

@@ -304,6 +304,276 @@ class TestHandoffDuplicateDetection:
 
 
 # =============================================================================
+# Sub-Agent Handoff Guard
+# =============================================================================
+
+
+class TestSubAgentHandoffGuard:
+    """Tests for sub-agent handoff creation guard.
+
+    Sub-agents (Explore, Plan, General, System) should not be able to create
+    new handoffs - they can only resume or update existing ones.
+    """
+
+    def test_user_origin_can_create_handoff(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """User origin sessions can create new handoffs normally."""
+        # Mock _detect_session_origin to return "User"
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "User"
+        )
+
+        handoff_id = manager.handoff_add(
+            title="User created handoff",
+            session_id="test-session-123",
+        )
+
+        assert handoff_id is not None
+        assert handoff_id.startswith("hf-")
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff is not None
+        assert handoff.title == "User created handoff"
+
+    def test_subagent_explore_cannot_create_new_handoff(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Explore sub-agent cannot create new handoffs."""
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Explore"
+        )
+
+        result = manager.handoff_add(
+            title="Explore attempted handoff",
+            session_id="test-session-456",
+        )
+
+        # Should return None (blocked)
+        assert result is None
+
+        # No handoff should exist
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 0
+
+    def test_subagent_general_cannot_create_new_handoff(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """General sub-agent cannot create new handoffs."""
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "General"
+        )
+
+        result = manager.handoff_add(
+            title="General attempted handoff",
+            session_id="test-session-789",
+        )
+
+        assert result is None
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 0
+
+    def test_subagent_plan_cannot_create_new_handoff(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Plan sub-agent cannot create new handoffs."""
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Plan"
+        )
+
+        result = manager.handoff_add(
+            title="Plan attempted handoff",
+            session_id="test-session-abc",
+        )
+
+        assert result is None
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 0
+
+    def test_subagent_system_cannot_create_new_handoff(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """System sub-agent cannot create new handoffs."""
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "System"
+        )
+
+        result = manager.handoff_add(
+            title="System attempted handoff",
+            session_id="test-session-def",
+        )
+
+        assert result is None
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 0
+
+    def test_subagent_returns_existing_handoff_with_same_title(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Sub-agent returns existing handoff if one with same title exists."""
+        # First, create a handoff as User
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "User"
+        )
+        original_id = manager.handoff_add(
+            title="Existing work",
+            session_id="user-session",
+        )
+        assert original_id is not None
+
+        # Now try to create same handoff as Explore sub-agent
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Explore"
+        )
+        result = manager.handoff_add(
+            title="Existing work",
+            session_id="explore-session",
+        )
+
+        # Should return the existing handoff ID
+        assert result == original_id
+
+        # Still only one handoff should exist
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 1
+        assert handoffs[0].id == original_id
+
+    def test_subagent_returns_existing_case_insensitive(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Sub-agent finds existing handoff with case-insensitive title match."""
+        # Create handoff as User
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "User"
+        )
+        original_id = manager.handoff_add(
+            title="Fix Authentication Bug",
+            session_id="user-session",
+        )
+
+        # Try to create with different case as sub-agent
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "General"
+        )
+        result = manager.handoff_add(
+            title="fix authentication bug",
+            session_id="general-session",
+        )
+
+        assert result == original_id
+
+    def test_unknown_origin_can_create_handoff(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Unknown origin sessions can create handoffs (fallback to permissive)."""
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Unknown"
+        )
+
+        handoff_id = manager.handoff_add(
+            title="Unknown origin handoff",
+            session_id="test-session-unknown",
+        )
+
+        assert handoff_id is not None
+        assert handoff_id.startswith("hf-")
+
+    def test_no_session_id_can_create_handoff(
+        self, manager: "LessonsManager"
+    ):
+        """Calls without session_id can create handoffs (backward compatibility)."""
+        # No mocking needed - session_id not provided
+        handoff_id = manager.handoff_add(title="No session ID handoff")
+
+        assert handoff_id is not None
+        assert handoff_id.startswith("hf-")
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff is not None
+
+    def test_subagent_guard_logs_warning_on_block(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch, capsys
+    ):
+        """Sub-agent guard should log when blocking creation."""
+        # Enable debug logging
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
+
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Explore"
+        )
+
+        # Reset logger to pick up debug level change
+        from core.debug_logger import reset_logger
+        reset_logger()
+
+        result = manager.handoff_add(
+            title="Blocked handoff",
+            session_id="explore-session",
+        )
+
+        assert result is None
+        # Note: Logging goes to file, not stdout - we verify the behavior
+        # by checking that the handoff was not created
+
+    def test_subagent_guard_logs_warning_on_returning_existing(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Sub-agent guard should log when returning existing handoff."""
+        # Create handoff as User
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "User"
+        )
+        original_id = manager.handoff_add(
+            title="Logged existing",
+            session_id="user-session",
+        )
+
+        # Enable debug logging
+        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
+        from core.debug_logger import reset_logger
+        reset_logger()
+
+        # Try as sub-agent
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Explore"
+        )
+        result = manager.handoff_add(
+            title="Logged existing",
+            session_id="explore-session",
+        )
+
+        assert result == original_id
+
+    def test_subagent_returns_existing_stealth_handoff(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Sub-agent returns existing stealth handoff with same title."""
+        monkeypatch.setattr(manager, "_detect_session_origin", lambda s: "User")
+        original_id = manager.handoff_add(
+            title="Stealth work", stealth=True, session_id="user-session"
+        )
+
+        monkeypatch.setattr(manager, "_detect_session_origin", lambda s: "Explore")
+        result = manager.handoff_add(
+            title="Stealth work", stealth=True, session_id="explore-session"
+        )
+
+        assert result == original_id
+
+    def test_subagent_does_not_return_completed_handoff(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Sub-agent should not return completed handoffs."""
+        monkeypatch.setattr(manager, "_detect_session_origin", lambda s: "User")
+        original_id = manager.handoff_add(title="Completed work", session_id="user-session")
+        manager.handoff_update_status(original_id, "completed")
+
+        monkeypatch.setattr(manager, "_detect_session_origin", lambda s: "Explore")
+        result = manager.handoff_add(title="Completed work", session_id="explore-session")
+
+        # Should return None (blocked, no active handoff to return)
+        assert result is None
+
+
+# =============================================================================
 # Updating Handoffs
 # =============================================================================
 
