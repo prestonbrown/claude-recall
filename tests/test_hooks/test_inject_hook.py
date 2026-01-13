@@ -247,3 +247,46 @@ class TestInjectHookSessionLinking:
         assert session_data[session_id].get("handoff_id") == handoff_id, (
             f"Session should link to {handoff_id}"
         )
+
+    def test_inject_hook_no_session_link_when_no_handoffs(
+        self, tmp_path, inject_hook_path, temp_claude_home, temp_project_root
+    ):
+        """When there are no active handoffs, inject-hook should not create session links."""
+        state_dir = tmp_path / ".local" / "state" / "claude-recall"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "debug.log").write_text("")
+
+        # NO handoffs file - empty project
+
+        session_id = "orphan-session-99999"
+        input_json = json.dumps({
+            "session_id": session_id,
+            "cwd": str(temp_project_root)
+        })
+
+        env = {
+            **{k: v for k, v in os.environ.items() if k in {"PATH", "SHELL", "TERM", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE"}},
+            "HOME": str(tmp_path),
+            "CLAUDE_RECALL_STATE": str(state_dir),
+            "CLAUDE_RECALL_DEBUG": "0",
+            "PROJECT_DIR": str(temp_project_root),
+        }
+
+        result = subprocess.run(
+            ["bash", str(inject_hook_path)],
+            input=input_json,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+
+        session_handoffs_file = state_dir / "session-handoffs.json"
+
+        # Should not exist or should not contain this session
+        if session_handoffs_file.exists():
+            session_data = json.loads(session_handoffs_file.read_text())
+            assert session_id not in session_data, (
+                f"Session should NOT be linked when no handoffs exist.\n"
+                f"session-handoffs.json: {json.dumps(session_data, indent=2)}"
+            )
