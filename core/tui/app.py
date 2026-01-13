@@ -1952,6 +1952,11 @@ class RecallMonitorApp(App):
         - Second Enter on same row opens the action popup
         """
         details_log = self.query_one("#handoff-details", RichLog)
+
+        # Check if viewing same handoff (refresh) vs new selection
+        is_same_handoff = self.state.handoff.displayed_id == handoff_id
+        saved_scroll_y = details_log.scroll_y if is_same_handoff else None
+
         details_log.clear()
 
         # Clear navigation state
@@ -2205,8 +2210,17 @@ class RecallMonitorApp(App):
         else:
             details_log.write("[dim](no sessions linked)[/dim]")
 
-        # Scroll to top
-        self.call_after_refresh(details_log.scroll_home)
+        # Track displayed handoff and handle scroll position
+        self.state.handoff.displayed_id = handoff_id
+        if is_same_handoff and saved_scroll_y is not None and saved_scroll_y > 0:
+            # Restore scroll position on refresh
+            def restore_scroll() -> None:
+                details_log.scroll_y = min(saved_scroll_y, details_log.max_scroll_y)
+
+            self.call_after_refresh(restore_scroll)
+        else:
+            # Scroll to top for new selection
+            self.call_after_refresh(details_log.scroll_home)
 
     def _navigate_to_handoff(self, handoff_id: str) -> None:
         """Navigate to handoffs tab and select the given handoff.

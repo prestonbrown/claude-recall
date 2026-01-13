@@ -52,6 +52,7 @@ class HandoffState:
     current_id: Optional[str] = None
     user_selected_id: Optional[str] = None
     enter_confirmed_id: Optional[str] = None
+    displayed_id: Optional[str] = None  # Currently shown in details pane (for scroll preservation)
     data: Dict[str, Any] = field(default_factory=dict)
     sort: SortState = field(default_factory=SortState)
     filter_text: str = ""
