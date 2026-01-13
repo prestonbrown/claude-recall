@@ -441,6 +441,421 @@ class TestSessionStats:
         assert sess_stats["errors"] == 0
 
 
+class TestRolling24hFilter:
+    """Tests for the rolling 24-hour window filter in stats computation."""
+
+    def test_sessions_excludes_events_outside_24h(self, temp_log_dir: Path):
+        """Events older than 24h should not be counted in sessions_today."""
+        log_path = temp_log_dir / "debug.log"
+        events = [
+            # Recent event (23h ago) - should be included
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-recent",
+                "pid": 1,
+                "project": "proj",
+            },
+            # Old event (25h ago) - should be excluded
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-old",
+                "pid": 2,
+                "project": "proj",
+            },
+        ]
+        create_log_file(log_path, events)
+
+        reader = LogReader(log_path=log_path)
+        stats_agg = StatsAggregator(reader)
+        stats = stats_agg.compute()
+
+        assert stats.sessions_today == 1  # Only the recent event
+
+    def test_citations_excludes_events_outside_24h(self, temp_log_dir: Path):
+        """Events older than 24h should not be counted in citations_today."""
+        log_path = temp_log_dir / "debug.log"
+        events = [
+            # Recent event (23h ago) - should be included
+            {
+                "event": "citation",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-1",
+                "pid": 1,
+                "project": "proj",
+                "lesson_id": "L001",
+                "uses_before": 1,
+                "uses_after": 2,
+            },
+            # Old event (25h ago) - should be excluded
+            {
+                "event": "citation",
+                "level": "info",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-1",
+                "pid": 1,
+                "project": "proj",
+                "lesson_id": "L002",
+                "uses_before": 5,
+                "uses_after": 6,
+            },
+        ]
+        create_log_file(log_path, events)
+
+        reader = LogReader(log_path=log_path)
+        stats_agg = StatsAggregator(reader)
+        stats = stats_agg.compute()
+
+        assert stats.citations_today == 1  # Only the recent event
+
+    def test_errors_excludes_events_outside_24h(self, temp_log_dir: Path):
+        """Events older than 24h should not be counted in errors_today."""
+        log_path = temp_log_dir / "debug.log"
+        events = [
+            # Recent event (23h ago) - should be included
+            {
+                "event": "error",
+                "level": "error",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-1",
+                "pid": 1,
+                "project": "proj",
+                "op": "parse_lesson",
+                "err": "Recent error",
+            },
+            # Old event (25h ago) - should be excluded
+            {
+                "event": "error",
+                "level": "error",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-1",
+                "pid": 1,
+                "project": "proj",
+                "op": "cite",
+                "err": "Old error",
+            },
+        ]
+        create_log_file(log_path, events)
+
+        reader = LogReader(log_path=log_path)
+        stats_agg = StatsAggregator(reader)
+        stats = stats_agg.compute()
+
+        assert stats.errors_today == 1  # Only the recent event
+
+    def test_hook_timing_excludes_events_outside_24h(self, temp_log_dir: Path):
+        """Events older than 24h should not be included in hook timing stats."""
+        log_path = temp_log_dir / "debug.log"
+        events = [
+            # Recent event (23h ago) - should be included (100ms)
+            {
+                "event": "hook_end",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-1",
+                "pid": 1,
+                "project": "proj",
+                "hook": "SessionStart",
+                "total_ms": 100.0,
+            },
+            # Old event (25h ago) - should be excluded (10000ms)
+            {
+                "event": "hook_end",
+                "level": "info",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-1",
+                "pid": 1,
+                "project": "proj",
+                "hook": "SessionStart",
+                "total_ms": 10000.0,
+            },
+        ]
+        create_log_file(log_path, events)
+
+        reader = LogReader(log_path=log_path)
+        stats_agg = StatsAggregator(reader)
+        stats = stats_agg.compute()
+
+        # avg_hook_ms should only reflect the recent event (100ms)
+        # If the old event were included, avg would be ~5050ms
+        assert stats.avg_hook_ms == 100.0
+        assert stats.max_hook_ms == 100.0
+
+    def test_events_by_type_excludes_events_outside_24h(self, temp_log_dir: Path):
+        """events_by_type only counts events within the 24h rolling window."""
+        log_path = temp_log_dir / "debug.log"
+        events = [
+            # Recent event (23h ago) - should be included
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-recent",
+                "pid": 1,
+                "project": "proj",
+            },
+            # Old event (25h ago) - should be excluded
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-old",
+                "pid": 2,
+                "project": "proj",
+            },
+            # Recent citation
+            {
+                "event": "citation",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-recent",
+                "pid": 1,
+                "project": "proj",
+                "lesson_id": "L001",
+            },
+        ]
+        create_log_file(log_path, events)
+
+        reader = LogReader(log_path=log_path)
+        stats_agg = StatsAggregator(reader)
+        stats = stats_agg.compute()
+
+        # events_by_type only counts recent events (filtered to 24h window)
+        assert stats.events_by_type["session_start"] == 1  # Only recent
+        assert stats.events_by_type["citation"] == 1
+
+    def test_events_by_project_excludes_events_outside_24h(self, temp_log_dir: Path):
+        """events_by_project only counts events within the 24h rolling window."""
+        log_path = temp_log_dir / "debug.log"
+        events = [
+            # Recent event for proj-a (23h ago) - should be included
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-1",
+                "pid": 1,
+                "project": "proj-a",
+            },
+            # Old event for proj-a (25h ago) - should be excluded
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-2",
+                "pid": 2,
+                "project": "proj-a",
+            },
+            # Recent event for proj-b (23h ago)
+            {
+                "event": "citation",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-3",
+                "pid": 3,
+                "project": "proj-b",
+                "lesson_id": "L001",
+            },
+        ]
+        create_log_file(log_path, events)
+
+        reader = LogReader(log_path=log_path)
+        stats_agg = StatsAggregator(reader)
+        stats = stats_agg.compute()
+
+        # events_by_project only counts recent events (filtered to 24h window)
+        assert stats.events_by_project["proj-a"] == 1  # Only recent
+        assert stats.events_by_project["proj-b"] == 1
+
+    def test_all_stats_consistent_24h_boundary(self, temp_log_dir: Path):
+        """Comprehensive test verifying ALL stats handle 24h boundary consistently.
+
+        Events at 23h should be included in 'today' stats.
+        Events at 25h should be excluded from 'today' stats.
+        """
+        log_path = temp_log_dir / "debug.log"
+        events = [
+            # === RECENT EVENTS (23h ago) - should be included in *_today stats ===
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-recent",
+                "pid": 1,
+                "project": "proj-recent",
+            },
+            {
+                "event": "citation",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-recent",
+                "pid": 1,
+                "project": "proj-recent",
+                "lesson_id": "L001",
+                "uses_before": 1,
+                "uses_after": 2,
+            },
+            {
+                "event": "error",
+                "level": "error",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-recent",
+                "pid": 1,
+                "project": "proj-recent",
+                "op": "test",
+                "err": "Recent error",
+            },
+            {
+                "event": "hook_end",
+                "level": "info",
+                "timestamp": make_timestamp(23),
+                "session_id": "sess-recent",
+                "pid": 1,
+                "project": "proj-recent",
+                "hook": "SessionStart",
+                "total_ms": 50.0,
+            },
+            # === OLD EVENTS (25h ago) - should be excluded from *_today stats ===
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-old",
+                "pid": 2,
+                "project": "proj-old",
+            },
+            {
+                "event": "citation",
+                "level": "info",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-old",
+                "pid": 2,
+                "project": "proj-old",
+                "lesson_id": "L002",
+                "uses_before": 5,
+                "uses_after": 6,
+            },
+            {
+                "event": "error",
+                "level": "error",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-old",
+                "pid": 2,
+                "project": "proj-old",
+                "op": "old_op",
+                "err": "Old error",
+            },
+            {
+                "event": "hook_end",
+                "level": "info",
+                "timestamp": make_timestamp(25),
+                "session_id": "sess-old",
+                "pid": 2,
+                "project": "proj-old",
+                "hook": "SessionStart",
+                "total_ms": 9999.0,
+            },
+        ]
+        create_log_file(log_path, events)
+
+        reader = LogReader(log_path=log_path)
+        stats_agg = StatsAggregator(reader)
+        stats = stats_agg.compute()
+
+        # === Verify *_today stats only include recent events ===
+        assert stats.sessions_today == 1, "sessions_today should only count recent events"
+        assert stats.citations_today == 1, "citations_today should only count recent events"
+        assert stats.errors_today == 1, "errors_today should only count recent events"
+
+        # === Verify timing stats only include recent events ===
+        assert stats.avg_hook_ms == 50.0, "avg_hook_ms should only include recent timing"
+        assert stats.max_hook_ms == 50.0, "max_hook_ms should only include recent timing"
+        assert stats.p95_hook_ms == 50.0, "p95_hook_ms should only include recent timing"
+
+        # === Verify hook_timings dict only includes recent events ===
+        assert "SessionStart" in stats.hook_timings
+        assert len(stats.hook_timings["SessionStart"]) == 1, "hook_timings should only include recent"
+        assert stats.hook_timings["SessionStart"][0] == 50.0
+
+        # === Verify events_by_type only counts recent events (filtered to 24h) ===
+        assert stats.events_by_type["session_start"] == 1, "events_by_type should only count recent events"
+        assert stats.events_by_type["citation"] == 1, "events_by_type should only count recent events"
+        assert stats.events_by_type["error"] == 1, "events_by_type should only count recent events"
+        assert stats.events_by_type["hook_end"] == 1, "events_by_type should only count recent events"
+
+        # === Verify events_by_project only counts recent events (filtered to 24h) ===
+        assert stats.events_by_project["proj-recent"] == 4, "events_by_project should only count recent events"
+        assert "proj-old" not in stats.events_by_project, "events_by_project should exclude old events"
+
+        # === Verify total log line count ===
+        assert stats.log_line_count == 8, "log_line_count should count all events"
+
+    def test_boundary_exactly_24h_is_included(self, temp_log_dir: Path):
+        """Event at exactly 24h ago should be included (>= comparison)."""
+        log_path = temp_log_dir / "debug.log"
+        events = [
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(23, 59),  # Just under 24h ago
+                "session_id": "sess-boundary",
+                "pid": 1,
+                "project": "proj",
+            },
+        ]
+        create_log_file(log_path, events)
+
+        reader = LogReader(log_path=log_path)
+        stats_agg = StatsAggregator(reader)
+        stats = stats_agg.compute()
+
+        assert stats.sessions_today == 1  # Should be included with >=
+
+    def test_events_without_timestamp_excluded(self, temp_log_dir: Path):
+        """Events with missing or malformed timestamps are excluded from 24h stats."""
+        log_path = temp_log_dir / "debug.log"
+        events = [
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": "",  # Empty timestamp
+                "session_id": "sess-no-ts",
+                "pid": 1,
+                "project": "proj",
+            },
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": "invalid-timestamp",  # Malformed
+                "session_id": "sess-bad-ts",
+                "pid": 2,
+                "project": "proj",
+            },
+            {
+                "event": "session_start",
+                "level": "info",
+                "timestamp": make_timestamp(0),  # Valid - now
+                "session_id": "sess-good",
+                "pid": 3,
+                "project": "proj",
+            },
+        ]
+        create_log_file(log_path, events)
+
+        reader = LogReader(log_path=log_path)
+        stats_agg = StatsAggregator(reader)
+        stats = stats_agg.compute()
+
+        # Only the valid timestamp event counts in 24h stats
+        assert stats.sessions_today == 1
+        # But all events are in log_line_count (total buffer)
+        assert stats.log_line_count == 3
+
+
 class TestProjectStats:
     """Tests for project-specific statistics."""
 
