@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# recall-watch - Launch the Claude Recall debug TUI viewer
+# claude-recall - Claude Recall CLI and TUI
 #
 # Usage:
-#   recall-watch              # Full TUI
-#   recall-watch --summary    # One-shot text summary
-#   recall-watch --tail       # Colorized log tail
-#   recall-watch -p project   # Filter to specific project
+#   claude-recall              # Launch TUI (default)
+#   claude-recall watch        # Launch TUI explicitly
+#   claude-recall inject 5     # Inject top 5 lessons
+#   claude-recall --summary    # One-shot text summary
+#   claude-recall --tail       # Colorized log tail
+#   claude-recall -p project   # Filter to specific project
 
 set -euo pipefail
 

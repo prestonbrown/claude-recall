@@ -210,19 +210,25 @@ install_core() {
         log_success "Installed TUI module to $CLAUDE_RECALL_BASE/core/tui/"
     fi
 
-    # Install recall-watch command
-    if [[ -f "$SCRIPT_DIR/bin/recall-watch" ]]; then
+    # Install claude-recall command
+    if [[ -f "$SCRIPT_DIR/bin/claude-recall" ]]; then
         mkdir -p "$HOME/.local/bin"
         # Skip if source and dest are the same (dev environment)
-        if [[ ! "$SCRIPT_DIR/bin/recall-watch" -ef "$HOME/.local/bin/recall-watch" ]]; then
-            cp "$SCRIPT_DIR/bin/recall-watch" "$HOME/.local/bin/"
+        if [[ ! "$SCRIPT_DIR/bin/claude-recall" -ef "$HOME/.local/bin/claude-recall" ]]; then
+            cp "$SCRIPT_DIR/bin/claude-recall" "$HOME/.local/bin/"
         fi
-        chmod +x "$HOME/.local/bin/recall-watch"
-        log_success "Installed recall-watch to ~/.local/bin/"
+        chmod +x "$HOME/.local/bin/claude-recall"
+        log_success "Installed claude-recall to ~/.local/bin/"
+
+        # Clean up old recall-watch if present
+        if [[ -f "$HOME/.local/bin/recall-watch" ]]; then
+            rm -f "$HOME/.local/bin/recall-watch"
+            log_info "Removed old recall-watch (renamed to claude-recall)"
+        fi
 
         # Check if ~/.local/bin is in PATH
         if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-            log_warn "Add ~/.local/bin to your PATH to use 'recall-watch' command"
+            log_warn "Add ~/.local/bin to your PATH to use 'claude-recall' command"
         fi
     fi
 
@@ -565,7 +571,11 @@ uninstall() {
     rm -f "$HOME/.config/opencode/plugin/lesson-reminder.ts"
     rm -f "$HOME/.config/opencode/command/lessons.md"
 
-    # Remove recall-watch command
+    # Remove claude-recall command (and old recall-watch)
+    if [[ -f "$HOME/.local/bin/claude-recall" ]]; then
+        rm -f "$HOME/.local/bin/claude-recall"
+        log_info "Removed claude-recall from ~/.local/bin/"
+    fi
     if [[ -f "$HOME/.local/bin/recall-watch" ]]; then
         rm -f "$HOME/.local/bin/recall-watch"
         log_info "Removed recall-watch from ~/.local/bin/"

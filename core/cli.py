@@ -348,8 +348,12 @@ def main():
     args = parser.parse_args()
 
     if not args.command:
-        parser.print_help()
-        sys.exit(1)
+        # Default to TUI (watch) when no subcommand given
+        args.command = "watch"
+        args.project = None
+        args.summary = False
+        args.tail = False
+        args.lines = 50
 
     # Find project root - check env var first, then search for .git
     project_root_env = os.environ.get("PROJECT_DIR")
