@@ -7759,3 +7759,193 @@ class TestSyncTodosCompletedHandoff:
         # Verify no new active handoffs were created
         active = manager.handoff_list(include_completed=False)
         assert len(active) == 0
+
+
+# =============================================================================
+# Lesson Extraction from Handoffs
+# =============================================================================
+
+
+class TestExtractLessonsFromHandoff:
+    """Tests for extracting lesson suggestions from completed handoffs."""
+
+    def test_extract_no_tried_returns_empty(self, manager: "LessonsManager"):
+        """Handoff with no tried steps should return empty suggestions."""
+        handoff_id = manager.handoff_add(title="Empty handoff")
+        handoff = manager.handoff_get(handoff_id)
+
+        suggestions = manager.extract_lessons_from_handoff(handoff)
+
+        assert suggestions == []
+
+    def test_extract_single_success_no_pattern(self, manager: "LessonsManager"):
+        """Single success without failures should not generate gotcha suggestions."""
+        handoff_id = manager.handoff_add(title="Simple fix")
+        manager.handoff_add_tried(handoff_id, "success", "Applied straightforward fix")
+        handoff = manager.handoff_get(handoff_id)
+
+        suggestions = manager.extract_lessons_from_handoff(handoff)
+
+        # Single success doesn't meet pattern thresholds
+        assert len(suggestions) == 0
+
+    def test_extract_failures_followed_by_success_blocker(self, manager: "LessonsManager"):
+        """Failures followed by success should suggest blocker lesson."""
+        handoff_id = manager.handoff_add(title="Debugging session")
+        manager.handoff_add_tried(handoff_id, "fail", "Tried increasing buffer size")
+        manager.handoff_add_tried(handoff_id, "fail", "Tried async approach")
+        manager.handoff_add_tried(handoff_id, "success", "Fixed by adding proper error handling")
+        handoff = manager.handoff_get(handoff_id)
+
+        suggestions = manager.extract_lessons_from_handoff(handoff)
+
+        # Should suggest a gotcha lesson about the failed approach
+        gotcha_suggestions = [s for s in suggestions if s.category == "gotcha"]
+        assert len(gotcha_suggestions) >= 1
+        assert any("blocker" in s.source for s in gotcha_suggestions)
+
+    def test_extract_repeated_failures_same_theme(self, manager: "LessonsManager"):
+        """Multiple failures with similar theme should suggest gotcha lesson."""
+        handoff_id = manager.handoff_add(title="Cache debugging")
+        manager.handoff_add_tried(handoff_id, "fail", "Cache invalidation failed")
+        manager.handoff_add_tried(handoff_id, "fail", "Cache timeout issue persists")
+        handoff = manager.handoff_get(handoff_id)
+
+        suggestions = manager.extract_lessons_from_handoff(handoff)
+
+        # Should suggest avoiding cache-related approaches
+        gotcha_suggestions = [s for s in suggestions if s.category == "gotcha"]
+        assert len(gotcha_suggestions) >= 1
+        assert any("failure_pattern" in s.source for s in gotcha_suggestions)
+
+    def test_extract_multiple_successes_pattern(self, manager: "LessonsManager"):
+        """Three or more similar successes should suggest pattern lesson."""
+        handoff_id = manager.handoff_add(title="Test fixes")
+        manager.handoff_add_tried(handoff_id, "success", "Added test for edge case A")
+        manager.handoff_add_tried(handoff_id, "success", "Added test for edge case B")
+        manager.handoff_add_tried(handoff_id, "success", "Added test for edge case C")
+        handoff = manager.handoff_get(handoff_id)
+
+        suggestions = manager.extract_lessons_from_handoff(handoff)
+
+        # Should suggest a pattern lesson (3+ similar successes)
+        pattern_suggestions = [s for s in suggestions if s.category == "pattern"]
+        assert len(pattern_suggestions) >= 1
+        assert any("success_pattern" in s.source for s in pattern_suggestions)
+
+    def test_extract_with_handoff_id_string(self, manager: "LessonsManager"):
+        """Should accept handoff ID string instead of Handoff object."""
+        handoff_id = manager.handoff_add(title="ID lookup test")
+        manager.handoff_add_tried(handoff_id, "fail", "First failed attempt")
+        manager.handoff_add_tried(handoff_id, "success", "Working solution")
+
+        # Pass ID string instead of Handoff object
+        suggestions = manager.extract_lessons_from_handoff(handoff_id)
+
+        assert len(suggestions) >= 1
+
+    def test_extract_invalid_id_returns_empty(self, manager: "LessonsManager"):
+        """Invalid handoff ID should return empty list."""
+        suggestions = manager.extract_lessons_from_handoff("nonexistent-id")
+
+        assert suggestions == []
+
+    def test_extract_includes_confidence_levels(self, manager: "LessonsManager"):
+        """Suggestions should include confidence levels."""
+        handoff_id = manager.handoff_add(title="Confidence test")
+        manager.handoff_add_tried(handoff_id, "fail", "First try")
+        manager.handoff_add_tried(handoff_id, "success", "Second try worked")
+        handoff = manager.handoff_get(handoff_id)
+
+        suggestions = manager.extract_lessons_from_handoff(handoff)
+
+        for suggestion in suggestions:
+            assert suggestion.confidence in ("low", "medium", "high")
+
+    def test_complete_handoff_includes_suggestions(self, manager: "LessonsManager"):
+        """Completing a handoff should include lesson suggestions in result."""
+        handoff_id = manager.handoff_add(title="Complete with suggestions")
+        manager.handoff_add_tried(handoff_id, "fail", "Broken approach")
+        manager.handoff_add_tried(handoff_id, "success", "Working approach")
+
+        result = manager.handoff_complete(handoff_id)
+
+        assert hasattr(result, "suggested_lessons")
+        assert isinstance(result.suggested_lessons, list)
+        # Should have at least one suggestion from the fail-then-success pattern
+        assert len(result.suggested_lessons) >= 1
+
+    def test_batch_complete_includes_suggestions(self, manager: "LessonsManager"):
+        """Batch processing complete should include suggestions in result."""
+        handoff_id = manager.handoff_add(title="Batch complete test")
+        manager.handoff_add_tried(handoff_id, "fail", "Failed first")
+        manager.handoff_add_tried(handoff_id, "success", "Then succeeded")
+
+        operations = [{"op": "complete", "id": handoff_id}]
+        result = manager.handoff_batch_process(operations)
+
+        assert result["results"][0]["ok"] is True
+        assert "suggested_lessons" in result["results"][0]
+        assert len(result["results"][0]["suggested_lessons"]) >= 1
+
+
+class TestLessonSuggestionDataclass:
+    """Tests for the LessonSuggestion dataclass."""
+
+    def test_lesson_suggestion_defaults(self):
+        """LessonSuggestion should have correct default values."""
+        from core.models import LessonSuggestion
+
+        suggestion = LessonSuggestion(
+            category="pattern",
+            title="Test title",
+            content="Test content",
+        )
+
+        assert suggestion.source == "manual"
+        assert suggestion.confidence == "medium"
+
+    def test_lesson_suggestion_all_fields(self):
+        """LessonSuggestion should accept all field values."""
+        from core.models import LessonSuggestion
+
+        suggestion = LessonSuggestion(
+            category="gotcha",
+            title="Avoid X",
+            content="Always check Y before X",
+            source="blocker",
+            confidence="high",
+        )
+
+        assert suggestion.category == "gotcha"
+        assert suggestion.title == "Avoid X"
+        assert suggestion.content == "Always check Y before X"
+        assert suggestion.source == "blocker"
+        assert suggestion.confidence == "high"
+
+
+class TestHandoffCompleteResultWithSuggestions:
+    """Tests for HandoffCompleteResult with suggested_lessons field."""
+
+    def test_format_with_suggestions(self, manager: "LessonsManager"):
+        """format() should include suggestions when present."""
+        handoff_id = manager.handoff_add(title="Format test")
+        manager.handoff_add_tried(handoff_id, "fail", "Failed approach")
+        manager.handoff_add_tried(handoff_id, "success", "Working approach")
+
+        result = manager.handoff_complete(handoff_id)
+        formatted = result.format()
+
+        # Should mention suggestions
+        assert "Suggested lessons" in formatted or "suggestion" in formatted.lower()
+
+    def test_format_without_suggestions(self, manager: "LessonsManager"):
+        """format() should work without suggestions."""
+        handoff_id = manager.handoff_add(title="No suggestions")
+
+        result = manager.handoff_complete(handoff_id)
+        formatted = result.format()
+
+        # Should still produce valid output
+        assert "Completed" in formatted
+        assert handoff_id in formatted

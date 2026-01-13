@@ -173,6 +173,17 @@ def main():
     handoff_complete_parser = handoff_subparsers.add_parser("complete", help="Mark handoff as completed")
     handoff_complete_parser.add_argument("id", help="Handoff ID")
 
+    # handoff extract-lessons
+    extract_lessons_parser = handoff_subparsers.add_parser(
+        "extract-lessons",
+        help="Extract lesson suggestions from a handoff"
+    )
+    extract_lessons_parser.add_argument("id", help="Handoff ID")
+    extract_lessons_parser.add_argument(
+        "--json", action="store_true", dest="output_json",
+        help="Output as JSON instead of formatted text"
+    )
+
     # handoff archive
     handoff_archive_parser = handoff_subparsers.add_parser("archive", help="Archive a handoff")
     handoff_archive_parser.add_argument("id", help="Handoff ID")
@@ -475,6 +486,47 @@ def main():
                 result = manager.handoff_complete(args.id)
                 print(f"Completed {args.id}")
                 print("\n" + result.extraction_prompt)
+                if result.suggested_lessons:
+                    print("\n" + "=" * 60)
+                    print("LESSON SUGGESTIONS (extract with 'handoff extract-lessons'):")
+                    for i, suggestion in enumerate(result.suggested_lessons, 1):
+                        conf_indicator = {"low": "-", "medium": "", "high": "+"}.get(suggestion.confidence, "?")
+                        print(f"  {i}. [{suggestion.category}]{conf_indicator} {suggestion.title}")
+                        print(f"     {suggestion.content}")
+                    print("=" * 60)
+
+            elif args.handoff_command == "extract-lessons":
+                handoff = manager.handoff_get(args.id)
+                if handoff is None:
+                    print(f"Error: Handoff {args.id} not found", file=sys.stderr)
+                    sys.exit(1)
+                suggestions = manager.extract_lessons_from_handoff(handoff)
+                if getattr(args, 'output_json', False):
+                    # Output as JSON for programmatic use
+                    import json as json_out
+                    json_data = [
+                        {
+                            "category": s.category,
+                            "title": s.title,
+                            "content": s.content,
+                            "source": s.source,
+                            "confidence": s.confidence,
+                        }
+                        for s in suggestions
+                    ]
+                    print(json_out.dumps(json_data, indent=2))
+                else:
+                    if not suggestions:
+                        print("(no lesson suggestions found)")
+                    else:
+                        print(f"Lesson suggestions for [{args.id}] {handoff.title}:")
+                        print()
+                        for i, suggestion in enumerate(suggestions, 1):
+                            conf_indicator = {"low": "-", "medium": "", "high": "+"}.get(suggestion.confidence, "?")
+                            print(f"{i}. [{suggestion.category}]{conf_indicator} {suggestion.title}")
+                            print(f"   {suggestion.content}")
+                            print(f"   (source: {suggestion.source})")
+                            print()
 
             elif args.handoff_command == "archive":
                 manager.handoff_archive(args.id)

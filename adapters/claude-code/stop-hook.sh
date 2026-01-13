@@ -294,6 +294,23 @@ process_handoffs() {
     }
 
     (( processed_count > 0 )) && echo "[handoffs] $processed_count handoff command(s) processed" >&2
+
+    # Output lesson suggestions for any completed handoffs
+    local suggestions
+    suggestions=$(echo "$result" | jq -r '
+        .results[]? |
+        select(.ok == true and .suggested_lessons != null and (.suggested_lessons | length) > 0) |
+        "LESSON SUGGESTION from handoff \(.id):",
+        (.suggested_lessons[] | "  [\(.category)] \(.title) - \(.content)")
+    ' 2>/dev/null || true)
+
+    [[ -n "$suggestions" ]] && {
+        echo "" >&2
+        echo "============================================================" >&2
+        echo "$suggestions" >&2
+        echo "============================================================" >&2
+        echo "To add a lesson: LESSON: category: title - content" >&2
+    }
 }
 
 # Capture TodoWrite tool calls and sync to handoffs

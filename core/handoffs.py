@@ -32,6 +32,7 @@ try:
         Handoff,
         HandoffContext,
         HandoffCompleteResult,
+        LessonSuggestion,
         ValidationResult,
         HandoffResumeResult,
         # ============================================================
@@ -63,6 +64,7 @@ except ImportError:
         Handoff,
         HandoffContext,
         HandoffCompleteResult,
+        LessonSuggestion,
         ValidationResult,
         HandoffResumeResult,
         # ============================================================
@@ -1486,10 +1488,152 @@ Consider extracting lessons about:
             duration_days=duration_days,
         )
 
+        # Extract suggested lessons from the handoff
+        suggested_lessons = self.extract_lessons_from_handoff(target)
+
         return HandoffCompleteResult(
             handoff=target,
             extraction_prompt=extraction_prompt,
+            suggested_lessons=suggested_lessons,
         )
+
+    def extract_lessons_from_handoff(self, handoff: Handoff) -> List[LessonSuggestion]:
+        """
+        Analyze a handoff's tried steps and extract potential lessons.
+
+        This looks for:
+        1. Success patterns - multiple similar successes indicate a pattern
+        2. Blockers with resolutions - failures followed by success
+        3. Repeated failures - gotchas to avoid
+
+        Args:
+            handoff: The handoff to analyze (can be ID string or Handoff object)
+
+        Returns:
+            List of LessonSuggestion objects with suggested lessons to extract
+        """
+        # Handle both ID string and Handoff object
+        if isinstance(handoff, str):
+            handoff_obj = self.handoff_get(handoff)
+            if handoff_obj is None:
+                return []
+            handoff = handoff_obj
+
+        suggestions: List[LessonSuggestion] = []
+        tried = handoff.tried
+
+        if not tried:
+            return suggestions
+
+        # Count outcomes
+        successes = [t for t in tried if t.outcome == "success"]
+        failures = [t for t in tried if t.outcome == "fail"]
+
+        # Pattern 1: Success patterns (3+ successes with similar descriptions)
+        if len(successes) >= 3:
+            # Look for common themes in success descriptions
+            success_themes = self._find_common_themes(successes)
+            for theme, steps in success_themes.items():
+                if len(steps) >= 3:
+                    # This is a reliable pattern
+                    sample_desc = steps[0].description
+                    suggestions.append(LessonSuggestion(
+                        category="pattern",
+                        title=f"{theme.title()} pattern works reliably",
+                        content=f"Successfully used {len(steps)} times: {sample_desc[:100]}",
+                        source="success_pattern",
+                        confidence="high",
+                    ))
+
+        # Pattern 2: Single decisive success after failures (blocker resolved)
+        if len(failures) >= 1 and len(successes) >= 1:
+            # Look at the sequence - if failures followed by success, we learned something
+            last_success_idx = None
+            for i, step in enumerate(tried):
+                if step.outcome == "success":
+                    last_success_idx = i
+
+            if last_success_idx is not None and last_success_idx > 0:
+                # Check if there were failures before this success
+                prior_failures = [t for t in tried[:last_success_idx] if t.outcome == "fail"]
+                if prior_failures:
+                    success_step = tried[last_success_idx]
+                    last_failure = prior_failures[-1]
+                    fail_title = last_failure.description[:50]
+                    suggestions.append(LessonSuggestion(
+                        category="gotcha",
+                        title=f"Avoid: {fail_title}" + ("..." if len(last_failure.description) > 50 else ""),
+                        content=f"Failed approach that was replaced by: {success_step.description[:100]}",
+                        source="blocker",
+                        confidence="medium",
+                    ))
+
+        # Pattern 3: Repeated failures (things to avoid)
+        if len(failures) >= 2:
+            # Look for common themes in failures
+            failure_themes = self._find_common_themes(failures)
+            for theme, steps in failure_themes.items():
+                if len(steps) >= 2:
+                    sample_desc = steps[0].description
+                    suggestions.append(LessonSuggestion(
+                        category="gotcha",
+                        title=f"Avoid {theme} approaches",
+                        content=f"Failed {len(steps)} times with similar approach: {sample_desc[:100]}",
+                        source="failure_pattern",
+                        confidence="medium",
+                    ))
+
+        # Pattern 4: If we have context learnings, suggest those as lessons
+        if handoff.handoff and handoff.handoff.learnings:
+            for learning in handoff.handoff.learnings[:3]:  # Cap at 3
+                suggestions.append(LessonSuggestion(
+                    category="pattern",
+                    title=learning[:50] + ("..." if len(learning) > 50 else ""),
+                    content=learning,
+                    source="context_learning",
+                    confidence="high",
+                ))
+
+        return suggestions
+
+    def _find_common_themes(self, steps: List[TriedStep]) -> Dict[str, List[TriedStep]]:
+        """
+        Group tried steps by common themes in their descriptions.
+
+        Args:
+            steps: List of TriedStep objects
+
+        Returns:
+            Dict mapping theme names to list of steps with that theme
+        """
+        # Simple keyword-based theme detection
+        theme_keywords = {
+            "guard": ["guard", "destructor", "cleanup", "protect"],
+            "retry": ["retry", "attempt", "again", "redo"],
+            "cache": ["cache", "memoize", "store", "save"],
+            "async": ["async", "await", "promise", "concurrent"],
+            "test": ["test", "verify", "check", "validate"],
+            "refactor": ["refactor", "restructure", "reorganize", "move"],
+            "fix": ["fix", "repair", "patch", "correct"],
+            "config": ["config", "setting", "option", "parameter"],
+            "api": ["api", "endpoint", "request", "response"],
+            "ui": ["ui", "button", "modal", "display", "render"],
+        }
+
+        themes: Dict[str, List[TriedStep]] = defaultdict(list)
+
+        for step in steps:
+            desc_lower = step.description.lower()
+            matched = False
+            for theme, keywords in theme_keywords.items():
+                if any(kw in desc_lower for kw in keywords):
+                    themes[theme].append(step)
+                    matched = True
+                    break
+            if not matched:
+                themes["general"].append(step)
+
+        return dict(themes)
 
     def handoff_archive(self, handoff_id: str) -> None:
         """
@@ -2872,7 +3016,23 @@ Consider extracting lessons about:
                             handoff.status = "completed"
                             handoff.updated = today
                             modified = True
-                            op_result = {"ok": True, "id": handoff_id}
+                            # Extract lesson suggestions for completed handoff
+                            suggestions = self.extract_lessons_from_handoff(handoff)
+                            suggestion_data = [
+                                {
+                                    "category": s.category,
+                                    "title": s.title,
+                                    "content": s.content,
+                                    "source": s.source,
+                                    "confidence": s.confidence,
+                                }
+                                for s in suggestions
+                            ]
+                            op_result = {
+                                "ok": True,
+                                "id": handoff_id,
+                                "suggested_lessons": suggestion_data,
+                            }
 
                     else:
                         op_result = {"ok": False, "error": f"Unknown operation: {op_type}"}

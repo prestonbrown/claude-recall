@@ -363,10 +363,29 @@ Approach = Handoff
 
 
 @dataclass
+class LessonSuggestion:
+    """A suggested lesson to extract from a completed handoff.
+
+    Attributes:
+        category: Lesson category (pattern, gotcha, decision, correction, preference)
+        title: Suggested lesson title
+        content: Suggested lesson content
+        source: Where this suggestion came from (success_pattern, blocker, etc.)
+        confidence: How confident we are in this suggestion (low, medium, high)
+    """
+    category: str
+    title: str
+    content: str
+    source: str = "manual"  # success_pattern|blocker|failure_pattern|manual
+    confidence: str = "medium"  # low|medium|high
+
+
+@dataclass
 class HandoffCompleteResult(FormattableResult):
     """Result of completing a handoff."""
     handoff: Handoff
     extraction_prompt: str
+    suggested_lessons: List[LessonSuggestion] = field(default_factory=list)
 
     # Backward compatibility property
     @property
@@ -382,6 +401,15 @@ class HandoffCompleteResult(FormattableResult):
             "Extraction prompt for lessons:",
             self.extraction_prompt
         ]
+
+        if self.suggested_lessons:
+            lines.append("")
+            lines.append("Suggested lessons to extract:")
+            for i, suggestion in enumerate(self.suggested_lessons, 1):
+                conf_indicator = {"low": "-", "medium": "", "high": "+"}.get(suggestion.confidence, "?")
+                lines.append(f"  {i}. [{suggestion.category}]{conf_indicator} {suggestion.title}")
+                lines.append(f"     {suggestion.content}")
+
         return "\n".join(lines)
 
 
