@@ -149,7 +149,7 @@ class StateReader:
         r"\*\*Updated\*\*:\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)"
     )
     HANDOFF_DESCRIPTION_PATTERN = re.compile(r"^\*\*Description\*\*:\s*(.+)$")
-    HANDOFF_TRIED_HEADER_PATTERN = re.compile(r"^\*\*Tried\*\*\s*\(\d+\s*steps?\):")
+    HANDOFF_TRIED_HEADER_PATTERN = re.compile(r"^\*\*Tried\*\*\s*(?:\(\d+\s*steps?\))?:")
     HANDOFF_TRIED_STEP_PATTERN = re.compile(
         r"^\s*\d+\.\s*\[(success|fail|partial)\]\s*(.+)$"
     )
@@ -467,9 +467,14 @@ class StateReader:
                     in_next_section = True
                     in_context_section = False
                     # Capture inline text if present (e.g., "**Next**: Do this thing")
+                    # May contain semicolon-separated items from TodoWrite sync
                     inline_text = next_header_match.group(1).strip()
                     if inline_text and inline_text not in ("-", "--", "---"):
-                        next_steps.append(inline_text)
+                        # Split by semicolon and filter empty segments
+                        for item in inline_text.split(";"):
+                            item = item.strip()
+                            if item and item not in ("-", "--", "---"):
+                                next_steps.append(item)
                     scan_idx += 1
                     continue
 
