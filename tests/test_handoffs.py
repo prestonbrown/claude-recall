@@ -2199,6 +2199,25 @@ class TestHandoffInjectWithCompleted:
         assert "Old feature" in output
         assert "This summary should not appear" not in output
 
+    def test_handoff_inject_completed_capped_at_3x_max_count(
+        self, manager: "LessonsManager"
+    ):
+        """Completed handoffs should be capped at 3x max_count even if all are recent."""
+        # Create 15 completed handoffs (all completed today so they'd normally all show)
+        for i in range(15):
+            handoff_id = manager.handoff_add(title=f"Completed task {i}")
+            manager.handoff_update_status(handoff_id, "completed")
+
+        # With max_completed=3, the hard cap is 3 * 3 = 9
+        output = manager.handoff_inject(max_completed=3)
+
+        # Count how many completed tasks appear in output
+        # Don't assume which specific ones - just verify the cap is enforced
+        completed_count = sum(1 for i in range(15) if f"Completed task {i}" in output)
+
+        # Should show exactly 9 (3x max_count cap)
+        assert completed_count == 9, f"Expected 9 completed handoffs (3x max_count), got {completed_count}"
+
 
 class TestHandoffAutoArchive:
     """Tests for auto-archiving after lesson extraction."""

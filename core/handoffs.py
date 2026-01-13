@@ -26,6 +26,7 @@ try:
         HANDOFF_STALE_DAYS,
         HANDOFF_COMPLETED_ARCHIVE_DAYS,
         HANDOFF_ORPHAN_DAYS,
+        HANDOFF_COMPLETED_CAP_MULTIPLIER,
         # Dataclasses
         TriedStep,
         Handoff,
@@ -56,6 +57,7 @@ except ImportError:
         HANDOFF_STALE_DAYS,
         HANDOFF_COMPLETED_ARCHIVE_DAYS,
         HANDOFF_ORPHAN_DAYS,
+        HANDOFF_COMPLETED_CAP_MULTIPLIER,
         # Dataclasses
         TriedStep,
         Handoff,
@@ -1831,7 +1833,7 @@ Consider extracting lessons about:
 
         # Apply hybrid logic: keep if in top N OR recent enough
         # Cap total to prevent explosion when many handoffs complete in a short time
-        max_total = max_count * 3  # Hard cap at 3x max_count (e.g., 9 if max_count=3)
+        max_total = max_count * HANDOFF_COMPLETED_CAP_MULTIPLIER
         visible = []
         for i, handoff in enumerate(completed):
             # In top N by recency

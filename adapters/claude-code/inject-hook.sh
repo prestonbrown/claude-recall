@@ -21,9 +21,9 @@ setup_env
 DECAY_INTERVAL_DAYS=$(get_setting "decayIntervalDays" 7)
 DECAY_INTERVAL=$((DECAY_INTERVAL_DAYS * 86400))  # Convert to seconds
 
-# Get topLessonsToShow setting (default: 3)
+# Get topLessonsToShow setting (default: 5)
 get_top_lessons_count() {
-    get_setting "topLessonsToShow" 3
+    get_setting "topLessonsToShow" 5
 }
 
 # Run decay if it's been more than DECAY_INTERVAL since last run
@@ -51,7 +51,7 @@ run_decay_if_due() {
 }
 
 # Generate lessons context using Python manager (with bash fallback)
-# Note: topLessonsToShow is configurable (default: 3), smart-inject-hook.sh adds query-relevant ones
+# Note: topLessonsToShow is configurable (default: 5), smart-inject-hook.sh adds query-relevant ones
 generate_context() {
     local cwd="$1"
     local summary=""
@@ -112,6 +112,8 @@ main() {
     phase_start=$(get_elapsed_ms)
     local summary
     summary=$(generate_context "$cwd")
+    # Store raw lessons content for token budget tracking
+    local LESSONS_SUMMARY_RAW="$summary"
     log_phase "load_lessons" "$phase_start" "inject"
 
     # Also get active handoffs (project-level only)
@@ -245,6 +247,39 @@ HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
             summary="$summary
 
 $todo_continuation"
+        fi
+
+        # Calculate and log token budget breakdown
+        # Token estimate: ~4 bytes per token for English text
+        local lessons_tokens=0 handoffs_tokens=0 duties_tokens=0 total_tokens=0
+        if [[ -n "${summary%%$'\n'*}" ]]; then
+            # Lessons come from generate_context which is before handoffs appended
+            # We need to track the original summary length before handoffs
+            # For simplicity, estimate from component sizes
+            if [[ -n "$LESSONS_SUMMARY_RAW" ]]; then
+                lessons_tokens=$(( ${#LESSONS_SUMMARY_RAW} / 4 ))
+            fi
+            if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
+                handoffs_tokens=$(( ${#handoffs} / 4 ))
+            fi
+            # Duties text is roughly 500-700 chars
+            local lessons_len=${#LESSONS_SUMMARY_RAW}
+            local handoffs_len=${#handoffs}
+            duties_tokens=$(( (${#summary} - lessons_len - handoffs_len) / 4 ))
+            if [[ $duties_tokens -lt 0 ]]; then
+                duties_tokens=0
+            fi
+            total_tokens=$(( ${#summary} / 4 ))
+        fi
+
+        # Log token budget to debug log (background, non-blocking)
+        if [[ -f "$PYTHON_MANAGER" && $total_tokens -gt 0 ]]; then
+            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+                CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
+                CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
+                python3 "$PYTHON_MANAGER" debug injection-budget \
+                "$total_tokens" "$lessons_tokens" "$handoffs_tokens" "$duties_tokens" \
+                >/dev/null 2>&1 &
         fi
 
         local escaped

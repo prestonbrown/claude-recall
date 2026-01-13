@@ -2,7 +2,7 @@
   "claudeRecall": {
     "enabled": true,
     "maxLessons": 30,
-    "topLessonsToShow": 3,
+    "topLessonsToShow": 5,
     "relevanceTopN": 5,
     "remindEvery": 12,
     "promotionThreshold": 50,

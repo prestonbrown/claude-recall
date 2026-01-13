@@ -257,7 +257,7 @@ In `~/.claude/settings.json`:
     "enabled": true,
     "debugLevel": 0,
     "remindEvery": 12,
-    "topLessonsToShow": 3,
+    "topLessonsToShow": 5,
     "relevanceTopN": 5,
     "promotionThreshold": 50,
     "decayIntervalDays": 7,
@@ -279,7 +279,7 @@ In `~/.claude/settings.json`:
 | `enabled` | true | Enable/disable the lessons system |
 | `debugLevel` | 0 | 0=off, 1=info, 2=debug, 3=trace |
 | `remindEvery` | 12 | Show lesson duty reminder every N prompts |
-| `topLessonsToShow` | 3 | Lessons injected at session start |
+| `topLessonsToShow` | 5 | Lessons injected at session start (with full content) |
 | `relevanceTopN` | 5 | Lessons injected by relevance scoring |
 | `promotionThreshold` | 50 | Uses before project→system promotion |
 | `decayIntervalDays` | 7 | Days between decay runs |

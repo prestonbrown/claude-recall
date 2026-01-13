@@ -33,6 +33,11 @@ HANDOFF_MAX_AGE_DAYS = 7  # Or completed within N days
 HANDOFF_STALE_DAYS = 7  # Auto-archive active handoffs untouched for N days
 HANDOFF_COMPLETED_ARCHIVE_DAYS = 3  # Archive completed handoffs after N days
 HANDOFF_ORPHAN_DAYS = 1  # Auto-complete ready_for_review handoffs with all success after N days
+HANDOFF_COMPLETED_CAP_MULTIPLIER = 3  # Hard cap completed at N * HANDOFF_MAX_COMPLETED
+
+# Injection display constants
+INJECTION_REMAINING_CAP = 10  # Max remaining lessons to show titles for
+INJECTION_TITLE_TRUNCATE = 30  # Truncate lesson titles in remaining list
 
 # DEPRECATED (remove after 2025-06-01): Use HANDOFF_* constants instead
 APPROACH_MAX_COMPLETED = HANDOFF_MAX_COMPLETED
@@ -268,27 +273,17 @@ class InjectionResult(FormattableResult):
             content_preview = framed_content[:80] + "..." if len(framed_content) > 80 else framed_content
             lines.append(f"  [{lesson.id}] {rating} {prefix}{lesson.title} - {content_preview}")
 
-        # Other lessons - constraint types get content, others stay compact
+        # Remaining lessons - show titles for context (helps decide which to read)
         remaining = [l for l in self.all_lessons if l not in self.top_lessons]
         if remaining:
-            # Separate constraints from others
-            constraint_lessons = [l for l in remaining if l.lesson_type == "constraint"]
-            other_lessons = [l for l in remaining if l.lesson_type != "constraint"]
-
-            # Constraints get full framed content
-            for lesson in constraint_lessons:
-                prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
-                framed_content = frame_lesson_content(lesson)
-                content_preview = framed_content[:80] + "..." if len(framed_content) > 80 else framed_content
-                lines.append(f"  [{lesson.id}] {prefix}{lesson.title} - {content_preview}")
-
-            # Other lessons stay compact
-            if other_lessons:
-                other_items = []
-                for lesson in other_lessons:
-                    prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
-                    other_items.append(f"[{lesson.id}] {prefix}{lesson.title}")
-                lines.append("  " + " | ".join(other_items))
+            # Show [ID] title for each, capped to keep compact
+            cap = INJECTION_REMAINING_CAP
+            trunc = INJECTION_TITLE_TRUNCATE
+            items = [f"[{l.id}] {l.title[:trunc]}{'...' if len(l.title) > trunc else ''}" for l in remaining[:cap]]
+            lines.append("  " + " | ".join(items))
+            if len(remaining) > cap:
+                lines.append(f"  (+{len(remaining) - cap} more)")
+            lines.append("  ⚡ READ any lesson that looks relevant: `python3 $CLAUDE_RECALL_BASE/core/cli.py show ID`")
 
         # Simplified footer - explicit about output pattern (no shell commands!)
         lines.append("Cite [ID] when applying. LESSON: [category:] title - content to add (output only, no shell commands).")
