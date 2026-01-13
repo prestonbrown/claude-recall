@@ -126,6 +126,15 @@ main() {
         if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
             # Extract the most recent handoff for todo format
             todo_continuation=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" python3 "$PYTHON_MANAGER" handoff inject-todos 2>/dev/null || true)
+
+            # Link session to continuation handoff so updates go to the right place
+            if [[ -n "$todo_continuation" && -n "$claude_session_id" ]]; then
+                priority_handoff_id=$(echo "$todo_continuation" | grep -oE 'hf-[0-9a-f]+' | head -1)
+                if [[ -n "$priority_handoff_id" ]]; then
+                    PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
+                        python3 "$PYTHON_MANAGER" handoff set-session "$priority_handoff_id" "$claude_session_id" 2>/dev/null || true
+                fi
+            fi
         fi
     fi
     if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
