@@ -109,7 +109,7 @@ main() {
 
     # Generate lessons context (with timing)
     local phase_start
-    phase_start=$(get_ms)
+    phase_start=$(get_elapsed_ms)
     local summary
     summary=$(generate_context "$cwd")
     log_phase "load_lessons" "$phase_start" "inject"
@@ -118,7 +118,7 @@ main() {
     local handoffs=""
     local todo_continuation=""
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        phase_start=$(get_ms)
+        phase_start=$(get_elapsed_ms)
         handoffs=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
         log_phase "load_handoffs" "$phase_start" "inject"
 

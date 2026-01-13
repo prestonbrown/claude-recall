@@ -262,9 +262,9 @@ process_handoffs() {
     local session_id="$4"
     local processed_count=0
 
-    # Debug timing (only if debug enabled)
+    # Debug timing using get_elapsed_ms (no subprocess overhead)
     local t0 t1 t2 t3
-    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && t0=$(python3 -c 'import time; print(int(time.time()*1000))')
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && t0=$(get_elapsed_ms)
 
     # Skip if no Python manager available
     [[ ! -f "$PYTHON_MANAGER" ]] && return 0
@@ -276,20 +276,20 @@ process_handoffs() {
     local session_arg=""
     [[ -n "$session_id" ]] && session_arg="--session-id $session_id"
 
-    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && t1=$(python3 -c 'import time; print(int(time.time()*1000))')
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && t1=$(get_elapsed_ms)
 
     # Single Python call parses patterns, handles sub-agent blocking, and processes all operations
     local result
     result=$(echo "$TRANSCRIPT_CACHE" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
         python3 "$PYTHON_MANAGER" handoff process-transcript $session_arg 2>&1 || true)
 
-    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && t2=$(python3 -c 'import time; print(int(time.time()*1000))')
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && t2=$(get_elapsed_ms)
 
     # Count successful operations
     processed_count=$(echo "$result" | jq '[.results[]? | select(.ok == true)] | length' 2>/dev/null || echo 0)
 
-    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && {
-        t3=$(python3 -c 'import time; print(int(time.time()*1000))')
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && {
+        t3=$(get_elapsed_ms)
         echo "[timing:process_handoffs] setup=$((t1-t0))ms python=$((t2-t1))ms jq=$((t3-t2))ms" >&2
     }
 
@@ -392,23 +392,23 @@ main() {
     [[ -f "$state_file" ]] && last_timestamp=$(cat "$state_file")
 
     # Parse transcript ONCE and cache all data (replaces 12+ jq calls)
-    local phase_start=$(get_ms)
+    local phase_start=$(get_elapsed_ms)
     parse_transcript_once "$transcript_path" "$last_timestamp"
     log_phase "parse_transcript" "$phase_start" "stop"
 
     # Process AI LESSON: patterns (adds new AI-generated lessons)
-    phase_start=$(get_ms)
+    phase_start=$(get_elapsed_ms)
     process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
     log_phase "process_lessons" "$phase_start" "stop"
 
     # Process HANDOFF/APPROACH: patterns (handoff tracking and plan mode)
     # Pass session_id so we can detect sub-agents and block handoff creation
-    phase_start=$(get_ms)
+    phase_start=$(get_elapsed_ms)
     process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
     log_phase "process_handoffs" "$phase_start" "stop"
 
     # Capture TodoWrite tool calls and sync to handoffs
-    phase_start=$(get_ms)
+    phase_start=$(get_elapsed_ms)
     capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
     log_phase "sync_todos" "$phase_start" "stop"
 
@@ -455,7 +455,7 @@ main() {
     }
 
     # Cite all lessons in a single batch call (much faster than per-lesson)
-    phase_start=$(get_ms)
+    phase_start=$(get_elapsed_ms)
     local cited_count=0
 
     # Convert citations to space-separated IDs: [L001]\n[L002] -> L001 L002

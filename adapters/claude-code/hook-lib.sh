@@ -130,44 +130,61 @@ get_setting() {
 # ============================================================
 # TIMING INFRASTRUCTURE
 # ============================================================
+# Uses bash SECONDS for relative timing to avoid subprocess overhead.
+# Python is only called once for absolute timestamp when debug logging is needed.
+# This eliminates 12+ Python subprocess spawns (~250ms each) per hook invocation.
 
-# Get current time in milliseconds
-# Uses Python for cross-platform compatibility (macOS date lacks %N)
-get_ms() {
+# Get absolute milliseconds (only called once per hook for timestamps)
+get_ms_absolute() {
     python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0
 }
 
-# Initialize timing state - call at start of hook
-# Sets HOOK_START_MS and initializes PHASE_TIMES_JSON
+# Legacy compatibility - now uses elapsed time from SECONDS
+# Note: Returns elapsed ms since init_timing, not absolute time
+get_ms() {
+    echo "$(( (SECONDS - HOOK_START_SECONDS) * 1000 ))"
+}
+
+# Initialize timing state - uses bash SECONDS (no subprocess)
 init_timing() {
-    HOOK_START_MS=$(get_ms)
+    HOOK_START_SECONDS=$SECONDS
+    HOOK_START_MS=""  # Lazy - only computed if needed for logging
     PHASE_TIMES_JSON="{}"
+    export HOOK_START_SECONDS
     export HOOK_START_MS
     export PHASE_TIMES_JSON
 }
 
+# Get elapsed milliseconds since hook start (no subprocess)
+get_elapsed_ms() {
+    echo "$(( (SECONDS - HOOK_START_SECONDS) * 1000 ))"
+}
+
 # Log timing for a named phase
 # Usage:
-#   local phase_start=$(get_ms)
+#   local phase_start=$(get_elapsed_ms)
 #   ... do work ...
 #   log_phase "phase_name" "$phase_start"
 log_phase() {
     local phase="$1"
-    local start_ms="$2"
-    local hook_name="${3:-hook}"  # Optional hook name for debug logging
-    local end_ms
-    end_ms=$(get_ms)
-    local duration=$((end_ms - start_ms))
+    local start_elapsed="$2"
+    local hook_name="${3:-hook}"
 
-    # Append to JSON (handles first entry vs subsequent)
+    # Skip if debug level < 2 (no timing overhead in production)
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -lt 2 ]] && return 0
+
+    local end_elapsed=$(get_elapsed_ms)
+    local duration=$((end_elapsed - start_elapsed))
+
+    # Add to phase times JSON
     if [[ "$PHASE_TIMES_JSON" == "{}" ]]; then
-        PHASE_TIMES_JSON="{\"$phase\":$duration"
+        PHASE_TIMES_JSON="{\"$phase\":$duration}"
     else
-        PHASE_TIMES_JSON="$PHASE_TIMES_JSON,\"$phase\":$duration"
+        PHASE_TIMES_JSON="${PHASE_TIMES_JSON%\}},\"$phase\":$duration}"
     fi
 
-    # Log to debug system if enabled
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
+    # Background the debug logging
+    if [[ -n "$PYTHON_MANAGER" && -f "$PYTHON_MANAGER" ]]; then
         PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-phase "$hook_name" "$phase" "$duration" 2>/dev/null &
     fi
 }
@@ -176,14 +193,14 @@ log_phase() {
 # Usage: log_hook_end "hook_name"
 log_hook_end() {
     local hook_name="${1:-hook}"
-    local end_ms
-    end_ms=$(get_ms)
-    local total_ms=$((end_ms - HOOK_START_MS))
 
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-        # Close the JSON object
-        local phases_json="${PHASE_TIMES_JSON}}"
-        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" --phases "$phases_json" 2>/dev/null &
+    # Skip if debug level < 2 (no timing overhead in production)
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -lt 2 ]] && return 0
+
+    local total_ms=$(get_elapsed_ms)
+
+    if [[ -n "$PYTHON_MANAGER" && -f "$PYTHON_MANAGER" ]]; then
+        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" "$PHASE_TIMES_JSON" 2>/dev/null &
     fi
 }
 
