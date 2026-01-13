@@ -1172,6 +1172,33 @@ class RecallMonitorApp(App):
                     lines.append(f"  [{lesson.id}] {truncate(lesson.title, title_width)} ({lesson.uses} uses, vel={lesson.velocity:.1f})")
                 lines.append("")
 
+            # Low-effectiveness lessons for review
+            try:
+                low_eff = self.state_reader.get_lesson_effectiveness(threshold=0.6, min_citations=3)
+                if low_eff:
+                    lines.append("[bold]Low Effectiveness Lessons[/bold]")
+                    lines.append("[dim]Lessons cited often but may not be helping[/dim]")
+                    for lesson_id, rate, total_citations in low_eff[:5]:
+                        pct = round(rate * 100)
+                        # Get lesson title if available
+                        lesson_match = next(
+                            (l for l in all_lessons if l.id == lesson_id), None
+                        ) if all_lessons else None
+                        if lesson_match:
+                            title_width = max(15, available_width - 40)
+                            lines.append(
+                                f"  [yellow]\\[{lesson_id}][/yellow] {truncate(lesson_match.title, title_width)} "
+                                f"[red]{pct}% effective[/red] ({total_citations} citations)"
+                            )
+                        else:
+                            lines.append(
+                                f"  [yellow]\\[{lesson_id}][/yellow] [red]{pct}% effective[/red] ({total_citations} citations)"
+                            )
+                    lines.append("")
+            except Exception:
+                # Effectiveness tracking is optional, don't fail if it errors
+                pass
+
         except Exception as e:
             lines.append(f"[red]Error loading lessons: {e}[/red]")
             lines.append("")

@@ -850,3 +850,77 @@ class StateReader:
             HandoffFlowMetrics dataclass with computed analytics
         """
         return self._analytics.compute_flow_metrics(handoffs)
+
+    def get_lesson_effectiveness(
+        self, threshold: float = 0.6, min_citations: int = 3
+    ) -> List[Tuple[str, float, int]]:
+        """
+        Get lessons with low effectiveness for review.
+
+        Reads effectiveness.json from state directory and returns lessons
+        that fall below the effectiveness threshold.
+
+        Args:
+            threshold: Effectiveness rate below which lessons are flagged (default 0.6)
+            min_citations: Minimum citations needed to be considered (default 3)
+
+        Returns:
+            List of tuples (lesson_id, effectiveness_rate, total_citations)
+            sorted by effectiveness rate ascending (lowest first)
+        """
+        effectiveness_file = self.state_dir / "effectiveness.json"
+
+        if not effectiveness_file.exists():
+            return []
+
+        try:
+            import json
+            with open(effectiveness_file) as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError, ValueError):
+            return []
+
+        low_effectiveness = []
+
+        for lesson_id, entry in state.items():
+            total = entry.get("total_citations_tracked", 0)
+            rate = entry.get("effectiveness_rate", 1.0)
+
+            if total >= min_citations and rate < threshold:
+                low_effectiveness.append((lesson_id, rate, total))
+
+        # Sort by effectiveness rate ascending
+        low_effectiveness.sort(key=lambda x: x[1])
+
+        return low_effectiveness
+
+    def get_effectiveness_rate(self, lesson_id: str) -> Optional[float]:
+        """
+        Get the effectiveness rate for a specific lesson.
+
+        Args:
+            lesson_id: The lesson ID (e.g., 'L001' or 'S001')
+
+        Returns:
+            Effectiveness rate between 0.0 and 1.0, or None if no data exists
+        """
+        effectiveness_file = self.state_dir / "effectiveness.json"
+
+        if not effectiveness_file.exists():
+            return None
+
+        try:
+            import json
+            with open(effectiveness_file) as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError, ValueError):
+            return None
+
+        if lesson_id not in state:
+            return None
+
+        entry = state[lesson_id]
+        if entry.get("total_citations_tracked", 0) == 0:
+            return None
+
+        return entry.get("effectiveness_rate")

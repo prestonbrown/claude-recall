@@ -555,6 +555,9 @@ class LessonsMixin:
             promotion_ready=promotion_ready,
         )
 
+        # Track effectiveness (default to successful=True, optimistic tracking)
+        self.track_effectiveness(lesson_id, successful=True)
+
         return CitationResult(
             success=True,
             lesson_id=lesson_id,
@@ -1415,3 +1418,197 @@ No explanations, just ID: SCORE lines."""
         """Update the decay timestamp file."""
         self._decay_state_file.parent.mkdir(parents=True, exist_ok=True)
         self._decay_state_file.write_text(str(date.today().isoformat()))
+
+    # -------------------------------------------------------------------------
+    # Effectiveness Tracking
+    # -------------------------------------------------------------------------
+
+    def _effectiveness_state_path(self) -> Path:
+        """Get path to the effectiveness state file.
+
+        Returns:
+            Path to effectiveness.json in state directory
+        """
+        # Use environment variable or default location
+        state = os.environ.get("CLAUDE_RECALL_STATE")
+        if state:
+            state_dir = Path(state)
+        else:
+            xdg_state = os.environ.get("XDG_STATE_HOME")
+            if xdg_state:
+                state_dir = Path(xdg_state) / "claude-recall"
+            else:
+                state_dir = Path.home() / ".local" / "state" / "claude-recall"
+
+        return state_dir / "effectiveness.json"
+
+    def _load_effectiveness_state(self) -> Dict[str, Dict]:
+        """Load effectiveness tracking state from disk.
+
+        Returns:
+            Dict mapping lesson IDs to effectiveness data:
+            {
+                "L001": {
+                    "effective_citations": 8,
+                    "total_citations_tracked": 10,
+                    "effectiveness_rate": 0.8
+                }
+            }
+        """
+        path = self._effectiveness_state_path()
+        if not path.exists():
+            return {}
+
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError, ValueError):
+            return {}
+
+    def _save_effectiveness_state(self, state: Dict[str, Dict]) -> None:
+        """Save effectiveness state to JSON file with atomic write."""
+        path = self._effectiveness_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        temp_path = None
+        try:
+            import tempfile
+            # Write to temp file first
+            with tempfile.NamedTemporaryFile(
+                mode='w', dir=path.parent, delete=False, suffix='.tmp'
+            ) as f:
+                json.dump(state, f, indent=2)
+                temp_path = f.name
+            # Atomic rename on POSIX
+            os.replace(temp_path, path)
+        except OSError:
+            # Clean up temp file if rename failed
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+    def track_effectiveness(self, lesson_id: str, successful: bool = True) -> None:
+        """Track the effectiveness of a lesson citation.
+
+        Updates the effectiveness state for a lesson based on whether the
+        citation led to a successful outcome.
+
+        Args:
+            lesson_id: The lesson ID (e.g., 'L001' or 'S001')
+            successful: Whether the citation was effective (default True)
+        """
+        state = self._load_effectiveness_state()
+
+        if lesson_id not in state:
+            state[lesson_id] = {
+                "effective_citations": 0,
+                "total_citations_tracked": 0,
+                "effectiveness_rate": 0.0,
+            }
+
+        entry = state[lesson_id]
+        entry["total_citations_tracked"] += 1
+        if successful:
+            entry["effective_citations"] += 1
+
+        # Recompute effectiveness rate
+        if entry["total_citations_tracked"] > 0:
+            entry["effectiveness_rate"] = (
+                entry["effective_citations"] / entry["total_citations_tracked"]
+            )
+
+        self._save_effectiveness_state(state)
+
+    def get_effectiveness(self, lesson_id: str) -> Optional[float]:
+        """Get the effectiveness rate for a lesson.
+
+        Args:
+            lesson_id: The lesson ID (e.g., 'L001' or 'S001')
+
+        Returns:
+            Effectiveness rate between 0.0 and 1.0, or None if no data exists
+        """
+        state = self._load_effectiveness_state()
+
+        if lesson_id not in state:
+            return None
+
+        entry = state[lesson_id]
+        if entry["total_citations_tracked"] == 0:
+            return None
+
+        return entry["effectiveness_rate"]
+
+    def get_effectiveness_data(self, lesson_id: str) -> Optional[Dict]:
+        """Get full effectiveness data for a lesson.
+
+        Args:
+            lesson_id: The lesson ID (e.g., 'L001' or 'S001')
+
+        Returns:
+            Dict with effectiveness data or None if no data exists:
+            {
+                "effective_citations": int,
+                "total_citations_tracked": int,
+                "effectiveness_rate": float
+            }
+        """
+        state = self._load_effectiveness_state()
+        return state.get(lesson_id)
+
+    def mark_citation_ineffective(self, lesson_id: str) -> None:
+        """Mark a recent citation as ineffective.
+
+        This is a convenience method to decrement effectiveness when an error
+        occurs after a citation. It adjusts the last citation to be ineffective.
+
+        Args:
+            lesson_id: The lesson ID whose last citation was ineffective
+        """
+        state = self._load_effectiveness_state()
+
+        if lesson_id not in state:
+            # No effectiveness data, nothing to adjust
+            return
+
+        entry = state[lesson_id]
+        if entry["effective_citations"] > 0:
+            entry["effective_citations"] -= 1
+
+            # Recompute effectiveness rate
+            if entry["total_citations_tracked"] > 0:
+                entry["effectiveness_rate"] = (
+                    entry["effective_citations"] / entry["total_citations_tracked"]
+                )
+
+            self._save_effectiveness_state(state)
+
+    def get_low_effectiveness_lessons(
+        self, threshold: float = 0.6, min_citations: int = 3
+    ) -> List[Tuple[str, float, int]]:
+        """Get lessons with low effectiveness for review.
+
+        Args:
+            threshold: Effectiveness rate below which lessons are flagged (default 0.6)
+            min_citations: Minimum citations needed to be considered (default 3)
+
+        Returns:
+            List of tuples (lesson_id, effectiveness_rate, total_citations)
+            sorted by effectiveness rate ascending (lowest first)
+        """
+        state = self._load_effectiveness_state()
+        low_effectiveness = []
+
+        for lesson_id, entry in state.items():
+            total = entry.get("total_citations_tracked", 0)
+            rate = entry.get("effectiveness_rate", 1.0)
+
+            if total >= min_citations and rate < threshold:
+                low_effectiveness.append((lesson_id, rate, total))
+
+        # Sort by effectiveness rate ascending
+        low_effectiveness.sort(key=lambda x: x[1])
+
+        return low_effectiveness

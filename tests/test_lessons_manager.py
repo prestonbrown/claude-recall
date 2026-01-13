@@ -3173,6 +3173,221 @@ class TestAtomicUpdatePattern:
         assert lessons[1].title == "New lesson"
 
 
+# =============================================================================
+# Effectiveness Tracking Tests
+# =============================================================================
+
+
+class TestEffectivenessTracking:
+    """Tests for lesson effectiveness tracking."""
+
+    def test_track_effectiveness_creates_entry(self, manager: "LessonsManager"):
+        """track_effectiveness should create entry for new lesson."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Track effectiveness manually
+        manager.track_effectiveness("L001", successful=True)
+
+        data = manager.get_effectiveness_data("L001")
+        assert data is not None
+        assert data["effective_citations"] == 1
+        assert data["total_citations_tracked"] == 1
+        assert data["effectiveness_rate"] == 1.0
+
+    def test_track_effectiveness_increments(self, manager: "LessonsManager"):
+        """track_effectiveness should increment counts correctly."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Track multiple times
+        manager.track_effectiveness("L001", successful=True)
+        manager.track_effectiveness("L001", successful=True)
+        manager.track_effectiveness("L001", successful=False)
+
+        data = manager.get_effectiveness_data("L001")
+        assert data["effective_citations"] == 2
+        assert data["total_citations_tracked"] == 3
+        assert abs(data["effectiveness_rate"] - 0.6667) < 0.01
+
+    def test_get_effectiveness_returns_none_for_unknown(self, manager: "LessonsManager"):
+        """get_effectiveness should return None for lessons with no data."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Don't track any effectiveness
+        rate = manager.get_effectiveness("L999")
+        assert rate is None
+
+    def test_get_effectiveness_returns_rate(self, manager: "LessonsManager"):
+        """get_effectiveness should return the effectiveness rate."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        manager.track_effectiveness("L001", successful=True)
+        manager.track_effectiveness("L001", successful=True)
+        manager.track_effectiveness("L001", successful=False)
+        manager.track_effectiveness("L001", successful=False)
+
+        rate = manager.get_effectiveness("L001")
+        assert rate == 0.5
+
+    def test_cite_lesson_tracks_effectiveness(self, manager: "LessonsManager"):
+        """cite_lesson should automatically track effectiveness."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Citation should track effectiveness
+        manager.cite_lesson("L001")
+
+        data = manager.get_effectiveness_data("L001")
+        assert data is not None
+        assert data["effective_citations"] == 1
+        assert data["total_citations_tracked"] == 1
+
+    def test_cite_lesson_multiple_tracks_multiple(self, manager: "LessonsManager"):
+        """Multiple citations should accumulate effectiveness tracking."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        for _ in range(5):
+            manager.cite_lesson("L001")
+
+        data = manager.get_effectiveness_data("L001")
+        assert data["effective_citations"] == 5
+        assert data["total_citations_tracked"] == 5
+        assert data["effectiveness_rate"] == 1.0
+
+    def test_mark_citation_ineffective(self, manager: "LessonsManager"):
+        """mark_citation_ineffective should decrement effective count."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Cite (tracks as effective)
+        manager.cite_lesson("L001")
+        manager.cite_lesson("L001")
+
+        # Mark last one as ineffective
+        manager.mark_citation_ineffective("L001")
+
+        data = manager.get_effectiveness_data("L001")
+        assert data["effective_citations"] == 1
+        assert data["total_citations_tracked"] == 2
+        assert data["effectiveness_rate"] == 0.5
+
+    def test_mark_citation_ineffective_no_negative(self, manager: "LessonsManager"):
+        """mark_citation_ineffective should not go below 0."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        manager.track_effectiveness("L001", successful=False)
+
+        # Try to decrement already-zero effective count
+        manager.mark_citation_ineffective("L001")
+
+        data = manager.get_effectiveness_data("L001")
+        assert data["effective_citations"] == 0
+
+    def test_mark_citation_ineffective_unknown_lesson(self, manager: "LessonsManager"):
+        """mark_citation_ineffective should handle unknown lessons gracefully."""
+        # Should not raise
+        manager.mark_citation_ineffective("L999")
+
+    def test_get_low_effectiveness_lessons(self, manager: "LessonsManager"):
+        """get_low_effectiveness_lessons should return lessons below threshold."""
+        manager.add_lesson("project", "pattern", "Good lesson", "Content")
+        manager.add_lesson("project", "pattern", "Bad lesson", "Content")
+        manager.add_lesson("project", "pattern", "Okay lesson", "Content")
+
+        # Make L001 highly effective
+        for _ in range(5):
+            manager.track_effectiveness("L001", successful=True)
+
+        # Make L002 low effectiveness
+        for _ in range(5):
+            manager.track_effectiveness("L002", successful=False)
+
+        # Make L003 okay effectiveness
+        for i in range(5):
+            manager.track_effectiveness("L003", successful=(i < 4))
+
+        low_eff = manager.get_low_effectiveness_lessons(threshold=0.6, min_citations=3)
+
+        # Should return L002 (0% effective) and L003 (80% is above 60%, so not included)
+        # Wait, L003 is 80% which is >= 60%, so only L002
+        assert len(low_eff) == 1
+        assert low_eff[0][0] == "L002"
+        assert low_eff[0][1] == 0.0
+        assert low_eff[0][2] == 5
+
+    def test_get_low_effectiveness_min_citations(self, manager: "LessonsManager"):
+        """get_low_effectiveness_lessons should respect min_citations."""
+        manager.add_lesson("project", "pattern", "Test", "Content")
+
+        # Only 2 citations, but 0% effective
+        manager.track_effectiveness("L001", successful=False)
+        manager.track_effectiveness("L001", successful=False)
+
+        # Should not return because min_citations=3 by default
+        low_eff = manager.get_low_effectiveness_lessons(threshold=0.6, min_citations=3)
+        assert len(low_eff) == 0
+
+        # With lower threshold
+        low_eff = manager.get_low_effectiveness_lessons(threshold=0.6, min_citations=2)
+        assert len(low_eff) == 1
+
+    def test_get_low_effectiveness_sorted(self, manager: "LessonsManager"):
+        """get_low_effectiveness_lessons should be sorted by rate ascending."""
+        manager.add_lesson("project", "pattern", "Worst", "Content")
+        manager.add_lesson("project", "pattern", "Bad", "Content")
+        manager.add_lesson("project", "pattern", "Okay", "Content")
+
+        # L001: 10% effective
+        for i in range(10):
+            manager.track_effectiveness("L001", successful=(i == 0))
+
+        # L002: 30% effective
+        for i in range(10):
+            manager.track_effectiveness("L002", successful=(i < 3))
+
+        # L003: 50% effective (still below 60% threshold)
+        for i in range(10):
+            manager.track_effectiveness("L003", successful=(i < 5))
+
+        low_eff = manager.get_low_effectiveness_lessons(threshold=0.6, min_citations=3)
+
+        assert len(low_eff) == 3
+        # Should be sorted: L001 (10%), L002 (30%), L003 (50%)
+        assert low_eff[0][0] == "L001"
+        assert low_eff[1][0] == "L002"
+        assert low_eff[2][0] == "L003"
+
+    def test_effectiveness_persists_across_instances(
+        self, temp_lessons_base: Path, temp_project_root: Path
+    ):
+        """Effectiveness data should persist across manager instances."""
+        from core import LessonsManager
+
+        manager1 = LessonsManager(temp_lessons_base, temp_project_root)
+        manager1.add_lesson("project", "pattern", "Test", "Content")
+        manager1.cite_lesson("L001")
+        manager1.cite_lesson("L001")
+        manager1.mark_citation_ineffective("L001")
+
+        # Create new manager instance
+        manager2 = LessonsManager(temp_lessons_base, temp_project_root)
+
+        data = manager2.get_effectiveness_data("L001")
+        assert data is not None
+        assert data["effective_citations"] == 1
+        assert data["total_citations_tracked"] == 2
+
+    def test_effectiveness_system_lessons(self, manager: "LessonsManager"):
+        """Effectiveness should work for system lessons too."""
+        manager.add_lesson("system", "pattern", "System Test", "Content")
+
+        manager.cite_lesson("S001")
+        manager.track_effectiveness("S001", successful=False)
+
+        data = manager.get_effectiveness_data("S001")
+        # cite_lesson adds 1 effective, track_effectiveness adds 1 total (ineffective)
+        assert data["effective_citations"] == 1
+        assert data["total_citations_tracked"] == 2
+        assert data["effectiveness_rate"] == 0.5
+
+
 # Helper for creating mock subprocess results (used in TestScoreRelevance)
 def make_mock_result(stdout: str = "", returncode: int = 0, stderr: str = ""):
     """Create a mock subprocess result for testing."""
