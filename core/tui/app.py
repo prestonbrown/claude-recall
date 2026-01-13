@@ -2538,7 +2538,11 @@ class RecallMonitorApp(App):
         self.state.handoff.total_count = total_visible
         self._update_filter_status(visible_count, total_visible)
 
-        # Restore cursor position IMMEDIATELY to prevent flash
+        # Restore scroll position FIRST (before cursor movement)
+        # This prevents the selected item from jumping to the bottom of visible area
+        handoff_table.scroll_y = min(saved_scroll_y, handoff_table.max_scroll_y)
+
+        # Restore cursor position AFTER scroll (row is already visible, no auto-scroll triggered)
         # (DataTable auto-selects first row when populated, causing visual flicker)
         if self.state.handoff.user_selected_id is not None:
             if self.state.handoff.user_selected_id in self.state.handoff.data:
@@ -2566,15 +2570,13 @@ class RecallMonitorApp(App):
             if self.state.handoff.current_id not in self.state.handoff.data:
                 self.state.handoff.current_id = None
 
-        # Defer scroll position and details refresh until after layout
-        def restore_scroll_and_details() -> None:
+        # Defer only the details refresh (scroll already restored above)
+        def restore_details() -> None:
             if self.state.handoff.user_selected_id is not None:
                 if self.state.handoff.user_selected_id in self.state.handoff.data:
                     self._show_handoff_details(self.state.handoff.user_selected_id)
-            elif saved_scroll_y > 0:
-                handoff_table.scroll_y = min(saved_scroll_y, handoff_table.max_scroll_y)
 
-        self.call_after_refresh(restore_scroll_and_details)
+        self.call_after_refresh(restore_details)
 
     def action_toggle_completed(self) -> None:
         """Toggle visibility of completed handoffs."""

@@ -494,3 +494,110 @@ class TestScrollSelectionIntegration:
                 f"Handoff selection not preserved. "
                 f"Before: {selected_id_before}, After: {selected_id_after}"
             )
+
+    @pytest.mark.asyncio
+    async def test_handoff_scroll_clamped_when_handoffs_removed(
+        self, temp_project_with_handoffs: Path, monkeypatch
+    ):
+        """Scroll position should be clamped when handoffs are filtered/removed.
+
+        Tests that when saved_scroll_y > max_scroll_y (after handoffs are
+        filtered out), scroll position is clamped to max_scroll_y rather than
+        leaving scroll_y at an invalid position beyond the table bounds.
+        """
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Handoffs tab
+            await pilot.press("f6")
+            await pilot.pause()
+
+            handoff_table = app.query_one("#handoff-list", DataTable)
+            handoff_table.focus()
+            await pilot.pause()
+
+            # Navigate to the bottom of the list to maximize scroll position
+            for _ in range(5):
+                await pilot.press("down")
+                await pilot.pause()
+
+            # Store the scroll position before filtering
+            scroll_y_before = handoff_table.scroll_y
+            row_count_before = handoff_table.row_count
+
+            # Apply a filter that removes most handoffs
+            # This simulates handoffs being filtered out or completed
+            app.state.handoff.filter_text = "First"  # Only matches first handoff
+            app._refresh_handoff_list()
+            await pilot.pause()
+
+            row_count_after = handoff_table.row_count
+
+            # Verify we actually filtered down to fewer rows
+            if row_count_after < row_count_before:
+                # Scroll position should be clamped to max_scroll_y
+                # (never negative, never beyond valid range)
+                assert handoff_table.scroll_y >= 0, (
+                    f"scroll_y should never be negative. Got: {handoff_table.scroll_y}"
+                )
+                assert handoff_table.scroll_y <= handoff_table.max_scroll_y, (
+                    f"scroll_y ({handoff_table.scroll_y}) should be clamped to "
+                    f"max_scroll_y ({handoff_table.max_scroll_y}) when rows are removed"
+                )
+
+    @pytest.mark.asyncio
+    async def test_handoff_cursor_row_fallback_when_no_explicit_selection(
+        self, temp_project_with_handoffs: Path, monkeypatch
+    ):
+        """Cursor row should be preserved when user_selected_id is None.
+
+        Tests the fallback behavior in _refresh_handoff_list() where, when no
+        explicit handoff ID selection exists (user_selected_id is None), the
+        saved cursor row position is restored to maintain visual continuity.
+        """
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Handoffs tab
+            await pilot.press("f6")
+            await pilot.pause()
+
+            handoff_table = app.query_one("#handoff-list", DataTable)
+            handoff_table.focus()
+            await pilot.pause()
+
+            # Navigate down a few rows
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+
+            # Store the cursor row
+            cursor_row_before = handoff_table.cursor_row
+
+            # Clear the user_selected_id to simulate no explicit selection
+            # (this happens when the table was just populated without user interaction)
+            app.state.handoff.user_selected_id = None
+
+            # Manually set cursor to a known row to verify it gets restored
+            handoff_table.move_cursor(row=2)
+            await pilot.pause()
+            cursor_row_to_restore = handoff_table.cursor_row
+
+            # Call refresh - the fallback should preserve cursor row
+            app._refresh_handoff_list()
+            await pilot.pause()
+
+            cursor_row_after = handoff_table.cursor_row
+
+            # The cursor row should be restored (if the row still exists)
+            if cursor_row_to_restore is not None and cursor_row_to_restore < handoff_table.row_count:
+                assert cursor_row_after == cursor_row_to_restore, (
+                    f"Cursor row fallback failed. Expected row {cursor_row_to_restore}, "
+                    f"got row {cursor_row_after}. When user_selected_id is None, "
+                    "the saved cursor row should be restored."
+                )
