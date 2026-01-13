@@ -329,12 +329,12 @@ StatusSelectScreen, PhaseSelectScreen, AgentSelectScreen {
 
 /* Handoffs tab */
 #handoff-list {
-    height: 50%;
+    height: 1fr;
     border: solid $primary-darken-2;
 }
 
 #handoff-details {
-    height: 50%;
+    height: 1fr;
     border: solid $primary-darken-2;
 }
 
