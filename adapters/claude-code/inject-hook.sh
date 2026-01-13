@@ -134,7 +134,7 @@ main() {
                 priority_handoff_id=$(echo "$todo_continuation" | grep -oE 'hf-[0-9a-f]+' | head -1)
                 if [[ -n "$priority_handoff_id" ]]; then
                     PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-                        python3 "$PYTHON_MANAGER" handoff set-session "$priority_handoff_id" "$claude_session_id" 2>/dev/null || true
+                        python3 "$PYTHON_MANAGER" handoff set-session "$priority_handoff_id" "$claude_session_id" >/dev/null 2>&1 || true
                 fi
             fi
         fi
