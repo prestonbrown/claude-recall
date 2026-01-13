@@ -1810,6 +1810,7 @@ Consider extracting lessons about:
         self,
         max_completed: Optional[int] = None,
         max_completed_age: Optional[int] = None,
+        max_active: int = 5,
     ) -> str:
         """
         Generate context injection string with active and recent completed handoffs.
@@ -1817,16 +1818,27 @@ Consider extracting lessons about:
         Args:
             max_completed: Max completed handoffs to show (default: HANDOFF_MAX_COMPLETED)
             max_completed_age: Max age in days for completed (default: HANDOFF_MAX_AGE_DAYS)
+            max_active: Max active handoffs to show (default: 5)
 
         Returns:
             Formatted string for context injection, empty if no handoffs
         """
+        # Validate max_active
+        if max_active < 1:
+            max_active = 5
+
         # Auto-maintenance before listing
         self._auto_complete_orphan_handoffs()
         self._archive_stale_handoffs()
         self._archive_old_completed_handoffs()
 
-        active_handoffs = self.handoff_list(include_completed=False)
+        all_active_handoffs = self.handoff_list(include_completed=False)
+        # Sort by updated date descending (most recent first) and cap at max_active
+        all_active_handoffs.sort(key=lambda h: h.updated, reverse=True)
+        total_active = len(all_active_handoffs)
+        active_handoffs = all_active_handoffs[:max_active]
+        active_truncated = total_active > max_active
+
         completed_handoffs = self.handoff_list_completed(
             max_count=max_completed,
             max_age_days=max_completed_age,
@@ -1851,6 +1863,10 @@ Consider extracting lessons about:
                 lines.append(f"## Active Handoffs (Ready: {ready_count})")
             else:
                 lines.append("## Active Handoffs (All blocked)")
+
+            # Add truncation warning if applicable
+            if active_truncated:
+                lines.append(f"(showing {max_active} of {total_active} active handoffs)")
             lines.append("")
 
             for handoff in active_handoffs:

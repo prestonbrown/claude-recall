@@ -937,6 +937,161 @@ class TestHandoffInject:
         assert "[success]" in injected
         assert "5 steps" in injected  # Should show count
 
+    def test_handoff_inject_max_active_limits_handoffs(self, manager: "LessonsManager"):
+        """Inject should limit active handoffs to max_active parameter."""
+        # Create 8 active handoffs
+        for i in range(8):
+            manager.handoff_add(title=f"Task {i+1}")
+
+        # Default max_active=5 should limit output
+        injected = manager.handoff_inject()
+        active_section = injected.split("## Recent Completions")[0] if "## Recent Completions" in injected else injected
+
+        # Should show truncation warning
+        assert "(showing 5 of 8 active handoffs)" in active_section
+
+        # Count how many task headers appear (### [hf-...)
+        import re
+        header_count = len(re.findall(r"### \[hf-", active_section))
+        assert header_count == 5
+
+    def test_handoff_inject_max_active_custom_value(self, manager: "LessonsManager"):
+        """Inject should respect custom max_active parameter."""
+        # Create 6 active handoffs
+        for i in range(6):
+            manager.handoff_add(title=f"Task {i+1}")
+
+        # Request max_active=3
+        injected = manager.handoff_inject(max_active=3)
+        active_section = injected.split("## Recent Completions")[0] if "## Recent Completions" in injected else injected
+
+        assert "(showing 3 of 6 active handoffs)" in active_section
+
+        import re
+        header_count = len(re.findall(r"### \[hf-", active_section))
+        assert header_count == 3
+
+    def test_handoff_inject_most_recent_first(self, manager: "LessonsManager"):
+        """Inject should show most recently updated handoffs first."""
+        # Create handoffs with explicit different update dates by writing the file directly
+        today = date.today().isoformat()
+        day_1_ago = (date.today() - timedelta(days=1)).isoformat()
+        day_3_ago = (date.today() - timedelta(days=3)).isoformat()
+
+        # Write handoffs file with explicit dates
+        handoffs_file = manager.project_handoffs_file
+        handoffs_file.parent.mkdir(parents=True, exist_ok=True)
+        content = f"""# HANDOFFS.md - Active Work Tracking
+
+> Track ongoing work.
+
+## Active Handoffs
+
+### [hf-0000001] Old task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {day_3_ago} | **Updated**: {day_3_ago}
+
+**Tried**:
+
+**Next**:
+
+---
+
+### [hf-0000002] Newer task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {day_1_ago} | **Updated**: {day_1_ago}
+
+**Tried**:
+
+**Next**:
+
+---
+
+### [hf-0000003] Newest task
+- **Status**: not_started | **Phase**: research | **Agent**: user
+- **Created**: {today} | **Updated**: {today}
+
+**Tried**:
+
+**Next**:
+
+---
+"""
+        handoffs_file.write_text(content)
+
+        # Request max_active=2 to force truncation
+        injected = manager.handoff_inject(max_active=2)
+
+        # hf-0000003 (Newest) and hf-0000002 (Newer) should be shown, hf-0000001 (Old) should be truncated
+        assert "Newest task" in injected
+        assert "Newer task" in injected
+        assert "Old task" not in injected
+
+        # Verify order: Newest should come before Newer in output
+        newest_pos = injected.find("Newest task")
+        newer_pos = injected.find("Newer task")
+        assert newest_pos < newer_pos, "Most recently updated should appear first"
+
+    def test_handoff_inject_no_truncation_warning_when_under_limit(self, manager: "LessonsManager"):
+        """Inject should not show truncation warning when handoffs are under limit."""
+        # Create 3 active handoffs (under default limit of 5)
+        for i in range(3):
+            manager.handoff_add(title=f"Task {i+1}")
+
+        injected = manager.handoff_inject()
+
+        # Should NOT show truncation warning
+        assert "(showing" not in injected
+        assert "of" not in injected or "of 3" not in injected
+
+    def test_handoff_inject_max_active_one(self, manager: "LessonsManager"):
+        """Inject with max_active=1 shows only most recent."""
+        for i in range(3):
+            manager.handoff_add(title=f"Task {i+1}")
+        injected = manager.handoff_inject(max_active=1)
+        assert "(showing 1 of 3" in injected
+
+    def test_handoff_inject_max_active_exact_boundary(self, manager: "LessonsManager"):
+        """Inject with handoffs equal to max_active shows no truncation."""
+        for i in range(5):
+            manager.handoff_add(title=f"Task {i+1}")
+        injected = manager.handoff_inject(max_active=5)
+        assert "(showing" not in injected
+
+    def test_handoff_inject_max_active_zero_uses_default(self, manager: "LessonsManager"):
+        """Inject with max_active=0 should use default."""
+        for i in range(3):
+            manager.handoff_add(title=f"Task {i+1}")
+        injected = manager.handoff_inject(max_active=0)
+        # Should show all 3 (under default of 5)
+        assert "(showing" not in injected
+        assert "Task 1" in injected
+        assert "Task 2" in injected
+        assert "Task 3" in injected
+
+    def test_handoff_inject_tried_steps_summarized(self, manager: "LessonsManager"):
+        """Inject should summarize tried steps when there are more than 3."""
+        h = manager.handoff_add(title="Task with many steps")
+        manager.handoff_update_status(h, "in_progress")
+
+        # Add 6 tried steps
+        manager.handoff_add_tried(h, "success", "Step 1: First action")
+        manager.handoff_add_tried(h, "fail", "Step 2: Second action")
+        manager.handoff_add_tried(h, "success", "Step 3: Third action")
+        manager.handoff_add_tried(h, "partial", "Step 4: Fourth action")
+        manager.handoff_add_tried(h, "success", "Step 5: Fifth action")
+        manager.handoff_add_tried(h, "success", "Step 6: Sixth action")
+
+        injected = manager.handoff_inject()
+
+        # Should show progress summary
+        assert "6 steps" in injected
+
+        # Should show recent steps (last 3)
+        assert "Fourth action" in injected or "Step 4" in injected
+        assert "Fifth action" in injected or "Step 5" in injected
+        assert "Sixth action" in injected or "Step 6" in injected
+
 
 # =============================================================================
 # Edge Cases
