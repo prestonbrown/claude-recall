@@ -7,37 +7,19 @@
 
 set -euo pipefail
 
-# Guard against recursive calls: skip if we're inside a score-relevance subagent
-# This prevents infinite loops when Haiku subagents trigger this hook
-[[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
+# Source shared library
+HOOK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HOOK_LIB_DIR/hook-lib.sh"
 
-# Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
-CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
-CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
-CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
-# Export for downstream Python manager
-export CLAUDE_RECALL_STATE
-# Export legacy names for downstream compatibility
-LESSONS_BASE="$CLAUDE_RECALL_BASE"
-LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
-# Python manager - try installed locations first, fall back to dev location
-if [[ -f "$CLAUDE_RECALL_BASE/core/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/core/cli.py"
-elif [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"  # Legacy flat structure
-else
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
-fi
+# Check for recursion guard early
+hook_lib_check_recursion
+
+# Setup environment variables
+setup_env
 
 # Read relevanceTopN from settings (default: 5)
 get_relevance_top_n() {
-    local config="$HOME/.claude/settings.json"
-    if [[ -f "$config" ]]; then
-        jq -r '.claudeRecall.relevanceTopN // 5' "$config" 2>/dev/null || echo "5"
-    else
-        echo "5"
-    fi
+    get_setting "relevanceTopN" 5
 }
 
 # Tunable parameters for relevance scoring
@@ -49,14 +31,6 @@ MIN_RELEVANCE_SCORE=3      # Only include lessons scored >= this threshold
 # Backward compatibility aliases
 TOP_LESSONS=$RELEVANCE_TOP_N
 RELEVANCE_TIMEOUT=$SCORE_RELEVANCE_TIMEOUT
-
-is_enabled() {
-    local config="$HOME/.claude/settings.json"
-    [[ -f "$config" ]] || return 0  # Enabled by default if no config
-    # Note: jq // operator treats false as falsy, so we check explicitly
-    local enabled=$(jq -r '.claudeRecall.enabled' "$config" 2>/dev/null)
-    [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
-}
 
 # Check if this is the first prompt in the session
 # Returns 0 (true) if first prompt, 1 (false) otherwise

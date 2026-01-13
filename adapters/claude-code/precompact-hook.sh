@@ -11,55 +11,20 @@
 
 set -uo pipefail
 
-# Guard against recursive calls from Haiku subprocesses
-[[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
+# Source shared library
+HOOK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HOOK_LIB_DIR/hook-lib.sh"
 
-# Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
-CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
-CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
-CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
-# Export for downstream Python manager
-export CLAUDE_RECALL_STATE
-# Export legacy names for downstream compatibility
-LESSONS_BASE="$CLAUDE_RECALL_BASE"
-LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
-# Python manager - try installed locations first, fall back to dev location
-if [[ -f "$CLAUDE_RECALL_BASE/core/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/core/cli.py"
-elif [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"  # Legacy flat structure
-else
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
-fi
+# Check for recursion guard early
+hook_lib_check_recursion
+
+# Setup environment variables
+setup_env
 
 # Timeout for context extraction (seconds) - passed to Python CLI
 CONTEXT_TIMEOUT=45
 # Timeout for Haiku calls that aren't handled by Python CLI
 HAIKU_TIMEOUT=15
-
-is_enabled() {
-    local config="$HOME/.claude/settings.json"
-    [[ -f "$config" ]] || return 0  # Enabled by default if no config
-    # Note: jq // operator treats false as falsy, so we check explicitly
-    local enabled=$(jq -r '.claudeRecall.enabled' "$config" 2>/dev/null)
-    [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
-}
-
-find_project_root() {
-    local dir="${1:-$(pwd)}"
-    while [[ "$dir" != "/" ]]; do
-        [[ -d "$dir/.git" ]] && { echo "$dir"; return 0; }
-        dir=$(dirname "$dir")
-    done
-    echo "$1"
-}
-
-# Get current git commit hash (short form)
-get_git_ref() {
-    local project_root="$1"
-    git -C "$project_root" rev-parse --short HEAD 2>/dev/null || echo ""
-}
 
 # Extract handoff context using Python CLI (unified extraction with tool_use/thinking support)
 extract_handoff_context_python() {

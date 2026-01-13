@@ -9,47 +9,15 @@
 
 set -uo pipefail
 
-# Guard against recursive calls
-[[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
+# Source shared library
+HOOK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HOOK_LIB_DIR/hook-lib.sh"
 
-# Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
-CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
-CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
-# Debug level: env var > settings.json > default (1)
-_env_debug="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
-if [[ -n "$_env_debug" ]]; then
-    CLAUDE_RECALL_DEBUG="$_env_debug"
-elif [[ -f "$HOME/.claude/settings.json" ]]; then
-    _settings_debug=$(jq -r '.claudeRecall.debugLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
-    CLAUDE_RECALL_DEBUG="${_settings_debug:-1}"
-else
-    CLAUDE_RECALL_DEBUG="1"
-fi
-export CLAUDE_RECALL_STATE
+# Check for recursion guard early
+hook_lib_check_recursion
 
-# Python manager - try installed locations first, fall back to dev location
-if [[ -f "$CLAUDE_RECALL_BASE/core/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/core/cli.py"
-elif [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"  # Legacy flat structure
-else
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
-fi
-
-is_enabled() {
-    local config="$HOME/.claude/settings.json"
-    [[ -f "$config" ]] || return 0  # Enabled by default if no config
-    # Note: jq // operator treats false as falsy, so we check explicitly
-    local enabled=$(jq -r '.claudeRecall.enabled' "$config" 2>/dev/null)
-    [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
-}
-
-log_debug() {
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-        PROJECT_DIR="${cwd:-$(pwd)}" python3 "$PYTHON_MANAGER" debug log "$1" 2>/dev/null || true
-    fi
-}
+# Setup environment variables
+setup_env
 
 # Read JSON input from stdin
 input=$(cat)

@@ -8,41 +8,20 @@
 
 set -uo pipefail
 
-# Timing support - capture start time immediately
-HOOK_START_MS=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0)
-PHASE_TIMES_JSON="{}"  # Build JSON incrementally (bash 3.x compatible)
+# Source shared library
+HOOK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HOOK_LIB_DIR/hook-lib.sh"
 
-# Guard against recursive calls from Haiku subprocesses
-[[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
+# Check for recursion guard early
+hook_lib_check_recursion
 
-# Support new (CLAUDE_RECALL_*), transitional (RECALL_*), and legacy (LESSONS_*) env vars
-CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
-CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
-# Debug level: env var > settings.json > default (1)
-_env_debug="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
-if [[ -n "$_env_debug" ]]; then
-    CLAUDE_RECALL_DEBUG="$_env_debug"
-elif [[ -f "$HOME/.claude/settings.json" ]]; then
-    _settings_debug=$(jq -r '.claudeRecall.debugLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
-    CLAUDE_RECALL_DEBUG="${_settings_debug:-1}"
-else
-    CLAUDE_RECALL_DEBUG="1"
-fi
-# Export for downstream Python manager
-export CLAUDE_RECALL_STATE
-# Export legacy names for downstream compatibility
-LESSONS_BASE="$CLAUDE_RECALL_BASE"
-LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
-BASH_MANAGER="$CLAUDE_RECALL_BASE/lessons-manager.sh"
-# Python manager - try installed locations first, fall back to dev location
-if [[ -f "$CLAUDE_RECALL_BASE/core/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/core/cli.py"
-elif [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
-    PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"  # Legacy flat structure
-else
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PYTHON_MANAGER="$SCRIPT_DIR/../../core/cli.py"
-fi
+# Initialize timing immediately
+init_timing
+
+# Setup environment variables
+setup_env
+
+# Hook-specific state directory
 STATE_DIR="$CLAUDE_RECALL_STATE/.citation-state"
 
 # Global transcript cache (set by parse_transcript_once)
@@ -93,72 +72,6 @@ parse_transcript_once() {
         # Latest timestamp for checkpoint
         latest_timestamp: ([.[] | .timestamp // empty] | last // "")
     }' "$transcript_path" 2>/dev/null || echo "{}")
-}
-
-# Timing helpers (bash 3.x compatible - no associative arrays)
-get_ms() {
-    python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0
-}
-
-log_phase() {
-    local phase="$1"
-    local start_ms="$2"
-    local end_ms=$(get_ms)
-    local duration=$((end_ms - start_ms))
-    # Append to JSON (handles first entry vs subsequent)
-    if [[ "$PHASE_TIMES_JSON" == "{}" ]]; then
-        PHASE_TIMES_JSON="{\"$phase\":$duration"
-    else
-        PHASE_TIMES_JSON="$PHASE_TIMES_JSON,\"$phase\":$duration"
-    fi
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-        PROJECT_DIR="${project_root:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-phase stop "$phase" "$duration" 2>/dev/null &
-    fi
-}
-
-log_hook_end() {
-    local end_ms=$(get_ms)
-    local total_ms=$((end_ms - HOOK_START_MS))
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-        # Close the JSON object
-        local phases_json="${PHASE_TIMES_JSON}}"
-        PROJECT_DIR="${project_root:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end stop "$total_ms" --phases "$phases_json" 2>/dev/null &
-    fi
-}
-
-is_enabled() {
-    local config="$HOME/.claude/settings.json"
-    [[ -f "$config" ]] || return 0  # Enabled by default if no config
-    # Note: jq // operator treats false as falsy, so we check explicitly
-    local enabled=$(jq -r '.claudeRecall.enabled' "$config" 2>/dev/null)
-    [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
-}
-
-# Sanitize input for safe shell usage
-# Removes control characters, limits length, escapes problematic patterns
-sanitize_input() {
-    local input="$1"
-    local max_length="${2:-500}"
-
-    # Remove control characters (keep printable ASCII and common unicode)
-    input=$(printf '%s' "$input" | tr -cd '[:print:][:space:]' | tr -s ' ')
-
-    # Truncate to max length
-    input="${input:0:$max_length}"
-
-    # Trim whitespace
-    input=$(echo "$input" | xargs)
-
-    printf '%s' "$input"
-}
-
-find_project_root() {
-    local dir="${1:-$(pwd)}"
-    while [[ "$dir" != "/" ]]; do
-        [[ -d "$dir/.git" ]] && { echo "$dir"; return 0; }
-        dir=$(dirname "$dir")
-    done
-    echo "$1"
 }
 
 # Clean up orphaned checkpoint files (transcripts deleted but checkpoints remain)
@@ -481,23 +394,23 @@ main() {
     # Parse transcript ONCE and cache all data (replaces 12+ jq calls)
     local phase_start=$(get_ms)
     parse_transcript_once "$transcript_path" "$last_timestamp"
-    log_phase "parse_transcript" "$phase_start"
+    log_phase "parse_transcript" "$phase_start" "stop"
 
     # Process AI LESSON: patterns (adds new AI-generated lessons)
     phase_start=$(get_ms)
     process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
-    log_phase "process_lessons" "$phase_start"
+    log_phase "process_lessons" "$phase_start" "stop"
 
     # Process HANDOFF/APPROACH: patterns (handoff tracking and plan mode)
     # Pass session_id so we can detect sub-agents and block handoff creation
     phase_start=$(get_ms)
     process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
-    log_phase "process_handoffs" "$phase_start"
+    log_phase "process_handoffs" "$phase_start" "stop"
 
     # Capture TodoWrite tool calls and sync to handoffs
     phase_start=$(get_ms)
     capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
-    log_phase "sync_todos" "$phase_start"
+    log_phase "sync_todos" "$phase_start" "stop"
 
     # Warn if major work detected without handoff
     detect_and_warn_missing_handoff "$transcript_path" "$project_root"
@@ -537,7 +450,7 @@ main() {
 
     [[ -z "$citations" ]] && {
         [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
-        log_hook_end
+        log_hook_end "stop"
         exit 0
     }
 
@@ -561,7 +474,7 @@ main() {
             [[ "$result" == OK:* ]] && ((cited_count++)) || true
         done
     fi
-    log_phase "cite_lessons" "$phase_start"
+    log_phase "cite_lessons" "$phase_start" "stop"
 
     # Update checkpoint
     [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
@@ -576,7 +489,7 @@ main() {
     fi
 
     # Log timing summary
-    log_hook_end
+    log_hook_end "stop"
     exit 0
 }
 

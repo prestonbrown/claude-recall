@@ -22,13 +22,11 @@ try:
     from core._version import __version__
     from core.commands import COMMAND_REGISTRY, dispatch_command
     from core.manager import LessonsManager
-    from core.models import ROBOT_EMOJI, LessonRating
     from core.paths import PathResolver
 except ImportError:
     from _version import __version__
     from commands import COMMAND_REGISTRY, dispatch_command
     from manager import LessonsManager
-    from models import ROBOT_EMOJI, LessonRating
     from paths import PathResolver
 
 
@@ -371,114 +369,12 @@ def main():
     manager = LessonsManager(lessons_base, project_root)
 
     try:
-        # Use Command pattern for registered commands (incremental migration)
+        # Use Command pattern for registered commands
         if args.command in COMMAND_REGISTRY:
             return dispatch_command(args, manager)
 
-        # Legacy if-elif chain for commands not yet migrated
-        elif args.command == "add":
-            level = "system" if args.system else "project"
-            promotable = not getattr(args, "no_promote", False)
-            lesson_type = getattr(args, "type", "")
-            lesson_id = manager.add_lesson(
-                level=level,
-                category=args.category,
-                title=args.title,
-                content=args.content,
-                force=args.force,
-                promotable=promotable,
-                lesson_type=lesson_type,
-            )
-            promo_note = " (no-promote)" if not promotable else ""
-            print(f"Added {level} lesson {lesson_id}: {args.title}{promo_note}")
-
-        elif args.command == "add-ai":
-            level = "system" if args.system else "project"
-            promotable = not getattr(args, "no_promote", False)
-            lesson_type = getattr(args, "type", "")
-            lesson_id = manager.add_ai_lesson(
-                level=level,
-                category=args.category,
-                title=args.title,
-                content=args.content,
-                promotable=promotable,
-                lesson_type=lesson_type,
-            )
-            promo_note = " (no-promote)" if not promotable else ""
-            print(f"Added AI {level} lesson {lesson_id}: {args.title}{promo_note}")
-
-        elif args.command == "add-system":
-            # Alias for add --system (backward compatibility with bash script)
-            lesson_id = manager.add_lesson(
-                level="system",
-                category=args.category,
-                title=args.title,
-                content=args.content,
-                force=args.force,
-            )
-            print(f"Added system lesson {lesson_id}: {args.title}")
-
-        elif args.command == "cite":
-            for lesson_id in args.lesson_ids:
-                try:
-                    result = manager.cite_lesson(lesson_id)
-                    if result.promotion_ready:
-                        print(f"PROMOTION_READY:{result.lesson_id}:{result.uses}")
-                    else:
-                        print(f"OK:{result.uses}")
-                except ValueError as e:
-                    print(f"Error:{lesson_id}:{e}", file=sys.stderr)
-
-        elif args.command == "inject":
-            result = manager.inject_context(args.top_n)
-            print(result.format())
-
-        elif args.command == "list":
-            scope = "all"
-            if args.project:
-                scope = "project"
-            elif args.system:
-                scope = "system"
-
-            lessons = manager.list_lessons(
-                scope=scope,
-                search=args.search,
-                category=args.category,
-                stale_only=args.stale,
-            )
-
-            if not lessons:
-                print("(no lessons found)")
-            else:
-                for lesson in lessons:
-                    rating = LessonRating.calculate(lesson.uses, lesson.velocity)
-                    prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
-                    stale = " [STALE]" if lesson.is_stale() else ""
-                    print(f"[{lesson.id}] {rating} {prefix}{lesson.title}{stale}")
-                    print(f"    -> {lesson.content}")
-                print(f"\nTotal: {len(lessons)} lesson(s)")
-
-        elif args.command == "decay":
-            result = manager.decay_lessons(args.days)
-            print(result.message)
-
-        elif args.command == "edit":
-            manager.edit_lesson(args.lesson_id, args.content)
-            print(f"Updated {args.lesson_id} content")
-
-        elif args.command == "delete":
-            manager.delete_lesson(args.lesson_id)
-            print(f"Deleted {args.lesson_id}")
-
-        elif args.command == "promote":
-            new_id = manager.promote_lesson(args.lesson_id)
-            print(f"Promoted {args.lesson_id} -> {new_id}")
-
-        elif args.command == "score-relevance":
-            result = manager.score_relevance(args.text, timeout_seconds=args.timeout)
-            print(result.format(top_n=args.top, min_score=args.min_score))
-
-        elif args.command in ("handoff", "approach"):
+        # Commands with subcommands or special handling
+        if args.command in ("handoff", "approach"):
             if args.command == "approach":
                 print("Note: 'approach' command is deprecated, use 'handoff' instead", file=sys.stderr)
 
