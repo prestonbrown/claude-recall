@@ -480,11 +480,32 @@ test_special_characters_in_content() {
     local output
     output=$("$MANAGER" add pattern "Special Chars" "Content with 'quotes' and \"double quotes\" and \$vars")
     assert_contains "$output" "L001" "Should handle special characters"
-    
+
     local lessons_file="$TEST_DIR/project/.claude-recall/LESSONS.md"
     local content
     content=$(cat "$lessons_file")
     assert_contains "$content" "quotes" "Content should be preserved"
+}
+
+test_manager_finds_cli_in_core_subdirectory() {
+    # Simulate installed layout: lessons-manager.sh at root, cli.py in core/
+    local install_dir="$TEST_DIR/installed"
+    mkdir -p "$install_dir/core"
+
+    # Copy script to root (cli.py goes in core/)
+    cp "$MANAGER" "$install_dir/lessons-manager.sh"
+
+    # Create a minimal cli.py stub that just prints success
+    cat > "$install_dir/core/cli.py" << 'STUBEOF'
+#!/usr/bin/env python3
+print("CLI_FOUND_SUCCESS")
+STUBEOF
+    chmod +x "$install_dir/core/cli.py"
+
+    # Run from installed location - should find cli.py in core/
+    local output
+    output=$("$install_dir/lessons-manager.sh" 2>&1)
+    assert_contains "$output" "CLI_FOUND_SUCCESS" "Should find cli.py in core/ subdirectory"
 }
 
 # =============================================================================
@@ -507,7 +528,8 @@ main() {
     run_test "add --force bypasses duplicate" test_add_force_bypasses_duplicate
     run_test "categories accepted" test_categories_accepted
     run_test "special characters in content" test_special_characters_in_content
-    
+    run_test "manager finds cli.py in core/ subdirectory" test_manager_finds_cli_in_core_subdirectory
+
     # Cite operations
     run_test "cite lesson" test_cite_lesson
     run_test "cite updates last date" test_cite_updates_last_date

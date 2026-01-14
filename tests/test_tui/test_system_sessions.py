@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """
-Tests for system/warmup session filtering in the TUI.
+Tests for agent session filtering in the TUI.
 
 These tests verify:
-- System sessions ("System" and "Warmup" origin) hidden by default
-- Toggle shows/hides system sessions
+- Agent sessions (all non-"User" origins) hidden by default
+- Toggle shows/hides agent sessions
 - Count indicator shows correct numbers
-- Footer hint shows toggle key
+- Command palette has toggle option
 """
 
 import json
@@ -104,25 +104,34 @@ def mock_claude_home_with_system_sessions(tmp_path: Path, monkeypatch, mock_stat
     project_dir.mkdir(parents=True)
 
     # User sessions (should be visible by default)
+    # Note: Prompts must NOT start with agent keywords (implement, fix, explore, etc.)
     create_transcript(
         project_dir / "sess-user1.jsonl",
-        first_prompt="Help me fix the authentication bug",
+        first_prompt="Help me with the authentication bug",
         start_time=make_timestamp(60),
         end_time=make_timestamp(50),
     )
 
     create_transcript(
         project_dir / "sess-user2.jsonl",
-        first_prompt="Implement the new feature",
+        first_prompt="I need to add a new feature",
         start_time=make_timestamp(40),
         end_time=make_timestamp(30),
     )
 
     create_transcript(
-        project_dir / "sess-explore.jsonl",
-        first_prompt="Explore the codebase for validation patterns",
+        project_dir / "sess-user3.jsonl",
+        first_prompt="Can you help with validation patterns?",
         start_time=make_timestamp(35),
         end_time=make_timestamp(25),
+    )
+
+    # Agent sessions (should be hidden by default) - Explore origin
+    create_transcript(
+        project_dir / "sess-explore.jsonl",
+        first_prompt="Explore the codebase for validation patterns",
+        start_time=make_timestamp(33),
+        end_time=make_timestamp(23),
     )
 
     # System sessions (should be hidden by default)
@@ -161,15 +170,15 @@ def mock_claude_home_with_system_sessions(tmp_path: Path, monkeypatch, mock_stat
     return claude_home
 
 
-# --- Tests for System Sessions Hidden by Default ---
+# --- Tests for Agent Sessions Hidden by Default ---
 
 
 class TestSystemSessionsHiddenByDefault:
-    """Tests that system/warmup sessions are hidden by default."""
+    """Tests that agent sessions (non-User origins) are hidden by default."""
 
     @pytest.mark.asyncio
     async def test_system_sessions_hidden_by_default(self, mock_claude_home_with_system_sessions):
-        """Sessions with origin 'System' should be hidden by default."""
+        """Sessions with non-User origins should be hidden by default."""
         app = RecallMonitorApp()
 
         async with app.run_test() as pilot:
@@ -181,12 +190,12 @@ class TestSystemSessionsHiddenByDefault:
 
             session_table = app.query_one("#session-list", DataTable)
 
-            # Should show: 3 user sessions (user1, user2, explore)
-            # Should NOT show: 2 system + 2 warmup = 4 hidden
+            # Should show: 3 user sessions (user1, user2, user3)
+            # Should NOT show: 1 explore + 2 system + 2 warmup = 5 hidden
             row_count = session_table.row_count
             assert row_count == 3, (
-                f"Expected 3 user sessions (system/warmup hidden by default), got {row_count}. "
-                "System and Warmup sessions should be hidden by default."
+                f"Expected 3 user sessions (agent sessions hidden by default), got {row_count}. "
+                "All non-User sessions should be hidden by default."
             )
 
     @pytest.mark.asyncio
@@ -211,8 +220,8 @@ class TestSystemSessionsHiddenByDefault:
             )
 
     @pytest.mark.asyncio
-    async def test_user_sessions_visible_by_default(self, mock_claude_home_with_system_sessions):
-        """Sessions with origin 'User', 'Explore', 'Plan', 'General' should be visible."""
+    async def test_only_user_sessions_visible_by_default(self, mock_claude_home_with_system_sessions):
+        """Only sessions with origin 'User' should be visible by default."""
         app = RecallMonitorApp()
 
         async with app.run_test() as pilot:
@@ -223,22 +232,24 @@ class TestSystemSessionsHiddenByDefault:
             await pilot.pause()
 
             session_data = app.state.session.data
-            visible_origins = [s.origin for s in session_data.values()]
+            visible_origins = set(s.origin for s in session_data.values())
 
-            # User sessions should be visible
-            assert "User" in visible_origins, "User sessions should be visible"
-            assert "Explore" in visible_origins, "Explore sessions should be visible"
+            # Only User sessions should be visible
+            assert visible_origins == {"User"}, (
+                f"Only 'User' origin should be visible by default. "
+                f"Visible origins: {visible_origins}"
+            )
 
 
-# --- Tests for Toggle System Sessions ---
+# --- Tests for Toggle Agent Sessions ---
 
 
 class TestToggleSystemSessions:
-    """Tests for the system sessions toggle ('w' key)."""
+    """Tests for the agent sessions toggle ('w' key)."""
 
     @pytest.mark.asyncio
     async def test_toggle_shows_system_sessions(self, mock_claude_home_with_system_sessions):
-        """Pressing 'w' should show system/warmup sessions."""
+        """Pressing 'w' should show all agent sessions."""
         app = RecallMonitorApp()
 
         async with app.run_test() as pilot:
@@ -254,15 +265,15 @@ class TestToggleSystemSessions:
             # Initial count should be 3 (user sessions only)
             assert initial_count == 3, f"Expected 3 user sessions initially, got {initial_count}"
 
-            # Press 'w' to toggle - should show ALL sessions including system/warmup
+            # Press 'w' to toggle - should show ALL sessions including agent sessions
             await pilot.press("w")
             await pilot.pause()
 
             after_toggle = session_table.row_count
 
-            # After toggle, should show all 7 sessions
-            assert after_toggle == 7, (
-                f"Expected 7 sessions after toggle (all visible), got {after_toggle}"
+            # After toggle, should show all 8 sessions (3 user + 1 explore + 2 system + 2 warmup)
+            assert after_toggle == 8, (
+                f"Expected 8 sessions after toggle (all visible), got {after_toggle}"
             )
 
     @pytest.mark.asyncio
@@ -372,7 +383,7 @@ class TestSessionCountIndicator:
 
     @pytest.mark.asyncio
     async def test_count_indicator_shows_hidden_count(self, mock_claude_home_with_system_sessions):
-        """Count indicator should show how many system sessions are hidden."""
+        """Count indicator should show how many agent sessions are hidden."""
         app = RecallMonitorApp()
 
         async with app.run_test() as pilot:
@@ -385,11 +396,11 @@ class TestSessionCountIndicator:
             # Get the title content from the Static widget
             title_content = _get_sessions_title_content(app)
 
-            # Should indicate 4 hidden (2 system + 2 warmup)
-            has_hidden_info = "4 system hidden" in title_content or "+4 hidden" in title_content
+            # Should indicate 5 hidden (1 explore + 2 system + 2 warmup)
+            has_hidden_info = "5 agent hidden" in title_content
 
             assert has_hidden_info, (
-                f"Count indicator should show '4 system hidden' or '+4 hidden'. "
+                f"Count indicator should show '5 agent hidden'. "
                 f"Got title: '{title_content}'"
             )
 
@@ -424,15 +435,15 @@ class TestSessionCountIndicator:
             )
 
 
-# --- Tests for Footer Hint ---
+# --- Tests for Binding Exists ---
 
 
 class TestSystemSessionsFooterHint:
-    """Tests for the footer hint about system sessions toggle."""
+    """Tests for the agent sessions toggle binding."""
 
     @pytest.mark.asyncio
-    async def test_footer_shows_system_toggle_hint(self, mock_claude_home_with_system_sessions):
-        """Footer should show '[w] System' hint for system sessions toggle."""
+    async def test_agent_toggle_binding_exists(self, mock_claude_home_with_system_sessions):
+        """'w' key binding should exist for agent sessions toggle."""
         app = RecallMonitorApp()
 
         async with app.run_test() as pilot:
@@ -454,10 +465,10 @@ class TestSystemSessionsFooterHint:
 
             assert w_binding is not None, "Should have 'w' key binding"
 
-            # The binding description should indicate it's for system toggle
+            # The binding description should indicate it's for agents toggle
             desc = w_binding.description.lower()
-            assert "system" in desc, (
-                f"'w' binding should mention 'system', "
+            assert "agents" in desc, (
+                f"'w' binding should mention 'agents', "
                 f"got description: '{w_binding.description}'"
             )
 
@@ -466,11 +477,11 @@ class TestSystemSessionsFooterHint:
 
 
 class TestSystemSessionsWithAllToggle:
-    """Tests for system sessions toggle interaction with 'all projects' toggle."""
+    """Tests for agent sessions toggle interaction with 'all projects' toggle."""
 
     @pytest.mark.asyncio
-    async def test_system_toggle_works_in_all_projects_mode(self, mock_claude_home_with_system_sessions):
-        """System sessions toggle should work when viewing all projects."""
+    async def test_agent_toggle_works_in_all_projects_mode(self, mock_claude_home_with_system_sessions):
+        """Agent sessions toggle should work when viewing all projects."""
         app = RecallMonitorApp()
 
         async with app.run_test() as pilot:
@@ -492,14 +503,14 @@ class TestSystemSessionsWithAllToggle:
                 f"Expected 3 user sessions in all-projects mode, got {initial_count}"
             )
 
-            # Toggle system sessions
+            # Toggle agent sessions
             await pilot.press("w")
             await pilot.pause()
 
             after_toggle = session_table.row_count
 
-            # Should now show all 7 sessions
-            assert after_toggle == 7, (
-                f"Expected 7 sessions after system toggle in all-projects mode, "
+            # Should now show all 8 sessions (3 user + 1 explore + 2 system + 2 warmup)
+            assert after_toggle == 8, (
+                f"Expected 8 sessions after agent toggle in all-projects mode, "
                 f"got {after_toggle}"
             )

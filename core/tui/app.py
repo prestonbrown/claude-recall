@@ -766,8 +766,8 @@ class RecallMonitorApp(App):
         Binding("r", "refresh", "Refresh"),
         Binding("a", "toggle_all", "All"),
         Binding("e", "expand_session", "Expand/Enrich"),
-        Binding("c", "toggle_completed", "Completed"),
-        Binding("w", "toggle_system_sessions", "System", show=True),
+        Binding("c", "toggle_completed", "Completed", show=False),
+        Binding("w", "toggle_agent_sessions", "Agents", show=False),
         Binding("t", "toggle_timeline", "Timeline", show=True),
         Binding("ctrl+c", "copy_session", "Copy", priority=True),
         Binding("h", "goto_handoff", "Handoff", show=False),
@@ -814,30 +814,83 @@ class RecallMonitorApp(App):
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         """Add custom commands to the command palette."""
         yield from super().get_system_commands(screen)
+        # Tab switching
+        yield SystemCommand(
+            "Go to Live Activity",
+            "Switch to Live Activity tab (F1)",
+            lambda: self.action_switch_tab("live"),
+        )
+        yield SystemCommand(
+            "Go to Health",
+            "Switch to Health tab (F2)",
+            lambda: self.action_switch_tab("health"),
+        )
+        yield SystemCommand(
+            "Go to State",
+            "Switch to State tab (F3)",
+            lambda: self.action_switch_tab("state"),
+        )
+        yield SystemCommand(
+            "Go to Session",
+            "Switch to Session tab (F4)",
+            lambda: self.action_switch_tab("session"),
+        )
+        yield SystemCommand(
+            "Go to Charts",
+            "Switch to Charts tab (F5)",
+            lambda: self.action_switch_tab("charts"),
+        )
+        yield SystemCommand(
+            "Go to Handoffs",
+            "Switch to Handoffs tab (F6)",
+            lambda: self.action_switch_tab("handoffs"),
+        )
+        # Actions
         yield SystemCommand(
             "Refresh",
-            "Refresh all views (events, health, state, sessions)",
+            "Refresh all views (r)",
             self.action_refresh,
         )
         yield SystemCommand(
             "Toggle Pause",
-            "Pause or resume auto-refresh",
+            "Pause or resume auto-refresh (p)",
             self.action_toggle_pause,
         )
         yield SystemCommand(
             "Toggle All Projects",
-            "Switch between current project and all projects",
+            "Switch between current project and all projects (a)",
             self.action_toggle_all,
         )
         yield SystemCommand(
+            "Expand/Enrich Session",
+            "Load full session details with enrichment (e)",
+            self.action_expand_session,
+        )
+        yield SystemCommand(
+            "Toggle Timeline View",
+            "Switch between list and timeline view for sessions (t)",
+            self.action_toggle_timeline,
+        )
+        yield SystemCommand(
+            "Copy Session",
+            "Copy selected session ID to clipboard (ctrl+c)",
+            self.action_copy_session,
+        )
+        yield SystemCommand(
+            "Go to Handoff",
+            "Jump to handoff tab for selected session (h)",
+            self.action_goto_handoff,
+        )
+        # Filters
+        yield SystemCommand(
             "Toggle Completed Handoffs",
-            "Show or hide completed handoffs",
+            "Show or hide completed handoffs (c)",
             self.action_toggle_completed,
         )
         yield SystemCommand(
-            "Toggle System Sessions",
-            "Show or hide system/warmup sessions",
-            self.action_toggle_system_sessions,
+            "Toggle Agent Sessions",
+            "Show or hide agent sessions: System, Explore, Plan, General (w)",
+            self.action_toggle_agent_sessions,
         )
 
     def compose(self) -> ComposeResult:
@@ -1302,16 +1355,16 @@ class RecallMonitorApp(App):
 
         state_widget.update("\n".join(lines))
 
-    def _is_system_session(self, summary: TranscriptSummary) -> bool:
-        """Check if a session is a system/warmup session.
+    def _is_agent_session(self, summary: TranscriptSummary) -> bool:
+        """Check if a session is an agent/system session (not direct user).
 
         Args:
             summary: The session summary to check
 
         Returns:
-            True if the session origin is 'System' or 'Warmup', False otherwise
+            True if the session origin is not 'User', False otherwise
         """
-        return summary.origin in ("System", "Warmup")
+        return summary.origin != "User"
 
     def _should_show_session(self, summary: TranscriptSummary) -> bool:
         """Determine if a session should be shown based on current filter settings.
@@ -1322,27 +1375,27 @@ class RecallMonitorApp(App):
         Returns:
             True if the session should be displayed, False otherwise
         """
-        # Always show non-system sessions
-        if not self._is_system_session(summary):
+        # Always show user sessions
+        if not self._is_agent_session(summary):
             return True
 
-        # Show system sessions if toggle is on
+        # Show agent sessions if toggle is on
         return self.state.session.show_system
 
     def _get_session_counts(self, sessions: List[TranscriptSummary]) -> tuple:
-        """Calculate counts for user and system sessions.
+        """Calculate counts for user and agent sessions.
 
         Args:
             sessions: List of all sessions
 
         Returns:
-            Tuple of (user_count, system_count)
+            Tuple of (user_count, agent_count)
         """
         user_count = 0
         system_count = 0
 
         for session in sessions:
-            if self._is_system_session(session):
+            if self._is_agent_session(session):
                 system_count += 1
             else:
                 user_count += 1
@@ -1364,7 +1417,7 @@ class RecallMonitorApp(App):
 
             if system_count > 0 and not self.state.session.show_system:
                 title_widget.update(
-                    f"Sessions ({user_count} user, {system_count} system hidden)"
+                    f"Sessions ({user_count} user, {system_count} agent hidden)"
                 )
             else:
                 title_widget.update(f"Sessions ({user_count + system_count})")
@@ -1408,7 +1461,7 @@ class RecallMonitorApp(App):
         self._update_session_title(sessions)
 
         for summary in sessions:
-            # Skip system sessions unless toggle is on
+            # Skip agent sessions unless toggle is on
             if not self._should_show_session(summary):
                 continue
 
@@ -2926,11 +2979,11 @@ class RecallMonitorApp(App):
             self.notify("Showing current project, non-empty sessions")
         self._refresh_session_list()
 
-    def action_toggle_system_sessions(self) -> None:
-        """Toggle visibility of system/warmup sessions."""
+    def action_toggle_agent_sessions(self) -> None:
+        """Toggle visibility of agent sessions (non-User origins)."""
         self.state.session.show_system = not self.state.session.show_system
         self._refresh_session_list()
-        self.notify(f"System sessions {'shown' if self.state.session.show_system else 'hidden'}")
+        self.notify(f"Agent sessions {'shown' if self.state.session.show_system else 'hidden'}")
 
     def action_expand_session(self) -> None:
         """Context-sensitive 'e' key action.
@@ -3122,7 +3175,7 @@ class RecallMonitorApp(App):
         self._update_session_title(sessions)
 
         for summary in sessions:
-            # Skip system sessions unless toggle is on
+            # Skip agent sessions unless toggle is on
             if not self._should_show_session(summary):
                 continue
 

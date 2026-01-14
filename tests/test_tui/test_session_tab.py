@@ -145,8 +145,9 @@ def mock_claude_home(tmp_path: Path, monkeypatch) -> Path:
 
     # Session 4: session with very long topic (> 100 chars)
     # This long prompt tests that the full topic is displayed without truncation
+    # Note: Prompt must NOT start with agent keywords (implement, fix, etc.) to be detected as "User"
     long_topic = (
-        "Implement a comprehensive authentication system with OAuth2 support, "
+        "I need help implementing a comprehensive authentication system with OAuth2 support, "
         "including Google and GitHub providers, session management with Redis, "
         "and JWT token refresh mechanisms for the new microservices architecture"
     )

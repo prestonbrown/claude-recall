@@ -11,11 +11,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_MANAGER="$SCRIPT_DIR/cli.py"
 
-# Verify Python manager exists
-if [[ ! -f "$PYTHON_MANAGER" ]]; then
-    echo "Error: Python manager not found at $PYTHON_MANAGER" >&2
+# Find cli.py - check same directory first, then core/ subdirectory
+# (handles both development and installed layouts)
+if [[ -f "$SCRIPT_DIR/cli.py" ]]; then
+    PYTHON_MANAGER="$SCRIPT_DIR/cli.py"
+elif [[ -f "$SCRIPT_DIR/core/cli.py" ]]; then
+    PYTHON_MANAGER="$SCRIPT_DIR/core/cli.py"
+else
+    echo "Error: Python manager not found at $SCRIPT_DIR/cli.py or $SCRIPT_DIR/core/cli.py" >&2
     exit 1
 fi
 
