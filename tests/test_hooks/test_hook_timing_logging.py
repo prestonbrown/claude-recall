@@ -356,3 +356,160 @@ class TestHookLibFunctions:
             "Should use '-lt 1' to log at the default level (1).\n"
             f"Function body: {func_body}"
         )
+
+    def test_log_hook_end_passes_phases_as_named_arg(self, hook_lib_path):
+        """
+        Verify log_hook_end passes PHASE_TIMES_JSON as --phases named argument.
+
+        The bug was passing it as a positional argument, but CLI expects --phases.
+        """
+        content = hook_lib_path.read_text()
+
+        # Find the actual function definition (line starts with "log_hook_end() {")
+        # Skip the header comment which has "log_hook_end()" without the brace
+        start_marker = "\nlog_hook_end() {"
+        end_marker = "\n# ======"  # Section delimiter
+
+        start_idx = content.find(start_marker)
+        assert start_idx != -1, "Could not find log_hook_end function definition in hook-lib.sh"
+
+        # Find end of function (next section)
+        end_idx = content.find(end_marker, start_idx + len(start_marker))
+        if end_idx == -1:
+            end_idx = len(content)
+
+        func_body = content[start_idx:end_idx]
+
+        # The fix should use --phases when passing PHASE_TIMES_JSON
+        assert '--phases' in func_body, (
+            "log_hook_end should pass phases as --phases named argument.\n"
+            "The bug was passing PHASE_TIMES_JSON as positional arg, which CLI ignores.\n"
+            f"Function body: {func_body}"
+        )
+
+
+# =============================================================================
+# Tests: End-to-End Timing Flow
+# =============================================================================
+
+
+class TestEndToEndTimingFlow:
+    """Test that timing events flow correctly from CLI to stats aggregator."""
+
+    def test_cli_hook_end_with_phases_creates_valid_event(self, tmp_path):
+        """
+        CLI debug hook-end with --phases should create a valid hook_end event
+        with phases data that stats aggregator can read.
+        """
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)
+
+        env = {
+            **{k: v for k, v in os.environ.items() if k in {
+                "PATH", "SHELL", "TERM", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE"
+            }},
+            "CLAUDE_RECALL_STATE": str(state_dir),
+            "CLAUDE_RECALL_DEBUG": "1",
+            "PROJECT_DIR": str(tmp_path / "project"),
+        }
+
+        # Run CLI hook-end with phases
+        result = subprocess.run(
+            [
+                "python3", "-m", "core.cli",
+                "debug", "hook-end", "inject", "150.5",
+                "--phases", '{"load_lessons": 80.0, "load_handoffs": 70.5}'
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        # Should succeed
+        assert result.returncode == 0, (
+            f"CLI hook-end should succeed.\n"
+            f"stdout: {result.stdout}\n"
+            f"stderr: {result.stderr}"
+        )
+
+        # Log file should exist and contain valid hook_end event
+        log_file = state_dir / "debug.log"
+        assert log_file.exists(), "debug.log should be created"
+
+        log_content = log_file.read_text()
+        events = [json.loads(line) for line in log_content.strip().split('\n') if line]
+
+        # Find hook_end event
+        hook_end_events = [e for e in events if e.get("event") == "hook_end"]
+        assert len(hook_end_events) == 1, f"Expected 1 hook_end event, got {len(hook_end_events)}"
+
+        event = hook_end_events[0]
+        assert event["hook"] == "inject"
+        assert event["total_ms"] == 150.5
+        assert "phases" in event, "hook_end should have phases"
+        assert event["phases"]["load_lessons"] == 80.0
+        assert event["phases"]["load_handoffs"] == 70.5
+
+    def test_stats_aggregator_extracts_timing_from_hook_end(self, tmp_path):
+        """
+        Stats aggregator should correctly extract timing data from hook_end events.
+        """
+        from datetime import datetime, timezone, timedelta
+
+        # Create log file with hook_end events
+        log_dir = tmp_path / "state"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "debug.log"
+
+        # Create recent timestamps (within 24h rolling window)
+        now = datetime.now(timezone.utc)
+        ts = now.isoformat().replace("+00:00", "Z")
+
+        events = [
+            {
+                "event": "hook_end",
+                "level": "debug",
+                "timestamp": ts,
+                "session_id": "sess-1",
+                "pid": 1,
+                "project": "test-proj",
+                "hook": "inject",
+                "total_ms": 100.0,
+                "phases": {"load_lessons": 60.0, "load_handoffs": 40.0}
+            },
+            {
+                "event": "hook_end",
+                "level": "debug",
+                "timestamp": ts,
+                "session_id": "sess-1",
+                "pid": 2,
+                "project": "test-proj",
+                "hook": "stop",
+                "total_ms": 200.0,
+                "phases": {"parse": 80.0, "cite": 120.0}
+            },
+        ]
+
+        with open(log_file, "w") as f:
+            for e in events:
+                f.write(json.dumps(e) + "\n")
+
+        # Import and use stats aggregator
+        from core.tui.log_reader import LogReader
+        from core.tui.stats import StatsAggregator
+
+        reader = LogReader(log_file, max_buffer=1000)
+        aggregator = StatsAggregator(reader)
+        stats = aggregator.compute()
+
+        # Verify timing stats are computed
+        assert stats.avg_hook_ms > 0, f"avg_hook_ms should be > 0, got {stats.avg_hook_ms}"
+        assert stats.avg_hook_ms == 150.0, f"Expected avg 150.0ms, got {stats.avg_hook_ms}"
+        assert stats.max_hook_ms == 200.0, f"Expected max 200.0ms, got {stats.max_hook_ms}"
+
+        # Verify hook breakdown
+        assert "inject" in stats.hook_timings, "Should have inject hook timing"
+        assert "stop" in stats.hook_timings, "Should have stop hook timing"
+        assert stats.hook_timings["inject"] == [100.0]
+        assert stats.hook_timings["stop"] == [200.0]
