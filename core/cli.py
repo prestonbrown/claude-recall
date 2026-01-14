@@ -376,6 +376,23 @@ def main():
         help="Value type (string, int, bool)"
     )
 
+    # alerts command - real-time alerting system
+    alerts_parser = subparsers.add_parser("alerts", help="Real-time alerting system")
+    alerts_subparsers = alerts_parser.add_subparsers(dest="alerts_command", help="Alerts commands")
+
+    # alerts check - show current alerts
+    alerts_subparsers.add_parser("check", help="Show current active alerts")
+
+    # alerts digest - show daily digest
+    alerts_subparsers.add_parser("digest", help="Show daily digest summary")
+
+    # alerts config - show alerting configuration
+    alerts_subparsers.add_parser("config", help="Show alerting configuration")
+
+    # alerts send - send alerts to webhook (for testing)
+    alerts_send_parser = alerts_subparsers.add_parser("send", help="Send alerts to webhook")
+    alerts_send_parser.add_argument("--bell", action="store_true", help="Also ring terminal bell")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -954,6 +971,72 @@ def main():
                 value = get_setting(args.key, args.default if args.default else None)
                 # Print value or empty string for None
                 print(value if value is not None else "")
+
+        elif args.command == "alerts":
+            try:
+                from core.alerts import AlertsManager, get_alert_settings, AlertSeverity
+            except ImportError:
+                from alerts import AlertsManager, get_alert_settings, AlertSeverity
+
+            alerts_manager = AlertsManager(project_root=project_root)
+
+            if not args.alerts_command:
+                alerts_parser.print_help()
+                sys.exit(1)
+
+            if args.alerts_command == "check":
+                alerts = alerts_manager.get_alerts()
+                if not alerts:
+                    print("No active alerts - all systems healthy")
+                else:
+                    print(f"Active Alerts ({len(alerts)}):")
+                    print()
+                    for alert in alerts:
+                        severity_marker = {
+                            AlertSeverity.INFO: "[INFO]",
+                            AlertSeverity.WARNING: "[WARN]",
+                            AlertSeverity.CRITICAL: "[CRIT]",
+                        }.get(alert.severity, "[????]")
+                        print(f"  {severity_marker} {alert.message}")
+                        if alert.details:
+                            for key, value in alert.details.items():
+                                if key not in ("count", "threshold", "threshold_days"):
+                                    print(f"           {key}: {value}")
+                        print()
+
+            elif args.alerts_command == "digest":
+                digest = alerts_manager.generate_digest()
+                print(digest)
+
+            elif args.alerts_command == "config":
+                settings = get_alert_settings()
+                print("Alerts Configuration:")
+                print(f"  enabled: {settings['enabled']}")
+                print(f"  stale_handoff_days: {settings['stale_handoff_days']}")
+                print(f"  latency_spike_multiplier: {settings['latency_spike_multiplier']}")
+                print(f"  error_rate_threshold: {settings['error_rate_threshold']}")
+                print(f"  effectiveness_threshold: {settings['effectiveness_threshold']}")
+                print(f"  webhook_url: {settings['webhook_url'] or '(not configured)'}")
+                print()
+                print("To enable alerts, add to ~/.claude/settings.json:")
+                print('  "claudeRecall": { "alerts": { "enabled": true } }')
+
+            elif args.alerts_command == "send":
+                bell = getattr(args, 'bell', False)
+                if bell:
+                    alerts_manager.send_bell_if_needed()
+                result = alerts_manager.send_webhook()
+                if result:
+                    print("Webhook sent successfully")
+                else:
+                    settings = get_alert_settings()
+                    if not settings['webhook_url']:
+                        print("No webhook URL configured", file=sys.stderr)
+                    elif not settings['enabled']:
+                        print("Alerts not enabled", file=sys.stderr)
+                    else:
+                        print("Failed to send webhook", file=sys.stderr)
+                    sys.exit(1)
 
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)

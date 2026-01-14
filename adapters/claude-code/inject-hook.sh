@@ -295,6 +295,16 @@ $todo_continuation"
 EOF
     fi
 
+    # Check for health alerts if alerting is enabled (non-blocking, runs in background)
+    # This uses the alerts module to detect issues like stale handoffs or latency spikes
+    if [[ -f "$PYTHON_MANAGER" ]]; then
+        (
+            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+                CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
+                python3 "$PYTHON_MANAGER" alerts send --bell 2>/dev/null || true
+        ) &
+    fi
+
     # Trigger decay check in background (runs weekly)
     run_decay_if_due
 
