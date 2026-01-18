@@ -131,6 +131,43 @@ class InjectCommand(Command):
         return 0
 
 
+class InjectCombinedCommand(Command):
+    """Output lessons, handoffs, and todos in JSON for single-call injection.
+
+    Combines three separate calls into one to reduce subprocess overhead:
+    - inject (lessons)
+    - handoff inject (active handoffs)
+    - handoff inject-todos (todo continuation prompt)
+    """
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        import json
+
+        # Get lessons
+        lessons_result = manager.inject_context(args.top_n)
+        lessons_formatted = lessons_result.format()
+
+        # Get handoffs
+        handoffs_formatted = manager.handoff_inject(max_active=5)
+        # Normalize empty handoffs to empty string
+        if handoffs_formatted == "(no active handoffs)":
+            handoffs_formatted = ""
+
+        # Get todos for continuation (only if there are active handoffs)
+        todos_prompt = ""
+        active_handoffs = manager.handoff_list(include_completed=False)
+        if active_handoffs:
+            todos_prompt = manager.handoff_inject_todos()
+
+        output = {
+            "lessons": lessons_formatted,
+            "handoffs": handoffs_formatted,
+            "todos": todos_prompt,
+        }
+        print(json.dumps(output))
+        return 0
+
+
 class ListCommand(Command):
     """List lessons with optional filtering."""
 
@@ -243,6 +280,7 @@ COMMAND_REGISTRY: Dict[str, Type[Command]] = {
     "add-system": AddSystemCommand,
     "cite": CiteCommand,
     "inject": InjectCommand,
+    "inject-combined": InjectCombinedCommand,
     "list": ListCommand,
     "decay": DecayCommand,
     "edit": EditCommand,

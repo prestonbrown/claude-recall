@@ -92,6 +92,14 @@ def main():
     inject_parser = subparsers.add_parser("inject", help="Output top lessons for injection")
     inject_parser.add_argument("top_n", type=int, nargs="?", default=5, help="Number of top lessons")
 
+    # inject-combined command (single-call injection with lessons, handoffs, todos)
+    inject_combined_parser = subparsers.add_parser(
+        "inject-combined", help="Output lessons, handoffs, and todos in JSON"
+    )
+    inject_combined_parser.add_argument(
+        "top_n", type=int, nargs="?", default=5, help="Number of top lessons"
+    )
+
     # list command
     list_parser = subparsers.add_parser("list", help="List lessons")
     list_parser.add_argument("--project", action="store_true", help="Project lessons only")
