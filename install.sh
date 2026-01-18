@@ -201,6 +201,9 @@ install_core() {
     cp "$SCRIPT_DIR/core/debug_logger.py" "$CLAUDE_RECALL_BASE/core/"
     cp "$SCRIPT_DIR/core/context_extractor.py" "$CLAUDE_RECALL_BASE/core/"
     cp "$SCRIPT_DIR/core/__init__.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/commands.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/config.py" "$CLAUDE_RECALL_BASE/core/"
+    cp "$SCRIPT_DIR/core/paths.py" "$CLAUDE_RECALL_BASE/core/"
 
     # Copy TUI module as subpackage
     if [[ -d "$SCRIPT_DIR/core/tui" ]]; then
