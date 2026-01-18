@@ -58,6 +58,7 @@ try:
         extract_event_details,
     )
     from core.tui.app_state import AppState
+    from core.tui.tag_renderer import render_tags
 except ImportError:
     from .analytics import BLOCKED_ALERT_THRESHOLD_DAYS
     from .log_reader import LogReader, format_event_line
@@ -72,6 +73,7 @@ except ImportError:
         extract_event_details,
     )
     from .app_state import AppState
+    from .tag_renderer import render_tags
 
 # Backward compatibility alias for EVENT_COLORS
 EVENT_COLORS = EVENT_TYPE_COLORS
@@ -1736,9 +1738,10 @@ class RecallMonitorApp(App):
             time_str = local_dt.strftime(time_fmt)
 
             if msg.type == "user":
-                # USER: [HH:MM:SS] USER    "First 80 chars of content..."
-                content = msg.content[:80].replace("\n", " ")
-                if len(msg.content) > 80:
+                # USER: [HH:MM:SS] USER    "First 200 chars of content..."
+                content = render_tags(msg.content[:200])
+                content = content.replace("\n", " ")
+                if len(msg.content) > 200:
                     content += "..."
                 session_log.write(f"[cyan][{time_str}] USER    \"{content}\"[/cyan]")
 
@@ -1748,9 +1751,10 @@ class RecallMonitorApp(App):
                     tools_str = ", ".join(msg.tools_used)
                     session_log.write(f"[yellow][{time_str}] TOOL    {tools_str}[/yellow]")
                 else:
-                    # ASSISTANT text only: [HH:MM:SS] CLAUDE  "First 80 chars of response..."
-                    content = msg.content[:80].replace("\n", " ")
-                    if len(msg.content) > 80:
+                    # ASSISTANT text only: [HH:MM:SS] CLAUDE  "First 200 chars of response..."
+                    content = render_tags(msg.content[:200])
+                    content = content.replace("\n", " ")
+                    if len(msg.content) > 200:
                         content += "..."
                     session_log.write(f"[green][{time_str}] CLAUDE  \"{content}\"[/green]")
 
