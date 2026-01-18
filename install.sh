@@ -305,6 +305,7 @@ install_claude() {
     cp "$SCRIPT_DIR/adapters/claude-code/session-end-hook.sh" "$hooks_dir/"
     cp "$SCRIPT_DIR/adapters/claude-code/post-exitplanmode-hook.sh" "$hooks_dir/"
     cp "$SCRIPT_DIR/adapters/claude-code/post-todowrite-hook.sh" "$hooks_dir/"
+    cp "$SCRIPT_DIR/adapters/claude-code/hook-lib.sh" "$hooks_dir/"
     chmod +x "$hooks_dir"/*.sh
 
     # Copy all commands from repo
@@ -506,6 +507,7 @@ uninstall() {
     rm -f "$HOME/.claude/hooks/session-end-hook.sh"
     rm -f "$HOME/.claude/hooks/post-exitplanmode-hook.sh"
     rm -f "$HOME/.claude/hooks/post-todowrite-hook.sh"
+    rm -f "$HOME/.claude/hooks/hook-lib.sh"
     rm -f "$HOME/.claude/commands/lessons.md"
     rm -f "$HOME/.claude/commands/implement.md"
     rm -f "$HOME/.claude/commands/delegate.md"
