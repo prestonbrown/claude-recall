@@ -33,6 +33,19 @@ USER_INDICATORS = [
     "<local-command-caveat>",  # This is a user command!
 ]
 
+# Agent session indicators - system prompts injected for delegated agents
+# These patterns indicate the session is an agent, not a user
+# Tuple format: (indicator_pattern, specific_origin_or_None)
+# If specific_origin is None, returns "Agent"
+AGENT_INDICATORS = [
+    ("<system-reminder>", None),  # System context injection
+    ("you are a software architect", "Plan"),  # Plan agent
+    ("you are an exploration agent", "Explore"),  # Explore agent
+    ("critical: this is a read-only task", "Plan"),  # Plan agent
+    ("you have access to a set of tools", None),  # General agent
+    ("task tool launches", None),  # Task delegation context
+]
+
 
 def detect_origin(first_prompt: str) -> str:
     """
@@ -42,7 +55,7 @@ def detect_origin(first_prompt: str) -> str:
         first_prompt: The first user message content
 
     Returns:
-        One of: "Unknown", "System", "Warmup", "Explore", "Plan", "General", "User"
+        One of: "Unknown", "System", "Warmup", "Explore", "Plan", "General", "Agent", "User"
     """
     # Handle empty/very short prompts
     if not first_prompt or len(first_prompt) < 3:
@@ -85,6 +98,12 @@ def detect_origin(first_prompt: str) -> str:
     general_prefixes = ("implement", "fix", "refactor", "review", "update", "add")
     if any(lower_prompt.startswith(prefix) for prefix in general_prefixes):
         return "General"
+
+    # Check for agent session indicators (before defaulting to User)
+    # These are system prompts injected by Claude Code for delegated agents
+    for indicator, specific_origin in AGENT_INDICATORS:
+        if indicator.lower() in lower_prompt:
+            return specific_origin if specific_origin else "Agent"
 
     # Default to User (natural language, conversational)
     return "User"

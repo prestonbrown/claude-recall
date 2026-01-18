@@ -880,6 +880,66 @@ class TestOriginDetectionFunction:
         assert detect_origin("EXPLORE THE FILES") == "Explore"
         assert detect_origin("Explore The Files") == "Explore"
 
+    # Tests for agent indicator detection (C1 fix)
+
+    def test_detect_agent_system_reminder_tag(self):
+        """Sessions with <system-reminder> should NOT be classified as User."""
+        from core.tui.transcript_reader import detect_origin
+        # This is a typical agent session system prompt injection
+        prompt = "<system-reminder>As you answer the user's questions, you can use..."
+        assert detect_origin(prompt) != "User"
+
+    def test_detect_agent_software_architect(self):
+        """Sessions with 'You are a software architect' should be classified as Plan or Agent."""
+        from core.tui.transcript_reader import detect_origin
+        prompt = "You are a software architect. Your task is to design a system..."
+        result = detect_origin(prompt)
+        assert result in ("Plan", "Agent"), f"Expected Plan or Agent, got {result}"
+
+    def test_detect_agent_exploration_agent(self):
+        """Sessions with 'You are an exploration agent' should be classified as Explore or Agent."""
+        from core.tui.transcript_reader import detect_origin
+        prompt = "You are an exploration agent. Your task is to search through the codebase..."
+        result = detect_origin(prompt)
+        assert result in ("Explore", "Agent"), f"Expected Explore or Agent, got {result}"
+
+    def test_detect_agent_read_only_task(self):
+        """Sessions with 'CRITICAL: This is a READ-ONLY task' should be Plan or Agent."""
+        from core.tui.transcript_reader import detect_origin
+        prompt = "CRITICAL: This is a READ-ONLY task. Do not make any changes..."
+        result = detect_origin(prompt)
+        assert result in ("Plan", "Agent"), f"Expected Plan or Agent, got {result}"
+
+    def test_detect_agent_tools_access(self):
+        """Sessions with 'You have access to a set of tools' should NOT be User."""
+        from core.tui.transcript_reader import detect_origin
+        prompt = "You have access to a set of tools you can use to answer the user's question..."
+        assert detect_origin(prompt) != "User"
+
+    def test_detect_agent_task_tool_launches(self):
+        """Sessions with 'Task tool launches' should NOT be User."""
+        from core.tui.transcript_reader import detect_origin
+        prompt = "Task tool launches sub-agents for parallel work..."
+        assert detect_origin(prompt) != "User"
+
+    def test_detect_agent_case_insensitive(self):
+        """Agent indicator detection should be case-insensitive."""
+        from core.tui.transcript_reader import detect_origin
+        # Test lowercase variant
+        prompt = "you are a software architect..."
+        result = detect_origin(prompt)
+        assert result != "User", f"Expected non-User origin, got {result}"
+
+    def test_detect_agent_system_reminder_embedded(self):
+        """<system-reminder> tag embedded in longer text should still be detected."""
+        from core.tui.transcript_reader import detect_origin
+        prompt = """Some preamble text
+<system-reminder>
+As you answer the user's questions...
+</system-reminder>
+More text follows"""
+        assert detect_origin(prompt) != "User"
+
 
 class TestOriginFieldInSummary:
     """Test that TranscriptSummary includes origin field."""

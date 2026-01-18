@@ -1696,6 +1696,7 @@ class RecallMonitorApp(App):
         # Header: Topic (full first prompt)
         topic = summary.first_prompt.replace("\n", " ")
         session_log.write(f"[bold]Topic:[/bold] {topic}")
+        session_log.write(f"[bold]Session:[/bold] {session_id}")
         session_log.write("")
 
         # Handoff correlation - find handoffs active during this session

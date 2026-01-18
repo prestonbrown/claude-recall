@@ -320,7 +320,7 @@ class HandoffsMixin:
     VALID_AGENTS = {"explore", "general-purpose", "plan", "review", "user"}
 
     # Sub-agent session origins that should be blocked from creating handoffs
-    SUB_AGENT_ORIGINS = {"Explore", "Plan", "General", "System"}
+    SUB_AGENT_ORIGINS = {"Explore", "Plan", "General", "System", "Agent"}
 
     # -------------------------------------------------------------------------
     # Handoffs Tracking

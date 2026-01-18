@@ -584,6 +584,76 @@ class TestSessionEvents:
                 f"Lines: {lines_text[:300]}..."
             )
 
+    @pytest.mark.asyncio
+    async def test_show_session_events_displays_session_id(
+        self, mock_claude_home: Path, temp_state_dir: Path
+    ):
+        """Session events panel should display the full session ID.
+
+        C2 fix: The session ID should be displayed at the top of the session
+        events panel to help identify which session is being viewed.
+        """
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_events = app.query_one("#session-events", RichLog)
+
+            # Call _show_session_events for a specific session
+            app._show_session_events("sess-recent")
+            await pilot.pause()
+
+            # Get the rendered text content
+            lines_text = str(session_events.lines)
+
+            # Session ID should be displayed somewhere in the panel
+            assert "sess-recent" in lines_text, (
+                f"Session events should display the full session ID 'sess-recent'. "
+                f"Lines: {lines_text[:500]}... "
+                "Add a line like: session_log.write(f'[bold]Session:[/bold] {session_id}')"
+            )
+
+    @pytest.mark.asyncio
+    async def test_show_session_events_session_id_at_top(
+        self, mock_claude_home: Path, temp_state_dir: Path
+    ):
+        """Session ID should appear near the top of the events panel.
+
+        The session ID should be displayed early in the output, ideally
+        right after the topic or as a separate header line.
+        """
+        app = RecallMonitorApp()
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # Switch to Session tab
+            await pilot.press("f4")
+            await pilot.pause()
+
+            session_events = app.query_one("#session-events", RichLog)
+
+            # Call _show_session_events for a specific session
+            app._show_session_events("sess-older")
+            await pilot.pause()
+
+            # Check that session ID appears in the first few lines
+            lines = session_events.lines
+
+            # Session ID should be in one of the first 5 lines (Topic, Session, blank, etc.)
+            first_lines_text = str(lines[:5]) if len(lines) >= 5 else str(lines)
+
+            assert "sess-older" in first_lines_text, (
+                f"Session ID should appear in the first few lines of the session events panel. "
+                f"First lines: {first_lines_text}... "
+                "The session ID helps users identify which session they're viewing."
+            )
+
 
 # --- Tests for Session Table Integration ---
 
