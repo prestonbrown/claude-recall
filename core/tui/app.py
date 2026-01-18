@@ -1661,6 +1661,10 @@ class RecallMonitorApp(App):
         # Check if we're viewing the same session (to avoid scroll reset)
         is_same_session = self.state.session.current_id == session_id
 
+        # Save scroll position before clearing (only for same session refresh)
+        saved_scroll_x = session_log.scroll_x if is_same_session else None
+        saved_scroll_y = session_log.scroll_y if is_same_session else None
+
         session_log.clear()
 
         # Update tracking
@@ -1738,9 +1742,16 @@ class RecallMonitorApp(App):
                         content += "..."
                     session_log.write(f"[green][{time_str}] CLAUDE  \"{content}\"[/green]")
 
-        # Only scroll to top when viewing a different session (not on refresh of same session)
-        if not is_same_session:
-            # Defer scroll to after refresh so content is fully rendered
+        # Handle scroll position: restore for same session, scroll to top for new session
+        if is_same_session and saved_scroll_x is not None and saved_scroll_y is not None:
+            # Restore scroll position on refresh of same session
+            def restore_scroll() -> None:
+                session_log.scroll_x = min(saved_scroll_x, session_log.max_scroll_x)
+                session_log.scroll_y = min(saved_scroll_y, session_log.max_scroll_y)
+
+            self.call_after_refresh(restore_scroll)
+        else:
+            # Scroll to top when viewing a different session
             self.call_after_refresh(session_log.scroll_home)
 
     # -------------------------------------------------------------------------
@@ -2023,6 +2034,7 @@ class RecallMonitorApp(App):
 
         # Check if viewing same handoff (refresh) vs new selection
         is_same_handoff = self.state.handoff.displayed_id == handoff_id
+        saved_scroll_x = details_log.scroll_x if is_same_handoff else None
         saved_scroll_y = details_log.scroll_y if is_same_handoff else None
 
         details_log.clear()
@@ -2280,9 +2292,10 @@ class RecallMonitorApp(App):
 
         # Track displayed handoff and handle scroll position
         self.state.handoff.displayed_id = handoff_id
-        if is_same_handoff and saved_scroll_y is not None and saved_scroll_y > 0:
+        if is_same_handoff and saved_scroll_x is not None and saved_scroll_y is not None:
             # Restore scroll position on refresh
             def restore_scroll() -> None:
+                details_log.scroll_x = min(saved_scroll_x, details_log.max_scroll_x)
                 details_log.scroll_y = min(saved_scroll_y, details_log.max_scroll_y)
 
             self.call_after_refresh(restore_scroll)
@@ -2568,6 +2581,7 @@ class RecallMonitorApp(App):
         handoff_table = self.query_one("#handoff-list", DataTable)
 
         # Save scroll position and cursor row before clearing
+        saved_scroll_x = handoff_table.scroll_x
         saved_scroll_y = handoff_table.scroll_y
         saved_cursor_row = handoff_table.cursor_row
 
@@ -2608,6 +2622,7 @@ class RecallMonitorApp(App):
 
         # Restore scroll position FIRST (before cursor movement)
         # This prevents the selected item from jumping to the bottom of visible area
+        handoff_table.scroll_x = min(saved_scroll_x, handoff_table.max_scroll_x)
         handoff_table.scroll_y = min(saved_scroll_y, handoff_table.max_scroll_y)
 
         # Restore cursor position AFTER scroll (row is already visible, no auto-scroll triggered)
@@ -2618,7 +2633,7 @@ class RecallMonitorApp(App):
                 row_keys = list(handoff_table.rows.keys())
                 for idx, row_key in enumerate(row_keys):
                     if row_key.value == self.state.handoff.user_selected_id:
-                        handoff_table.move_cursor(row=idx)
+                        handoff_table.move_cursor(row=idx, scroll=False)
                         break
             else:
                 # Handoff was removed/archived, clear the details panel
@@ -2631,7 +2646,7 @@ class RecallMonitorApp(App):
         else:
             # No explicit selection - restore cursor row if valid
             if saved_cursor_row is not None and saved_cursor_row < handoff_table.row_count:
-                handoff_table.move_cursor(row=saved_cursor_row)
+                handoff_table.move_cursor(row=saved_cursor_row, scroll=False)
 
         # Clear confirmed selection if the handoff was removed
         if self.state.handoff.current_id is not None:
@@ -3081,7 +3096,8 @@ class RecallMonitorApp(App):
         session_table = self.query_one("#session-list", DataTable)
 
         # Save scroll position before clearing
-        scroll_y = session_table.scroll_y
+        saved_scroll_x = session_table.scroll_x
+        saved_scroll_y = session_table.scroll_y
 
         # Check if we need to rebuild columns (Project column visibility changed)
         column_labels = [str(col.label) for col in session_table.columns.values()]
@@ -3132,7 +3148,8 @@ class RecallMonitorApp(App):
             self._populate_session_row(session_table, session_id, summary)
 
         # Restore scroll position
-        session_table.scroll_y = scroll_y
+        session_table.scroll_x = min(saved_scroll_x, session_table.max_scroll_x)
+        session_table.scroll_y = min(saved_scroll_y, session_table.max_scroll_y)
 
         # Preserve user's selection if it still exists in the new data
         if self.state.session.user_selected_id is not None:
@@ -3141,7 +3158,7 @@ class RecallMonitorApp(App):
                 row_keys = list(session_table.rows.keys())
                 for idx, row_key in enumerate(row_keys):
                     if row_key.value == self.state.session.user_selected_id:
-                        session_table.move_cursor(row=idx)
+                        session_table.move_cursor(row=idx, scroll=False)
                         break
 
     @work(exclusive=True, group="session_refresh")
