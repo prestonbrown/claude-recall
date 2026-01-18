@@ -341,11 +341,13 @@ StatusSelectScreen, PhaseSelectScreen, AgentSelectScreen {
 /* Filter row */
 .filter-row {
     width: 100%;
-    height: auto;
+    height: 3;
+    align: left middle;
 }
 
 .filter-label {
     width: auto;
+    content-align: center middle;
 }
 
 #handoff-filter {

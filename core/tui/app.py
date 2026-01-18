@@ -1398,7 +1398,7 @@ class RecallMonitorApp(App):
         # Get sessions from TranscriptReader
         # _show_all toggles: all projects + all sessions (including empty) vs current project + non-empty
         if self._show_all:
-            sessions = self.transcript_reader.list_all_sessions(limit=50, include_empty=True)
+            sessions = self.transcript_reader.list_all_sessions_fast(limit=50, max_age_hours=168, include_empty=True)  # 7 days
         else:
             sessions = self.transcript_reader.list_sessions(
                 self._current_project, limit=50, include_empty=False
@@ -3128,7 +3128,7 @@ class RecallMonitorApp(App):
         # Get sessions from TranscriptReader
         # _show_all toggles: all projects + all sessions (including empty) vs current project + non-empty
         if self._show_all:
-            sessions = self.transcript_reader.list_all_sessions(limit=50, include_empty=True)
+            sessions = self.transcript_reader.list_all_sessions_fast(limit=50, max_age_hours=168, include_empty=True)  # 7 days
         else:
             sessions = self.transcript_reader.list_sessions(
                 self._current_project, limit=50, include_empty=False
