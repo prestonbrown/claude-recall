@@ -902,12 +902,16 @@ class RecallMonitorApp(App):
 
     @work(exclusive=True)
     async def _load_all_async(self) -> None:
-        """Load all data, updating loading status.
+        """Load initial data for the live tab only (lazy loading for other tabs).
 
         Note: We avoid asyncio.to_thread() here because the loading methods
         perform Textual widget operations (e.g., event_log.write()) which must
         run on the main thread. Instead, we call methods directly and yield
         control to the event loop between steps using asyncio.sleep(0).
+
+        Lazy loading optimization: Only the "live" tab (initial tab) is loaded at
+        startup. Other tabs are loaded on first activation via
+        on_tabbed_content_tab_activated().
         """
         # Wait for the LoadingScreen to be fully composed
         # The screen may not be mounted yet when the worker starts
@@ -919,12 +923,9 @@ class RecallMonitorApp(App):
         loading = self.screen
         if not isinstance(loading, LoadingScreen):
             # Screen was dismissed or replaced, skip loading UI updates
+            # Only load events for the initial "live" tab
             self._load_events()
-            self._update_health()
-            self._update_state()
-            self._setup_session_list()
-            self._setup_handoff_list()
-            self._update_charts()
+            self.state.tabs_loaded["live"] = True
             self._update_subtitle()
             self._refresh_timer = self.set_interval(5.0, self._on_refresh_timer)
             return
@@ -937,40 +938,8 @@ class RecallMonitorApp(App):
             except Exception as e:
                 self.notify(f"Error loading events: {e}", severity="error")
 
-            loading.update_status("Computing health stats...")
-            await asyncio.sleep(0)
-            try:
-                self._update_health()
-            except Exception as e:
-                self.notify(f"Error updating health: {e}", severity="error")
-
-            loading.update_status("Loading state...")
-            await asyncio.sleep(0)
-            try:
-                self._update_state()
-            except Exception as e:
-                self.notify(f"Error updating state: {e}", severity="error")
-
-            loading.update_status("Scanning sessions...")
-            await asyncio.sleep(0)
-            try:
-                self._setup_session_list()
-            except Exception as e:
-                self.notify(f"Error setting up sessions: {e}", severity="error")
-
-            loading.update_status("Loading handoffs...")
-            await asyncio.sleep(0)
-            try:
-                self._setup_handoff_list()
-            except Exception as e:
-                self.notify(f"Error setting up handoffs: {e}", severity="error")
-
-            loading.update_status("Generating charts...")
-            await asyncio.sleep(0)
-            try:
-                self._update_charts()
-            except Exception as e:
-                self.notify(f"Error updating charts: {e}", severity="error")
+            # Mark "live" tab as loaded (other tabs will be lazy-loaded)
+            self.state.tabs_loaded["live"] = True
 
         finally:
             self._update_subtitle()
@@ -996,19 +965,24 @@ class RecallMonitorApp(App):
         self.state.last_event_count = self.log_reader.buffer_size
 
     def _on_refresh_timer(self) -> None:
-        """Sync timer callback - updates subtitle and triggers async refresh."""
+        """Sync timer callback - updates subtitle and triggers async refresh.
+
+        Only refreshes tabs that have been loaded (lazy loading awareness).
+        """
         self._update_subtitle()
         if not self.state.paused:
-            self._refresh_events()
-            # Only refresh the currently visible tab for performance
+            # Only refresh events if "live" tab has been loaded
+            if self.state.tabs_loaded.get("live", False):
+                self._refresh_events()
+            # Only refresh the currently visible tab if it's loaded
             try:
                 tabs = self.query_one(TabbedContent)
                 active = tabs.active
-                if active == "session":
+                if active == "session" and self.state.tabs_loaded.get("session", False):
                     self._refresh_session_list_async()
-                elif active == "handoffs":
+                elif active == "handoffs" and self.state.tabs_loaded.get("handoffs", False):
                     self._refresh_handoff_list_async()
-                # For live/health/state/charts tabs, only refresh events (already done above)
+                # For health/state/charts tabs, they only need refresh on manual request
             except Exception:
                 pass
 
@@ -1542,8 +1516,45 @@ class RecallMonitorApp(App):
                 pass
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        """Handle tab activation to reset scroll state for live activity tab."""
-        if event.pane.id == "live":
+        """Handle tab activation - load data on first visit (lazy loading)."""
+        tab_id = event.pane.id
+
+        # Check if tab needs initial loading (lazy loading)
+        # Mark as loaded AFTER success to allow retry on failure
+        if not self.state.tabs_loaded.get(tab_id, False):
+            if tab_id == "health":
+                try:
+                    self._update_health()
+                    self.state.tabs_loaded[tab_id] = True
+                except Exception as e:
+                    self.notify(f"Error loading health: {e}", severity="error")
+            elif tab_id == "state":
+                try:
+                    self._update_state()
+                    self.state.tabs_loaded[tab_id] = True
+                except Exception as e:
+                    self.notify(f"Error loading state: {e}", severity="error")
+            elif tab_id == "session":
+                try:
+                    self._setup_session_list()
+                    self.state.tabs_loaded[tab_id] = True
+                except Exception as e:
+                    self.notify(f"Error loading sessions: {e}", severity="error")
+            elif tab_id == "handoffs":
+                try:
+                    self._setup_handoff_list()
+                    self.state.tabs_loaded[tab_id] = True
+                except Exception as e:
+                    self.notify(f"Error loading handoffs: {e}", severity="error")
+            elif tab_id == "charts":
+                try:
+                    self._update_charts()
+                    self.state.tabs_loaded[tab_id] = True
+                except Exception as e:
+                    self.notify(f"Error loading charts: {e}", severity="error")
+
+        # Existing "live" tab handling - reset scroll state
+        if tab_id == "live":
             # Reset auto-scroll when switching to live tab
             self.state.live_activity_user_scrolled = False
             try:
@@ -2310,6 +2321,11 @@ class RecallMonitorApp(App):
             handoff_id: The handoff ID to navigate to (e.g., 'hf-abc1234')
         """
         try:
+            # Ensure handoffs tab data is loaded (lazy loading support)
+            if not self.state.tabs_loaded.get("handoffs", False):
+                self._setup_handoff_list()
+                self.state.tabs_loaded["handoffs"] = True
+
             # Switch to handoffs tab
             tabs = self.query_one(TabbedContent)
             tabs.active = "handoffs"
@@ -2331,6 +2347,11 @@ class RecallMonitorApp(App):
             session_id: The session ID to navigate to
         """
         try:
+            # Ensure session tab data is loaded (lazy loading support)
+            if not self.state.tabs_loaded.get("session", False):
+                self._setup_session_list()
+                self.state.tabs_loaded["session"] = True
+
             # Switch to session tab
             tabs = self.query_one(TabbedContent)
             tabs.active = "session"
@@ -2923,13 +2944,24 @@ class RecallMonitorApp(App):
         self.notify(f"Auto-refresh: {status}")
 
     def action_refresh(self) -> None:
-        """Manual refresh of all views."""
-        self._load_events()
-        self._update_health()
-        self._update_state()
-        self._refresh_session_list()
-        self._refresh_handoff_list()
-        self._update_charts()
+        """Manual refresh of all views.
+
+        Only refreshes tabs that have been loaded (lazy loading awareness).
+        """
+        # Always refresh events (live tab is always loaded at startup)
+        if self.state.tabs_loaded.get("live", False):
+            self._load_events()
+        # Only refresh tabs that have been loaded
+        if self.state.tabs_loaded.get("health", False):
+            self._update_health()
+        if self.state.tabs_loaded.get("state", False):
+            self._update_state()
+        if self.state.tabs_loaded.get("session", False):
+            self._refresh_session_list()
+        if self.state.tabs_loaded.get("handoffs", False):
+            self._refresh_handoff_list()
+        if self.state.tabs_loaded.get("charts", False):
+            self._update_charts()
         self.notify("Refreshed")
 
     def action_toggle_all(self) -> None:

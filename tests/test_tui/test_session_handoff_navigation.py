@@ -479,16 +479,9 @@ class TestJumpToHandoffBinding:
                 f"Expected current session 'sess-nav-test', got '{app.state.session.current_id}'"
             )
 
-            # Verify handoffs were loaded
-            assert len(app.state.handoff.data) > 0, (
-                f"Handoff data should be populated. Got: {app.state.handoff.data.keys()}"
-            )
-            assert "hf-nav0001" in app.state.handoff.data, (
-                f"Expected hf-nav0001 in handoff data. Got: {app.state.handoff.data.keys()}"
-            )
-
             # Call the action directly (simulates pressing 'h')
             # The keybinding 'h' calls action_goto_handoff
+            # Note: With lazy loading, handoff data is loaded during navigation
             app.action_goto_handoff()
             await pilot.pause()
 
@@ -498,6 +491,14 @@ class TestJumpToHandoffBinding:
                 f"action_goto_handoff should switch to handoffs tab, "
                 f"but active tab is '{tabs.active}'. "
                 f"Handoff data keys: {list(app.state.handoff.data.keys())}"
+            )
+
+            # Verify handoffs were loaded (after navigation, due to lazy loading)
+            assert len(app.state.handoff.data) > 0, (
+                f"Handoff data should be populated after navigation. Got: {app.state.handoff.data.keys()}"
+            )
+            assert "hf-nav0001" in app.state.handoff.data, (
+                f"Expected hf-nav0001 in handoff data. Got: {app.state.handoff.data.keys()}"
             )
 
     @pytest.mark.asyncio
