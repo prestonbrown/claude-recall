@@ -81,3 +81,4 @@ class AppState:
     last_event_count: int = 0
     live_activity_user_scrolled: bool = False
     tabs_loaded: Dict[str, bool] = field(default_factory=dict)
+    chart_period_hours: int = 24  # 24h, 168 (7d), or 720 (30d)

@@ -888,6 +888,16 @@ class RecallMonitorApp(App):
                 yield Vertical(
                     Static("Loading charts...", id="sparklines-panel"),
                     Horizontal(
+                        OptionList(
+                            Option("24h", id="24"),
+                            Option("7d", id="168"),
+                            Option("30d", id="720"),
+                            id="chart-period-selector",
+                        ),
+                        id="chart-period-row",
+                        classes="filter-row",
+                    ),
+                    Horizontal(
                         PlotextPlot(id="activity-chart") if PlotextPlot else Static("[dim]plotext not available[/dim]"),
                         PlotextPlot(id="timing-chart") if PlotextPlot else Static("[dim]plotext not available[/dim]"),
                         id="charts-row",
@@ -1621,6 +1631,13 @@ class RecallMonitorApp(App):
             self.state.session.sort.reverse = False
 
         self._sort_session_table(column_key, self.state.session.sort.reverse)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Handle chart time period selection."""
+        if event.option_list.id == "chart-period-selector":
+            period_hours = int(event.option.id)
+            self.state.chart_period_hours = period_hours
+            self._update_charts()
 
     def _sort_session_table(self, column_key: str, reverse: bool) -> None:
         """Sort the session table by the given column."""
@@ -2851,21 +2868,36 @@ class RecallMonitorApp(App):
             self._update_activity_chart(events)
             self._update_timing_chart(timing_summary)
 
-    def _compute_hourly_activity(self, events: List[DebugEvent]) -> List[float]:
+    def _compute_hourly_activity(self, events: List[DebugEvent], hours: int = 24) -> List[float]:
         """
-        Compute event counts by hour for the last 24 hours.
+        Compute activity counts aggregated by time bucket.
+
+        For 24h: 24 hourly buckets
+        For 7d (168h): 7 daily buckets
+        For 30d (720h): 30 daily buckets
 
         Args:
             events: List of debug events
+            hours: Time period in hours (24, 168, or 720)
 
         Returns:
-            List of 24 floats representing event counts per hour (oldest to newest)
+            List of floats representing event counts per bucket (oldest to newest)
         """
         now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(hours=24)
+        cutoff = now - timedelta(hours=hours)
 
-        # Initialize 24 hour buckets
-        hourly: defaultdict[int, int] = defaultdict(int)
+        # Determine bucket configuration
+        if hours <= 24:
+            # Hourly buckets
+            num_buckets = hours
+            bucket_hours = 1
+        else:
+            # Daily buckets for 7d and 30d
+            num_buckets = hours // 24
+            bucket_hours = 24
+
+        # Initialize buckets
+        buckets: defaultdict[int, int] = defaultdict(int)
 
         for event in events:
             ts = event.timestamp_dt
@@ -2874,14 +2906,17 @@ class RecallMonitorApp(App):
             if ts < cutoff:
                 continue
 
-            # Calculate hour offset (0 = 24h ago, 23 = current hour)
-            hours_ago = int((now - ts).total_seconds() / 3600)
-            if 0 <= hours_ago < 24:
-                hour_idx = 23 - hours_ago
-                hourly[hour_idx] += 1
+            # Calculate bucket index
+            hours_ago = (now - ts).total_seconds() / 3600
+            bucket_idx = int(hours_ago / bucket_hours)
 
-        # Convert to list (ensure all 24 hours represented)
-        return [float(hourly.get(i, 0)) for i in range(24)]
+            if 0 <= bucket_idx < num_buckets:
+                # Reverse index so oldest is first
+                final_idx = num_buckets - 1 - bucket_idx
+                buckets[final_idx] += 1
+
+        # Convert to list (ensure all buckets represented)
+        return [float(buckets.get(i, 0)) for i in range(num_buckets)]
 
     def _update_activity_chart(self, events: List[DebugEvent]) -> None:
         """Update the activity timeline bar chart."""
@@ -2890,19 +2925,42 @@ class RecallMonitorApp(App):
         except Exception:
             return
 
-        hourly = self._compute_hourly_activity(events)
+        period_hours = self.state.chart_period_hours
+        data = self._compute_hourly_activity(events, hours=period_hours)
 
         # Clear and redraw
         chart.plt.clear_figure()
-        chart.plt.title("Activity Timeline (24h)")
-        chart.plt.xlabel("Hours Ago")
 
-        # Create hour labels (24h ago to now)
-        hours = list(range(24))
-        hour_labels = [f"{23-h}h" if h % 4 == 0 else "" for h in hours]
+        # Generate labels and title based on period
+        if period_hours <= 24:
+            title = f"Activity Timeline ({period_hours}h)"
+            xlabel = "Hours Ago"
+            num_buckets = period_hours
+            positions = list(range(num_buckets))
+            labels = [f"{num_buckets - 1 - h}h" if h % 4 == 0 else "" for h in positions]
+            tick_positions = positions[::4]
+            tick_labels = labels[::4]
+        elif period_hours <= 168:  # 7 days
+            title = "Activity Timeline (7d)"
+            xlabel = "Days Ago"
+            num_buckets = period_hours // 24
+            positions = list(range(num_buckets))
+            labels = [f"{num_buckets - 1 - d}d" for d in positions]
+            tick_positions = positions
+            tick_labels = labels
+        else:  # 30 days
+            title = "Activity Timeline (30d)"
+            xlabel = "Days Ago"
+            num_buckets = period_hours // 24
+            positions = list(range(num_buckets))
+            labels = [f"{num_buckets - 1 - d}" if d % 5 == 0 else "" for d in positions]
+            tick_positions = positions[::5]
+            tick_labels = [l for l in labels if l]
 
-        chart.plt.bar(hours, hourly, width=0.8)
-        chart.plt.xticks(hours[::4], hour_labels[::4])
+        chart.plt.title(title)
+        chart.plt.xlabel(xlabel)
+        chart.plt.bar(positions, data, width=0.8)
+        chart.plt.xticks(tick_positions, tick_labels)
         chart.refresh()
 
     def _update_timing_chart(self, timing_summary: dict) -> None:
