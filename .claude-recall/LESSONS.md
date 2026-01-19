@@ -10,7 +10,7 @@
 
 
 ### [L001] [***--|-----] Delimiter conflicts
-- **Uses**: 7 | **Velocity**: 0.04 | **Learned**: 2025-12-27 | **Last**: 2026-01-18 | **Category**: pattern | **Type**: informational
+- **Uses**: 7 | **Velocity**: 0.01 | **Learned**: 2025-12-27 | **Last**: 2026-01-18 | **Category**: pattern | **Type**: informational
 > When adding special characters to display formats (like | in star ratings), check if they conflict with internal delimiters used for parsing. We had to switch from | to ~ as the internal field separator.
 
 
