@@ -373,6 +373,24 @@ def main():
         help="Value type (string, int, bool)"
     )
 
+    # stop-hook-batch command - batch processing for stop-hook.sh
+    stop_hook_batch_parser = subparsers.add_parser(
+        "stop-hook-batch",
+        help="Process multiple stop-hook operations in one call (reduces Python startup overhead)"
+    )
+    stop_hook_batch_parser.add_argument(
+        "--transcript", "-t",
+        help="Path to transcript JSONL file"
+    )
+    stop_hook_batch_parser.add_argument(
+        "--citations", "-c",
+        help="Comma-separated list of lesson citations (e.g., L001,L002,S001)"
+    )
+    stop_hook_batch_parser.add_argument(
+        "--session-id", "-s",
+        help="Claude session ID for linking handoffs and transcripts"
+    )
+
     args = parser.parse_args()
 
     if not args.command:

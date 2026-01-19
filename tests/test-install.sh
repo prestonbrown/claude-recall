@@ -254,6 +254,77 @@ test_config_merge_priority_order() {
     assert_eq "25" "$max_lessons" "Existing config value should override default"
 }
 
+test_config_merge_multiline_json() {
+    # Test: multiline JSON with closing braces should merge correctly
+    # This tests the fix for the ${var:-{}} bash expansion bug where
+    # JSON ending in } would get an extra } appended
+
+    # Simulate real config.json format (multiline)
+    local defaults
+    defaults=$(cat <<'JSONEOF'
+{
+  "enabled": true,
+  "maxLessons": 30,
+  "debugLevel": 1
+}
+JSONEOF
+)
+
+    local existing
+    existing=$(cat <<'JSONEOF'
+{
+  "enabled": true,
+  "maxLessons": 30,
+  "debugLevel": 2
+}
+JSONEOF
+)
+
+    local migration='{}'
+
+    # This tests the jq merge with multiline JSON
+    local result
+    result=$(jq -s '.[0] * .[1] * .[2]' \
+        <(echo "$defaults") \
+        <(echo "$existing") \
+        <(echo "$migration"))
+
+    # Should not fail with parse error
+    local debug_level
+    debug_level=$(echo "$result" | jq -r '.debugLevel')
+    assert_eq "2" "$debug_level" "Multiline JSON with closing braces should merge correctly"
+}
+
+test_config_merge_variable_with_closing_brace() {
+    # Test: variable containing JSON that ends with } should work
+    # This specifically tests the install.sh fix that avoids ${var:-{}}
+
+    local defaults='{"enabled": true, "maxLessons": 30, "debugLevel": 1}'
+
+    # Simulate SAVED_CONFIG_JSON variable containing JSON ending with }
+    local SAVED_CONFIG_JSON='{"debugLevel": 2}'
+
+    # Use the fixed pattern (conditional instead of ${var:-{}})
+    local saved_config
+    if [[ -n "$SAVED_CONFIG_JSON" ]]; then
+        saved_config="$SAVED_CONFIG_JSON"
+    else
+        saved_config="{}"
+    fi
+
+    local migration='{}'
+
+    local result
+    result=$(jq -s '.[0] * .[1] * .[2]' \
+        <(echo "$defaults") \
+        <(echo "$saved_config") \
+        <(echo "$migration"))
+
+    local debug_level
+    debug_level=$(echo "$result" | jq -r '.debugLevel')
+    assert_eq "2" "$debug_level" "Variable containing JSON with } should merge correctly"
+}
+
 # =============================================================================
 # RUN TESTS
 # =============================================================================
@@ -272,6 +343,8 @@ main() {
     run_test "config merge settings.json migration" test_config_merge_settings_json_migration
     run_test "config merge fresh install" test_config_merge_fresh_install
     run_test "config merge priority order" test_config_merge_priority_order
+    run_test "config merge multiline JSON" test_config_merge_multiline_json
+    run_test "config merge variable with closing brace" test_config_merge_variable_with_closing_brace
     
     echo ""
     echo -e "${YELLOW}=== Test Results ===${NC}"

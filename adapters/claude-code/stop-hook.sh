@@ -70,7 +70,25 @@ parse_transcript_once() {
             select(.type == "tool_use" and .name == "TodoWrite")] | length),
 
         # Latest timestamp for checkpoint
-        latest_timestamp: ([.[] | .timestamp // empty] | last // "")
+        latest_timestamp: ([.[] | .timestamp // empty] | last // ""),
+
+        # Extract filtered citations (all assistant texts)
+        # Finds [L###] or [S###] NOT followed by " [*" (star rating = listing, not citation)
+        # Uses scan with capture group to check context after each citation
+        citations: ([.[] | select(.type == "assistant") |
+            .message.content[]? | select(.type == "text") | .text] | join("\n") |
+            [scan("(\\[[LS][0-9]{3}\\])(.{0,3})")] |
+            map(select(.[1] | test("^ \\[\\*") | not)) |
+            map(.[0]) | unique | sort),
+
+        # Extract filtered citations (new messages only, for incremental processing)
+        citations_new: (if $ts == "" then [] else
+            ([.[] | select(.type == "assistant" and .timestamp > $ts) |
+                .message.content[]? | select(.type == "text") | .text] | join("\n") |
+                [scan("(\\[[LS][0-9]{3}\\])(.{0,3})")] |
+                map(select(.[1] | test("^ \\[\\*") | not)) |
+                map(.[0]) | unique | sort)
+        end)
     }' "$transcript_path" 2>/dev/null || echo "{}")
 }
 
@@ -405,100 +423,77 @@ main() {
     process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
     log_phase "process_lessons" "$phase_start" "stop"
 
-    # Process HANDOFF/APPROACH: patterns (handoff tracking and plan mode)
-    # Pass session_id so we can detect sub-agents and block handoff creation
-    phase_start=$(get_elapsed_ms)
-    process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
-    log_phase "process_handoffs" "$phase_start" "stop"
-
-    # Capture TodoWrite tool calls and sync to handoffs
-    phase_start=$(get_elapsed_ms)
-    capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
-    log_phase "sync_todos" "$phase_start" "stop"
-
-    # Warn if major work detected without handoff
-    detect_and_warn_missing_handoff "$transcript_path" "$project_root"
-
-    # Extract and filter citations
+    # Extract citations from cache for batch processing
     phase_start=$(get_elapsed_ms)
 
-    # Extract citations from cached assistant texts
-    local texts_field="assistant_texts"
-    [[ -n "$last_timestamp" ]] && texts_field="assistant_texts_new"
+    # Get filtered citations from cache (already excludes listings with star ratings)
+    local citations_field="citations"
+    [[ -n "$last_timestamp" ]] && citations_field="citations_new"
     local citations=""
-    citations=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$texts_field" '.[$f][]' 2>/dev/null | \
-        grep -oE '\[[LS][0-9]{3}\]' | sort -u || true)
+    citations=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$citations_field" '.[$f][]' 2>/dev/null || true)
 
     # Get latest timestamp from cache
     local latest_ts=$(echo "$TRANSCRIPT_CACHE" | jq -r '.latest_timestamp // ""' 2>/dev/null)
 
-    # Update checkpoint even if no citations (to advance the checkpoint)
-    if [[ -z "$citations" ]]; then
-        [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
-        log_phase "extract_citations" "$phase_start" "stop"
-        log_hook_end "stop"
-        exit 0
-    fi
-
-    # Filter out lesson listings (ID followed by star rating bracket)
-    # Real citations: "[L010]:" or "[L010]," (no star bracket)
-    # Listings: "[L010] [*****" (ID followed by star rating)
-    # Use cached text (all assistant texts joined with newlines)
-    local all_text=$(echo "$TRANSCRIPT_CACHE" | jq -r '.assistant_texts[]' 2>/dev/null || true)
-    local filtered_citations=""
-    while IFS= read -r cite; do
-        [[ -z "$cite" ]] && continue
-        # Check if this citation appears with a star bracket immediately after
-        # Escape regex metacharacters in citation ID
-        local escaped_cite=$(printf '%s' "$cite" | sed 's/[][\\.*^$()+?{|]/\\&/g')
-        if ! echo "$all_text" | grep -qE "${escaped_cite} \\[\\*"; then
-            filtered_citations+="$cite"$'\n'
-        fi
-    done <<< "$citations"
-    citations=$(echo "$filtered_citations" | sort -u | grep -v '^$' || true)
     log_phase "extract_citations" "$phase_start" "stop"
 
-    [[ -z "$citations" ]] && {
-        [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
-        log_hook_end "stop"
-        exit 0
-    }
-
-    # Cite all lessons in a single batch call (much faster than per-lesson)
-    phase_start=$(get_elapsed_ms)
-    local cited_count=0
-
-    # Convert citations to space-separated IDs: [L001]\n[L002] -> L001 L002
-    local lesson_ids=$(echo "$citations" | tr -d '[]' | tr '\n' ' ' | xargs)
-
-    if [[ -n "$lesson_ids" && -f "$PYTHON_MANAGER" ]]; then
-        # Single Python call with all IDs
-        local result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" cite $lesson_ids 2>&1 || true)
-        # Count successful citations (each outputs OK: on its own line)
-        cited_count=$(echo "$result" | grep -c "^OK:" || true)
-    elif [[ -n "$lesson_ids" && -x "$BASH_MANAGER" ]]; then
-        # Fall back to bash manager (still loops internally but less common)
-        for lesson_id in $lesson_ids; do
-            local result=$(PROJECT_DIR="$project_root" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
-            [[ "$result" == OK:* ]] && ((cited_count++)) || true
-        done
+    # Convert citations to comma-separated IDs for batch command: [L001]\n[L002] -> L001,L002
+    local citation_ids=""
+    if [[ -n "$citations" ]]; then
+        citation_ids=$(echo "$citations" | tr -d '[]' | tr '\n' ',' | sed 's/,$//')
     fi
-    log_phase "cite_lessons" "$phase_start" "stop"
+
+    # BATCH PROCESSING: Single Python call for handoffs, todos, citations, and transcript
+    # This saves ~200-300ms by eliminating 3 Python startups (70-150ms each)
+    phase_start=$(get_elapsed_ms)
+
+    if [[ -f "$PYTHON_MANAGER" ]]; then
+        local batch_args=""
+        batch_args="--transcript $transcript_path"
+        [[ -n "$citation_ids" ]] && batch_args="$batch_args --citations $citation_ids"
+        [[ -n "$claude_session_id" ]] && batch_args="$batch_args --session-id $claude_session_id"
+
+        local batch_result
+        batch_result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+            python3 "$PYTHON_MANAGER" stop-hook-batch $batch_args 2>&1 || echo '{}')
+
+        # Parse batch results for logging
+        local handoffs_processed=$(echo "$batch_result" | jq -r '.handoffs_processed // 0' 2>/dev/null || echo "0")
+        local todos_synced=$(echo "$batch_result" | jq -r '.todos_synced // false' 2>/dev/null || echo "false")
+        local cited_count=$(echo "$batch_result" | jq -r '.citations_count // 0' 2>/dev/null || echo "0")
+        local transcript_added=$(echo "$batch_result" | jq -r '.transcript_added // false' 2>/dev/null || echo "false")
+
+        # Log results
+        (( handoffs_processed > 0 )) && echo "[handoffs] $handoffs_processed handoff command(s) processed" >&2
+        [[ "$todos_synced" == "true" ]] && echo "[handoffs] Synced TodoWrite to handoff" >&2
+        (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
+    else
+        # Fallback to individual calls if Python manager not available
+        # Process handoffs
+        process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
+
+        # Capture TodoWrite
+        capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
+
+        # Cite lessons individually (bash fallback)
+        if [[ -n "$citation_ids" && -x "$BASH_MANAGER" ]]; then
+            local lesson_ids=$(echo "$citation_ids" | tr ',' ' ')
+            local cited_count=0
+            for lesson_id in $lesson_ids; do
+                local result=$(PROJECT_DIR="$project_root" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
+                [[ "$result" == OK:* ]] && ((cited_count++)) || true
+            done
+            (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
+        fi
+    fi
+
+    log_phase "batch_process" "$phase_start" "stop"
+
+    # Warn if major work detected without handoff
+    detect_and_warn_missing_handoff "$transcript_path" "$project_root"
 
     # Update checkpoint
     [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
-
-    (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
-
-    # Add transcript to linked handoff if session has one
-    phase_start=$(get_elapsed_ms)
-    local session_id=$(echo "$input" | jq -r '.session_id // empty')
-    if [[ -n "$session_id" && -n "$transcript_path" ]]; then
-        PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" \
-            handoff add-transcript "$session_id" "$transcript_path" 2>/dev/null || true
-    fi
-    log_phase "add_transcript" "$phase_start" "stop"
 
     # Log timing summary
     log_hook_end "stop"

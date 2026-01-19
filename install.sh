@@ -168,7 +168,13 @@ merge_config() {
     # Merge order: defaults < saved existing config < settings.json migration
     # This preserves user customizations while allowing migration from old format
     if [[ -f "$default_config" ]]; then
-        local saved_config="${SAVED_CONFIG_JSON:-{}}"
+        # Avoid ${var:-{}} syntax which has issues when var ends with }
+        local saved_config
+        if [[ -n "$SAVED_CONFIG_JSON" ]]; then
+            saved_config="$SAVED_CONFIG_JSON"
+        else
+            saved_config="{}"
+        fi
 
         jq -s '.[0] * .[1] * .[2]' \
             "$default_config" \

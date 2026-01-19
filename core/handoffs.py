@@ -1074,6 +1074,105 @@ class HandoffsMixin:
             setattr(h, field, value)
         self._update_handoff_in_file(handoff_id, update_fn)
 
+    def handoff_sync_update(
+        self,
+        handoff_id: str,
+        *,
+        tried_entries: Optional[List[Dict[str, str]]] = None,
+        checkpoint: Optional[str] = None,
+        next_steps: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> None:
+        """
+        Apply multiple field updates to a handoff in a single read/write cycle.
+
+        This is an optimized method for sync_todos that reduces file I/O by
+        applying tried entries, checkpoint, next_steps, and status updates
+        in one operation instead of multiple separate calls.
+
+        Args:
+            handoff_id: The handoff ID to update
+            tried_entries: List of dicts with 'outcome' and 'description' to add
+            checkpoint: Progress summary text (updates last_session too)
+            next_steps: Next steps text
+            status: New status (must be valid)
+
+        Raises:
+            ValueError: If handoff not found or invalid status/outcome
+        """
+        # Validate inputs before modifying anything
+        if status is not None and status not in self.VALID_STATUSES:
+            raise ValueError(f"Invalid status: {status}")
+
+        if tried_entries:
+            for entry in tried_entries:
+                outcome = entry.get("outcome")
+                if outcome not in self.VALID_OUTCOMES:
+                    raise ValueError(f"Invalid outcome: {outcome}")
+
+        def update_fn(h: Handoff) -> None:
+            # Add tried entries with auto-phase logic
+            if tried_entries:
+                for entry in tried_entries:
+                    outcome = entry["outcome"]
+                    description = entry["description"]
+
+                    h.tried.append(TriedStep(
+                        outcome=outcome,
+                        description=description,
+                    ))
+
+                    # Auto-complete on final pattern with success outcome
+                    if outcome == "success":
+                        desc_lower = description.lower().strip()
+                        if any(desc_lower.startswith(p) for p in self.COMPLETION_PATTERNS):
+                            h.status = "completed"
+                            h.phase = "review"
+
+                    # Auto-update phase to implementing (if not already in a later phase)
+                    if h.phase not in self.PROTECTED_PHASES:
+                        should_bump = False
+
+                        # Check for implementing keywords in description
+                        desc_lower = description.lower()
+                        if any(kw in desc_lower for kw in self.IMPLEMENTING_KEYWORDS):
+                            should_bump = True
+
+                        # Check for 10+ successful steps
+                        if not should_bump:
+                            success_count = sum(
+                                1 for t in h.tried if t.outcome == "success"
+                            )
+                            if success_count >= self.IMPLEMENTING_STEP_THRESHOLD:
+                                should_bump = True
+
+                        if should_bump:
+                            h.phase = "implementing"
+
+            # Update checkpoint (and last_session)
+            if checkpoint is not None:
+                h.checkpoint = checkpoint
+                h.last_session = date.today()
+
+            # Update next steps
+            if next_steps is not None:
+                h.next_steps = next_steps
+
+            # Update status (may override auto-complete from tried entries)
+            if status is not None:
+                h.status = status
+
+        self._update_handoff_in_file(handoff_id, update_fn)
+
+        # Log the sync update
+        logger = get_logger()
+        logger.mutation("sync_update", handoff_id, {
+            "tried_count": len(tried_entries) if tried_entries else 0,
+            "has_checkpoint": checkpoint is not None,
+            "has_next_steps": next_steps is not None,
+            "has_status": status is not None,
+        })
+
     def handoff_update_status(self, handoff_id: str, status: str) -> None:
         """
         Update a handoff's status.
@@ -2125,8 +2224,13 @@ Consider extracting lessons about:
         if not handoff_id:
             return None
 
-        # Sync completed todos as tried entries (success)
-        # Only add new ones - check if description already exists
+        # Collect all updates for batch processing (single read/write cycle)
+        tried_entries: List[Dict[str, str]] = []
+        checkpoint_text: Optional[str] = None
+        next_text: Optional[str] = None
+        new_status: Optional[str] = None
+
+        # Build tried entries from completed todos (only add new ones)
         existing_tried = set()
         handoff = self.handoff_get(handoff_id)
         if handoff and handoff.tried:
@@ -2135,24 +2239,22 @@ Consider extracting lessons about:
         for todo in completed:
             content = todo.get("content", "")
             if content and content not in existing_tried:
-                self.handoff_add_tried(handoff_id, "success", content)
+                tried_entries.append({"outcome": "success", "description": content})
 
-        # Sync in_progress as checkpoint
+        # Build checkpoint from in_progress
         if in_progress:
             checkpoint_text = in_progress[0].get("content", "")
             if len(in_progress) > 1:
                 checkpoint_text += f" (and {len(in_progress) - 1} more)"
-            self.handoff_update_checkpoint(handoff_id, checkpoint_text)
 
-        # Sync pending as next_steps
+        # Build next_steps from pending
         if pending:
             next_items = [t.get("content", "") for t in pending[:5]]  # Max 5
             next_text = "; ".join(next_items)
             if len(pending) > 5:
                 next_text += f" (and {len(pending) - 5} more)"
-            self.handoff_update_next(handoff_id, next_text)
 
-        # Update status based on todo states
+        # Determine status based on todo states
         if completed and not pending and not in_progress:
             # All todos completed - auto-complete if commit step succeeded
             has_commit = any(
@@ -2160,16 +2262,25 @@ Consider extracting lessons about:
                 for t in completed
             )
             if has_commit:
-                self.handoff_update_status(handoff_id, "completed")
+                new_status = "completed"
             else:
                 # No commit step - ready for lesson review
-                self.handoff_update_status(handoff_id, "ready_for_review")
+                new_status = "ready_for_review"
         elif completed or in_progress:
             # Work has been done or is in progress - at least in_progress
-            self.handoff_update_status(handoff_id, "in_progress")
+            new_status = "in_progress"
         elif pending and not completed:
             # Only pending items, no work done yet
-            self.handoff_update_status(handoff_id, "not_started")
+            new_status = "not_started"
+
+        # Apply all updates in a single read/write cycle
+        self.handoff_sync_update(
+            handoff_id,
+            tried_entries=tried_entries if tried_entries else None,
+            checkpoint=checkpoint_text,
+            next_steps=next_text,
+            status=new_status,
+        )
 
         logger = get_logger()
         logger.mutation("sync_todos", handoff_id, {
@@ -3040,17 +3151,27 @@ Consider extracting lessons about:
         if not texts:
             return operations
 
-        # Detect if this is a sub-agent session
-        is_sub_agent = False
-        t_origin_start = time_module.perf_counter()
-        if session_id:
-            origin = self._detect_session_origin(session_id)
-            if origin in self.SUB_AGENT_ORIGINS:
-                is_sub_agent = True
-        t_origin_end = time_module.perf_counter()
-        if debug_timing:
-            import sys
-            print(f"[timing] _detect_session_origin={int((t_origin_end-t_origin_start)*1000)}ms", file=sys.stderr)
+        # Lazy origin detection: only call _detect_session_origin when needed
+        # Most sessions (90%) are "User" origin and don't need origin detection
+        is_sub_agent = None  # None = not yet determined
+
+        def get_is_sub_agent() -> bool:
+            """Lazy origin detection - only called when HANDOFF:/PLAN MODE: found."""
+            nonlocal is_sub_agent
+            if is_sub_agent is not None:
+                return is_sub_agent
+
+            t_origin_start = time_module.perf_counter()
+            is_sub_agent = False
+            if session_id:
+                origin = self._detect_session_origin(session_id)
+                if origin in self.SUB_AGENT_ORIGINS:
+                    is_sub_agent = True
+            t_origin_end = time_module.perf_counter()
+            if debug_timing:
+                import sys
+                print(f"[timing] _detect_session_origin={int((t_origin_end-t_origin_start)*1000)}ms", file=sys.stderr)
+            return is_sub_agent
 
         # Handoff ID pattern (hf-1234567 or legacy A001 format)
         handoff_id_pattern = r"(hf-[0-9a-f]{7}|[A-Z][0-9]{3}|LAST)"
@@ -3073,7 +3194,7 @@ Consider extracting lessons about:
                 # Pattern 1: HANDOFF: <title> [- <description>]
                 match = re.match(r"^HANDOFF:\s+(.+)$", line)
                 if match:
-                    if is_sub_agent:
+                    if get_is_sub_agent():
                         # Sub-agents cannot create handoffs
                         continue
 
@@ -3097,7 +3218,7 @@ Consider extracting lessons about:
                 # Pattern 1b: PLAN MODE: <title>
                 match = re.match(r"^PLAN MODE:\s+(.+)$", line)
                 if match:
-                    if is_sub_agent:
+                    if get_is_sub_agent():
                         continue
 
                     title = self._sanitize_text(match.group(1), 200)

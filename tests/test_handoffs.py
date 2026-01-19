@@ -873,6 +873,168 @@ class TestHandoffUpdateSetsDate:
         assert handoff.updated == date.today()
 
 
+class TestHandoffSyncUpdate:
+    """Tests for sync_update (batch field updates in single read/write cycle)."""
+
+    def test_sync_update_tried_only(self, manager_with_handoffs: "LessonsManager"):
+        """Should add multiple tried entries in one operation."""
+        tried_entries = [
+            {"outcome": "fail", "description": "First attempt failed"},
+            {"outcome": "partial", "description": "Second attempt was partial"},
+            {"outcome": "success", "description": "Third attempt worked"},
+        ]
+
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            tried_entries=tried_entries,
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert len(handoff.tried) == 3
+        assert handoff.tried[0].outcome == "fail"
+        assert handoff.tried[1].outcome == "partial"
+        assert handoff.tried[2].outcome == "success"
+
+    def test_sync_update_checkpoint_only(self, manager_with_handoffs: "LessonsManager"):
+        """Should update checkpoint and last_session."""
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            checkpoint="Working on unit tests",
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.checkpoint == "Working on unit tests"
+        assert handoff.last_session == date.today()
+
+    def test_sync_update_next_steps_only(self, manager_with_handoffs: "LessonsManager"):
+        """Should update next steps."""
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            next_steps="Write integration tests; Update docs",
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.next_steps == "Write integration tests; Update docs"
+
+    def test_sync_update_status_only(self, manager_with_handoffs: "LessonsManager"):
+        """Should update status."""
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            status="in_progress",
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == "in_progress"
+
+    def test_sync_update_all_fields(self, manager_with_handoffs: "LessonsManager"):
+        """Should update all fields in a single operation."""
+        tried_entries = [
+            {"outcome": "success", "description": "Implemented feature"},
+        ]
+
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            tried_entries=tried_entries,
+            checkpoint="Finishing up tests",
+            next_steps="Commit and push",
+            status="in_progress",
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert len(handoff.tried) == 1
+        assert handoff.tried[0].description == "Implemented feature"
+        assert handoff.checkpoint == "Finishing up tests"
+        assert handoff.next_steps == "Commit and push"
+        assert handoff.status == "in_progress"
+        assert handoff.last_session == date.today()
+        assert handoff.updated == date.today()
+
+    def test_sync_update_invalid_status_raises(self, manager_with_handoffs: "LessonsManager"):
+        """Should reject invalid status before modifying file."""
+        with pytest.raises(ValueError, match="Invalid status"):
+            manager_with_handoffs.handoff_sync_update(
+                "hf-0000001",
+                status="bogus_status",
+            )
+
+    def test_sync_update_invalid_outcome_raises(self, manager_with_handoffs: "LessonsManager"):
+        """Should reject invalid outcome before modifying file."""
+        with pytest.raises(ValueError, match="Invalid outcome"):
+            manager_with_handoffs.handoff_sync_update(
+                "hf-0000001",
+                tried_entries=[{"outcome": "maybe", "description": "Test"}],
+            )
+
+    def test_sync_update_auto_phase_implementing(self, manager_with_handoffs: "LessonsManager"):
+        """Should auto-bump phase to implementing when tried entry contains implementing keywords."""
+        handoff_id = manager_with_handoffs.handoff_add(
+            title="Test phase bump",
+            phase="research",
+        )
+
+        manager_with_handoffs.handoff_sync_update(
+            handoff_id,
+            tried_entries=[
+                {"outcome": "success", "description": "Implemented the new feature"},
+            ],
+        )
+
+        handoff = manager_with_handoffs.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
+
+    def test_sync_update_auto_complete_on_final_pattern(self, manager: "LessonsManager"):
+        """Should auto-complete when tried entry starts with completion pattern."""
+        handoff_id = manager.handoff_add(title="Test auto-complete")
+
+        manager.handoff_sync_update(
+            handoff_id,
+            tried_entries=[
+                {"outcome": "success", "description": "Done with implementation"},
+            ],
+        )
+
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
+        assert handoff.phase == "review"
+
+    def test_sync_update_status_overrides_auto_complete(self, manager: "LessonsManager"):
+        """Explicit status should override auto-complete from tried entry."""
+        handoff_id = manager.handoff_add(title="Test status override")
+
+        manager.handoff_sync_update(
+            handoff_id,
+            tried_entries=[
+                {"outcome": "success", "description": "Done with first part"},
+            ],
+            status="in_progress",  # Override auto-complete
+        )
+
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "in_progress"  # Not "completed"
+
+    def test_sync_update_not_found_raises(self, manager: "LessonsManager"):
+        """Should raise ValueError when handoff not found."""
+        with pytest.raises(ValueError, match="not found"):
+            manager.handoff_sync_update(
+                "hf-nonexistent",
+                status="in_progress",
+            )
+
+    def test_sync_update_empty_does_nothing(self, manager_with_handoffs: "LessonsManager"):
+        """Should handle call with no updates gracefully."""
+        # Get original state
+        original = manager_with_handoffs.handoff_get("hf-0000001")
+        original_status = original.status
+
+        # Call with no updates
+        manager_with_handoffs.handoff_sync_update("hf-0000001")
+
+        # Should still work (updates timestamp)
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == original_status
+        assert handoff.updated == date.today()
+
+
 # =============================================================================
 # Completing and Archiving Handoffs
 # =============================================================================
@@ -7717,6 +7879,163 @@ class TestParseTranscriptIntegration:
         handoff = manager.handoff_get(result["last_id"])
         assert handoff is not None
         assert handoff.status == "completed"
+
+
+class TestLazyOriginDetection:
+    """Tests for lazy origin detection optimization in parse_transcript_for_handoffs.
+
+    The optimization: _detect_session_origin should only be called when HANDOFF: or
+    PLAN MODE: patterns are found, not for every session. Most sessions (90%) are
+    "User" origin and don't need origin detection.
+    """
+
+    def test_origin_detection_not_called_when_no_handoff_patterns(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Origin detection should NOT be called when no HANDOFF/PLAN MODE patterns exist."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        # Parse transcript with no handoff patterns
+        transcript = {
+            "assistant_texts": [
+                "This is just regular text",
+                "HANDOFF UPDATE hf-abc1234: status in_progress",  # Update doesn't need origin
+                "HANDOFF COMPLETE hf-abc1234",  # Complete doesn't need origin
+                "More regular text here",
+            ]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="test-session")
+
+        # Should NOT have called origin detection
+        assert call_count == 0, f"Expected 0 calls to _detect_session_origin, got {call_count}"
+
+        # Should still parse the update and complete operations
+        assert len(result) == 2
+        assert result[0]["op"] == "update"
+        assert result[1]["op"] == "complete"
+
+    def test_origin_detection_called_when_handoff_add_pattern_found(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Origin detection SHOULD be called when HANDOFF: pattern is found."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        transcript = {
+            "assistant_texts": ["HANDOFF: New feature to implement"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="test-session")
+
+        # Should have called origin detection exactly once
+        assert call_count == 1, f"Expected 1 call to _detect_session_origin, got {call_count}"
+
+        # Should parse the add operation (User can create handoffs)
+        assert len(result) == 1
+        assert result[0]["op"] == "add"
+        assert result[0]["title"] == "New feature to implement"
+
+    def test_origin_detection_called_when_plan_mode_pattern_found(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Origin detection SHOULD be called when PLAN MODE: pattern is found."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        transcript = {
+            "assistant_texts": ["PLAN MODE: Design architecture"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="test-session")
+
+        assert call_count == 1, f"Expected 1 call to _detect_session_origin, got {call_count}"
+        assert len(result) == 1
+        assert result[0]["op"] == "add"
+        assert result[0]["phase"] == "research"
+
+    def test_origin_detection_only_called_once_for_multiple_add_patterns(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Origin detection should be called once even with multiple HANDOFF: patterns."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        transcript = {
+            "assistant_texts": [
+                "HANDOFF: First feature",
+                "HANDOFF: Second feature",
+                "PLAN MODE: Third feature",
+            ]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="test-session")
+
+        # Should only call once, not once per pattern
+        assert call_count == 1, f"Expected 1 call to _detect_session_origin, got {call_count}"
+        assert len(result) == 3
+
+    def test_subagent_handoff_add_blocked_with_lazy_detection(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Sub-agent HANDOFF: patterns should still be blocked with lazy detection."""
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Explore"
+        )
+
+        transcript = {
+            "assistant_texts": ["HANDOFF: Sub-agent trying to create handoff"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="explore-session")
+
+        # Sub-agent cannot create handoffs - should return empty
+        assert len(result) == 0
+
+    def test_no_origin_detection_without_session_id(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Without session_id, origin detection should not be called."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        transcript = {
+            "assistant_texts": ["HANDOFF: New feature"]
+        }
+        # No session_id provided - backward compatibility
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        # Should NOT call origin detection when no session_id
+        assert call_count == 0
+        # Should still create the operation (default to allowing)
+        assert len(result) == 1
+        assert result[0]["op"] == "add"
 
 
 if __name__ == "__main__":

@@ -269,6 +269,114 @@ class PrescoreCacheCommand(Command):
         return 0
 
 
+class StopHookBatchCommand(Command):
+    """Process multiple stop-hook operations in a single Python invocation.
+
+    This command combines the following operations to reduce Python startup overhead:
+    1. Process handoffs from transcript (handoff process-transcript)
+    2. Sync todos to handoffs (handoff sync-todos)
+    3. Cite all provided lessons (cite)
+    4. Add transcript to linked handoff (handoff add-transcript)
+
+    Expected savings: ~200-300ms (3 fewer Python startups at 70-150ms each)
+    """
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        import json
+        from pathlib import Path
+
+        transcript_path = getattr(args, "transcript", "")
+        citations_str = getattr(args, "citations", "")
+        session_id = getattr(args, "session_id", "") or ""
+
+        results = {
+            "handoffs_processed": 0,
+            "todos_synced": False,
+            "citations_count": 0,
+            "transcript_added": False,
+            "errors": [],
+        }
+
+        # 1. Process handoffs from transcript
+        if transcript_path and Path(transcript_path).exists():
+            try:
+                # Read and parse transcript for the cached format expected by process-transcript
+                with open(transcript_path, "r") as f:
+                    lines = f.readlines()
+                    entries = []
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            try:
+                                entries.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+
+                    # Build transcript_data in the format expected by parse_transcript_for_handoffs
+                    assistant_texts = []
+                    last_todowrite = None
+                    for entry in entries:
+                        if entry.get("type") == "assistant":
+                            content = entry.get("message", {}).get("content", [])
+                            for item in content:
+                                if item.get("type") == "text":
+                                    assistant_texts.append(item.get("text", ""))
+                                elif item.get("type") == "tool_use" and item.get("name") == "TodoWrite":
+                                    last_todowrite = item.get("input", {}).get("todos")
+
+                    transcript_data = {
+                        "assistant_texts": assistant_texts,
+                        "last_todowrite": last_todowrite,
+                    }
+
+                    # Process handoffs
+                    operations = manager.parse_transcript_for_handoffs(
+                        transcript_data, session_id=session_id
+                    )
+                    if operations:
+                        result = manager.handoff_batch_process(operations)
+                        results["handoffs_processed"] = len(
+                            [r for r in result.get("results", []) if r.get("ok")]
+                        )
+
+                    # 2. Sync todos if found
+                    if last_todowrite and isinstance(last_todowrite, list):
+                        # Get session handoff for priority targeting
+                        session_handoff = None
+                        if session_id:
+                            session_handoff = manager.handoff_get_by_session(session_id)
+                        sync_result = manager.handoff_sync_todos(
+                            last_todowrite, session_handoff=session_handoff
+                        )
+                        results["todos_synced"] = sync_result is not None
+
+            except Exception as e:
+                results["errors"].append(f"transcript_processing: {str(e)}")
+
+        # 3. Cite all provided lessons
+        if citations_str:
+            # Parse comma-separated citation IDs (L001,L002,S001)
+            citation_ids = [c.strip() for c in citations_str.split(",") if c.strip()]
+            for lesson_id in citation_ids:
+                try:
+                    manager.cite_lesson(lesson_id)
+                    results["citations_count"] += 1
+                except ValueError as e:
+                    results["errors"].append(f"cite_{lesson_id}: {str(e)}")
+
+        # 4. Add transcript to linked handoff
+        if session_id and transcript_path:
+            try:
+                add_result = manager.handoff_add_transcript(session_id, transcript_path)
+                results["transcript_added"] = add_result is not None
+            except Exception as e:
+                results["errors"].append(f"add_transcript: {str(e)}")
+
+        # Output results as JSON for parsing by stop-hook.sh
+        print(json.dumps(results))
+        return 0
+
+
 # =============================================================================
 # Command Registry
 # =============================================================================
@@ -288,6 +396,7 @@ COMMAND_REGISTRY: Dict[str, Type[Command]] = {
     "promote": PromoteCommand,
     "score-relevance": ScoreRelevanceCommand,
     "prescore-cache": PrescoreCacheCommand,
+    "stop-hook-batch": StopHookBatchCommand,
 }
 
 
