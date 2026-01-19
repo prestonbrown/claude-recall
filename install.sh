@@ -121,17 +121,24 @@ migrate_old_locations() {
     fi
 }
 
-# Global to store existing config before plugin install overwrites it
-SAVED_CONFIG_JSON=""
+# Persistent temp file for config - survives failed installs
+CONFIG_BACKUP_FILE="/tmp/claude-recall-config-backup.json"
 
 # Save existing config.json BEFORE plugin install overwrites it
+# Uses persistent temp file so re-runs after failure still have original config
 save_existing_config() {
+    # If backup already exists from a previous failed run, keep it
+    if [[ -f "$CONFIG_BACKUP_FILE" ]]; then
+        log_info "Using saved config from previous install attempt"
+        return 0
+    fi
+
     local install_path
     install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
         "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
 
     if [[ -n "$install_path" && -f "$install_path/config.json" ]]; then
-        SAVED_CONFIG_JSON=$(cat "$install_path/config.json")
+        cp "$install_path/config.json" "$CONFIG_BACKUP_FILE"
         log_info "Saved existing config.json for preservation"
     fi
 }
@@ -168,23 +175,26 @@ merge_config() {
     # Merge order: defaults < saved existing config < settings.json migration
     # This preserves user customizations while allowing migration from old format
     if [[ -f "$default_config" ]]; then
-        # Avoid ${var:-{}} syntax which has issues when var ends with }
-        local saved_config
-        if [[ -n "$SAVED_CONFIG_JSON" ]]; then
-            saved_config="$SAVED_CONFIG_JSON"
+        local has_backup=false
+        if [[ -f "$CONFIG_BACKUP_FILE" ]]; then
+            has_backup=true
+            jq -s '.[0] * .[1] * .[2]' \
+                "$default_config" \
+                "$CONFIG_BACKUP_FILE" \
+                <(echo "$settings_migration") \
+                > "$config_file.tmp"
         else
-            saved_config="{}"
+            jq -s '.[0] * .[1]' \
+                "$default_config" \
+                <(echo "$settings_migration") \
+                > "$config_file.tmp"
         fi
-
-        jq -s '.[0] * .[1] * .[2]' \
-            "$default_config" \
-            <(echo "$saved_config") \
-            <(echo "$settings_migration") \
-            > "$config_file.tmp"
         mv "$config_file.tmp" "$config_file"
 
-        if [[ -n "$SAVED_CONFIG_JSON" ]]; then
+        if [[ "$has_backup" == "true" ]]; then
             log_success "Merged config.json (preserved existing customizations)"
+            # Clean up backup after successful merge
+            rm -f "$CONFIG_BACKUP_FILE"
         else
             log_success "Created config.json with defaults"
         fi

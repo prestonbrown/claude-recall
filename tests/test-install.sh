@@ -325,6 +325,35 @@ test_config_merge_variable_with_closing_brace() {
     assert_eq "2" "$debug_level" "Variable containing JSON with } should merge correctly"
 }
 
+test_config_backup_persists_across_runs() {
+    # Test: backup file should persist so re-runs after failure use original config
+
+    local backup_file="/tmp/test-claude-recall-config-backup.json"
+    rm -f "$backup_file"
+
+    # First "run" - save config to backup
+    echo '{"debugLevel": 2, "customField": "value"}' > "$backup_file"
+
+    # Simulate re-run: backup exists, should use it
+    local defaults='{"enabled": true, "debugLevel": 1}'
+    local migration='{}'
+
+    local result
+    result=$(jq -s '.[0] * .[1] * .[2]' \
+        <(echo "$defaults") \
+        "$backup_file" \
+        <(echo "$migration"))
+
+    local debug_level custom_field
+    debug_level=$(echo "$result" | jq -r '.debugLevel')
+    custom_field=$(echo "$result" | jq -r '.customField')
+
+    assert_eq "2" "$debug_level" "Backup should preserve debugLevel across failed installs"
+    assert_eq "value" "$custom_field" "Backup should preserve custom fields across failed installs"
+
+    rm -f "$backup_file"
+}
+
 # =============================================================================
 # RUN TESTS
 # =============================================================================
@@ -345,6 +374,7 @@ main() {
     run_test "config merge priority order" test_config_merge_priority_order
     run_test "config merge multiline JSON" test_config_merge_multiline_json
     run_test "config merge variable with closing brace" test_config_merge_variable_with_closing_brace
+    run_test "config backup persists across runs" test_config_backup_persists_across_runs
     
     echo ""
     echo -e "${YELLOW}=== Test Results ===${NC}"
