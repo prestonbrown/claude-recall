@@ -26,11 +26,5 @@ htmlcov/
 # OS
 .DS_Store
 
-# Local/stealth handoffs (not committed to git)
-.coding-agent-lessons/HANDOFFS_LOCAL.md
-.coding-agent-lessons/HANDOFFS_LOCAL_ARCHIVE.md
-.coding-agent-lessons/APPROACHES_LOCAL.md
-.recall/HANDOFFS_LOCAL.md
-.recall/HANDOFFS_LOCAL_ARCHIVE.md
-.recall/APPROACHES_LOCAL.md
-.claude/
+# Local settings (not committed to git)
+.claude/settings.local.json
