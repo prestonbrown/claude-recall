@@ -273,8 +273,8 @@ log_phase() {
 log_hook_end() {
     local hook_name="${1:-hook}"
 
-    # Skip if debug level < 2 (no timing overhead in production)
-    [[ "${CLAUDE_RECALL_DEBUG:-0}" -lt 2 ]] && return 0
+    # Skip if debug level < 1 (hook_end provides total timing even at level 1)
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -lt 1 ]] && return 0
 
     local total_ms=$(get_elapsed_ms)
 
