@@ -108,6 +108,14 @@ def main():
     list_parser.add_argument("--category", "-c", help="Filter by category")
     list_parser.add_argument("--stale", action="store_true", help="Show stale lessons only")
 
+    # search command (simpler interface for searching)
+    search_parser = subparsers.add_parser("search", help="Search lessons by keyword")
+    search_parser.add_argument("term", help="Search term")
+
+    # show command
+    show_parser = subparsers.add_parser("show", help="Show a single lesson by ID")
+    show_parser.add_argument("lesson_id", help="Lesson ID (e.g., L001 or S001)")
+
     # decay command
     decay_parser = subparsers.add_parser("decay", help="Decay lesson metrics")
     decay_parser.add_argument("days", type=int, nargs="?", default=30, help="Stale threshold days")

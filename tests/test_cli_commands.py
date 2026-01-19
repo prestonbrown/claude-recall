@@ -107,6 +107,18 @@ class TestCommandRegistration:
         assert "list" in COMMAND_REGISTRY
         assert COMMAND_REGISTRY["list"] is ListCommand
 
+    def test_search_command_is_registered(self):
+        """SearchCommand should be registered for 'search'."""
+        from core.commands import COMMAND_REGISTRY, SearchCommand
+        assert "search" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["search"] is SearchCommand
+
+    def test_show_command_is_registered(self):
+        """ShowCommand should be registered for 'show'."""
+        from core.commands import COMMAND_REGISTRY, ShowCommand
+        assert "show" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["show"] is ShowCommand
+
     def test_decay_command_is_registered(self):
         """DecayCommand should be registered for 'decay'."""
         from core.commands import COMMAND_REGISTRY, DecayCommand
@@ -320,6 +332,102 @@ class TestCommandExecution:
         assert result == 0
         captured = capsys.readouterr()
         assert "Listed" in captured.out or "L001" in captured.out
+
+    def test_search_command_executes_successfully(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """SearchCommand.execute should search lessons by keyword."""
+        from core.commands import SearchCommand
+
+        # Add some lessons with searchable content
+        manager.add_lesson(
+            level="project", category="pattern", title="Git workflow", content="Use git add -p"
+        )
+        manager.add_lesson(
+            level="project", category="pattern", title="Testing tips", content="Write tests first"
+        )
+
+        args = Namespace(
+            command="search",
+            term="git",
+        )
+
+        cmd = SearchCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Git workflow" in captured.out
+        assert "Testing tips" not in captured.out
+        assert "Found: 1 lesson(s)" in captured.out
+
+    def test_search_command_no_results(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """SearchCommand.execute should handle no matches gracefully."""
+        from core.commands import SearchCommand
+
+        manager.add_lesson(
+            level="project", category="pattern", title="Testing tips", content="Write tests first"
+        )
+
+        args = Namespace(
+            command="search",
+            term="nonexistent",
+        )
+
+        cmd = SearchCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "No lessons found matching 'nonexistent'" in captured.out
+
+    def test_show_command_executes_successfully(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """ShowCommand.execute should show lesson details."""
+        from core.commands import ShowCommand
+
+        manager.add_lesson(
+            level="project",
+            category="correction",
+            title="Important lesson",
+            content="This is the detailed content of the lesson",
+        )
+
+        args = Namespace(
+            command="show",
+            lesson_id="L001",
+        )
+
+        cmd = ShowCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Important lesson" in captured.out
+        assert "correction" in captured.out
+        assert "This is the detailed content" in captured.out
+        assert "Level: Project" in captured.out
+
+    def test_show_command_nonexistent_lesson(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """ShowCommand.execute should handle nonexistent lessons."""
+        from core.commands import ShowCommand
+
+        args = Namespace(
+            command="show",
+            lesson_id="L999",
+        )
+
+        cmd = ShowCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Lesson not found: L999" in captured.out
 
     def test_delete_command_executes_successfully(
         self, manager, temp_lessons_base, temp_project_root, capsys

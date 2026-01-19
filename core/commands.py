@@ -198,6 +198,52 @@ class ListCommand(Command):
         return 0
 
 
+class SearchCommand(Command):
+    """Search lessons by keyword."""
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        term = args.term
+        lessons = manager.list_lessons(scope="all", search=term)
+
+        if not lessons:
+            print(f"No lessons found matching '{term}'")
+            return 0
+
+        for lesson in lessons:
+            rating = LessonRating.calculate(lesson.uses, lesson.velocity)
+            prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
+            stale = " [STALE]" if lesson.is_stale() else ""
+            print(f"[{lesson.id}] {rating} {prefix}{lesson.title}{stale}")
+            print(f"    -> {lesson.content}")
+        print(f"\nFound: {len(lessons)} lesson(s)")
+        return 0
+
+
+class ShowCommand(Command):
+    """Show a single lesson by ID."""
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        lesson_id = args.lesson_id
+        lesson = manager.get_lesson(lesson_id)
+
+        if not lesson:
+            print(f"Lesson not found: {lesson_id}")
+            return 1
+
+        rating = LessonRating.calculate(lesson.uses, lesson.velocity)
+        prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
+        stale = " [STALE]" if lesson.is_stale() else ""
+        level = "System" if lesson.id.startswith("S") else "Project"
+
+        print(f"[{lesson.id}] {rating} {prefix}{lesson.title}{stale}")
+        print(f"Level: {level}")
+        print(f"Category: {lesson.category}")
+        print(f"Uses: {lesson.uses}")
+        print(f"Velocity: {lesson.velocity}")
+        print(f"\nContent:\n{lesson.content}")
+        return 0
+
+
 class DecayCommand(Command):
     """Apply velocity decay to lessons."""
 
@@ -390,6 +436,8 @@ COMMAND_REGISTRY: Dict[str, Type[Command]] = {
     "inject": InjectCommand,
     "inject-combined": InjectCombinedCommand,
     "list": ListCommand,
+    "search": SearchCommand,
+    "show": ShowCommand,
     "decay": DecayCommand,
     "edit": EditCommand,
     "delete": DeleteCommand,
