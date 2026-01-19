@@ -363,6 +363,9 @@ detect_and_warn_missing_handoff() {
 main() {
     is_enabled || exit 0
 
+    # Time the startup phase (stdin parsing, cleanup, etc.)
+    local phase_start=$(get_elapsed_ms)
+
     # Read input first (stdin must be consumed before other operations)
     local input=$(cat)
 
@@ -390,9 +393,10 @@ main() {
     local state_file="$STATE_DIR/$session_id"
     local last_timestamp=""
     [[ -f "$state_file" ]] && last_timestamp=$(cat "$state_file")
+    log_phase "startup" "$phase_start" "stop"
 
     # Parse transcript ONCE and cache all data (replaces 12+ jq calls)
-    local phase_start=$(get_elapsed_ms)
+    phase_start=$(get_elapsed_ms)
     parse_transcript_once "$transcript_path" "$last_timestamp"
     log_phase "parse_transcript" "$phase_start" "stop"
 
@@ -415,6 +419,9 @@ main() {
     # Warn if major work detected without handoff
     detect_and_warn_missing_handoff "$transcript_path" "$project_root"
 
+    # Extract and filter citations
+    phase_start=$(get_elapsed_ms)
+
     # Extract citations from cached assistant texts
     local texts_field="assistant_texts"
     [[ -n "$last_timestamp" ]] && texts_field="assistant_texts_new"
@@ -428,6 +435,8 @@ main() {
     # Update checkpoint even if no citations (to advance the checkpoint)
     if [[ -z "$citations" ]]; then
         [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
+        log_phase "extract_citations" "$phase_start" "stop"
+        log_hook_end "stop"
         exit 0
     fi
 
@@ -447,6 +456,7 @@ main() {
         fi
     done <<< "$citations"
     citations=$(echo "$filtered_citations" | sort -u | grep -v '^$' || true)
+    log_phase "extract_citations" "$phase_start" "stop"
 
     [[ -z "$citations" ]] && {
         [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
@@ -482,11 +492,13 @@ main() {
     (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
 
     # Add transcript to linked handoff if session has one
+    phase_start=$(get_elapsed_ms)
     local session_id=$(echo "$input" | jq -r '.session_id // empty')
     if [[ -n "$session_id" && -n "$transcript_path" ]]; then
         PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" \
             handoff add-transcript "$session_id" "$transcript_path" 2>/dev/null || true
     fi
+    log_phase "add_transcript" "$phase_start" "stop"
 
     # Log timing summary
     log_hook_end "stop"

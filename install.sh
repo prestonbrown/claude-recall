@@ -121,38 +121,67 @@ migrate_old_locations() {
     fi
 }
 
-migrate_settings_to_config() {
-    log_info "Checking for settings to migrate from settings.json..."
+# Global to store existing config before plugin install overwrites it
+SAVED_CONFIG_JSON=""
 
-    local settings="$HOME/.claude/settings.json"
-    [[ -f "$settings" ]] || return 0
+# Save existing config.json BEFORE plugin install overwrites it
+save_existing_config() {
+    local install_path
+    install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
+        "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
 
-    # Check if claudeRecall exists in settings.json
-    local has_recall
-    has_recall=$(jq -r 'has("claudeRecall")' "$settings" 2>/dev/null || echo "false")
-    [[ "$has_recall" == "true" ]] || return 0
+    if [[ -n "$install_path" && -f "$install_path/config.json" ]]; then
+        SAVED_CONFIG_JSON=$(cat "$install_path/config.json")
+        log_info "Saved existing config.json for preservation"
+    fi
+}
 
-    log_info "Found claudeRecall settings in settings.json, migrating to config.json..."
+# Merge configs after plugin install: defaults < saved config < settings.json migration
+merge_config() {
+    log_info "Merging configuration..."
 
-    # Find the installed plugin path from the registry
+    # Find the installed plugin path
     local install_path
     install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
         "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
 
     if [[ -z "$install_path" || ! -d "$install_path" ]]; then
-        log_warn "Could not find installed plugin path, skipping settings migration"
+        log_warn "Could not find installed plugin path, skipping config merge"
         return 0
     fi
 
-    # Extract settings and write to plugin config
     local config_file="$install_path/config.json"
     local default_config="$SCRIPT_DIR/plugins/claude-recall/config.json"
 
-    # Start with defaults, then merge user settings
+    # Get settings.json migration data (if any)
+    local settings="$HOME/.claude/settings.json"
+    local settings_migration="{}"
+    if [[ -f "$settings" ]]; then
+        local has_recall
+        has_recall=$(jq -r 'has("claudeRecall")' "$settings" 2>/dev/null || echo "false")
+        if [[ "$has_recall" == "true" ]]; then
+            settings_migration=$(jq '.claudeRecall // {}' "$settings")
+            log_info "Found claudeRecall settings in settings.json to migrate"
+        fi
+    fi
+
+    # Merge order: defaults < saved existing config < settings.json migration
+    # This preserves user customizations while allowing migration from old format
     if [[ -f "$default_config" ]]; then
-        jq -s '.[0] * .[1]' "$default_config" <(jq '.claudeRecall // {}' "$settings") > "$config_file.tmp"
+        local saved_config="${SAVED_CONFIG_JSON:-{}}"
+
+        jq -s '.[0] * .[1] * .[2]' \
+            "$default_config" \
+            <(echo "$saved_config") \
+            <(echo "$settings_migration") \
+            > "$config_file.tmp"
         mv "$config_file.tmp" "$config_file"
-        log_success "Migrated settings to $config_file"
+
+        if [[ -n "$SAVED_CONFIG_JSON" ]]; then
+            log_success "Merged config.json (preserved existing customizations)"
+        else
+            log_success "Created config.json with defaults"
+        fi
     fi
 }
 # ============================================================
@@ -392,11 +421,14 @@ install_claude() {
     cleanup_old_hooks
     cleanup_legacy_base
 
+    # Save existing config BEFORE plugin install overwrites it
+    save_existing_config
+
     # Install plugin via marketplace (handles registration and enabling)
     install_plugin
 
-    # Migrate settings from settings.json to config.json
-    migrate_settings_to_config
+    # Merge configs: defaults < saved existing < settings.json migration
+    merge_config
 
     # Install supporting files
     install_commands
