@@ -208,34 +208,35 @@ get_setting() {
 # ============================================================
 # TIMING INFRASTRUCTURE
 # ============================================================
-# Uses bash SECONDS for relative timing to avoid subprocess overhead.
-# Python is only called once for absolute timestamp when debug logging is needed.
-# This eliminates 12+ Python subprocess spawns (~250ms each) per hook invocation.
+# Uses platform-specific methods for millisecond precision timing.
+# Linux: date +%s%3N (native)
+# macOS: perl Time::HiRes (always available, fast)
 
-# Get absolute milliseconds (only called once per hook for timestamps)
-get_ms_absolute() {
-    python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || echo 0
-}
+# Detect timing method once at source time
+if date +%s%3N >/dev/null 2>&1 && [[ "$(date +%s%3N)" =~ ^[0-9]+$ ]]; then
+    _get_ms_now() { date +%s%3N; }
+else
+    _get_ms_now() { perl -MTime::HiRes -e 'printf("%.0f\n",Time::HiRes::time()*1000)'; }
+fi
 
-# Legacy compatibility - now uses elapsed time from SECONDS
-# Note: Returns elapsed ms since init_timing, not absolute time
+HOOK_START_MS=""
+
+# Get current time in milliseconds
 get_ms() {
-    echo "$(( (SECONDS - HOOK_START_SECONDS) * 1000 ))"
+    _get_ms_now
 }
 
-# Initialize timing state - uses bash SECONDS (no subprocess)
+# Initialize timing state
 init_timing() {
-    HOOK_START_SECONDS=$SECONDS
-    HOOK_START_MS=""  # Lazy - only computed if needed for logging
+    HOOK_START_MS=$(_get_ms_now)
     PHASE_TIMES_JSON="{}"
-    export HOOK_START_SECONDS
     export HOOK_START_MS
-    export PHASE_TIMES_JSON
 }
 
-# Get elapsed milliseconds since hook start (no subprocess)
+# Get elapsed milliseconds since init_timing
 get_elapsed_ms() {
-    echo "$(( (SECONDS - HOOK_START_SECONDS) * 1000 ))"
+    local now=$(_get_ms_now)
+    echo "$((now - HOOK_START_MS))"
 }
 
 # Log timing for a named phase

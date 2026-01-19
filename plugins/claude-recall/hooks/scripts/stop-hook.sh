@@ -27,15 +27,71 @@ STATE_DIR="$CLAUDE_RECALL_STATE/.citation-state"
 # Global transcript cache (set by parse_transcript_once)
 TRANSCRIPT_CACHE=""
 
+# Byte-offset tracking for incremental transcript parsing
+OFFSET_FILE="$CLAUDE_RECALL_STATE/transcript_offsets.json"
+
+get_transcript_offset() {
+    local session_id="$1"
+    [[ -f "$OFFSET_FILE" ]] || echo '{}' > "$OFFSET_FILE"
+    local result
+    result=$(jq -r --arg id "$session_id" '.[$id] // "0"' "$OFFSET_FILE" 2>/dev/null)
+    if [[ $? -ne 0 || -z "$result" ]]; then
+        # Corrupted offset file, reset it
+        echo '{}' > "$OFFSET_FILE"
+        echo "0"
+    else
+        echo "$result"
+    fi
+}
+
+set_transcript_offset() {
+    local session_id="$1" offset="$2"
+    local tmp=$(mktemp "${OFFSET_FILE}.XXXXXX")
+    if ! jq --arg id "$session_id" --arg off "$offset" \
+            '.[$id] = ($off | tonumber)' "$OFFSET_FILE" > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+    mv "$tmp" "$OFFSET_FILE"
+}
+
 # Parse transcript once and cache all needed data
 # This replaces 12+ separate jq invocations with a single parse
+# Uses byte-offset tracking to only parse new content since last run
 parse_transcript_once() {
     local transcript_path="$1"
     local last_timestamp="$2"
+    local session_id="$3"
+
+    # Get byte offset for this session (0 = first run, parse everything)
+    local offset=0
+    [[ -n "$session_id" ]] && offset=$(get_transcript_offset "$session_id")
+
+    # Get current file size (macOS: stat -f%z, Linux: stat -c%s)
+    local current_size
+    current_size=$(stat -f%z "$transcript_path" 2>/dev/null || stat -c%s "$transcript_path" 2>/dev/null || echo "0")
+
+    # Handle edge cases
+    if [[ "$offset" -ge "$current_size" ]]; then
+        # No new content - return empty cache
+        TRANSCRIPT_CACHE='{"assistant_texts":[],"assistant_texts_new":[],"last_todowrite":null,"last_todowrite_new":null,"edit_count":0,"todowrite_count":0,"latest_timestamp":"","citations":[],"citations_new":[]}'
+        return 0
+    fi
+
+    # Parse content: either full file (offset=0) or tail from offset
+    # When using tail, skip partial first line with tail -n +2
+    local jq_input
+    if [[ "$offset" -eq 0 ]]; then
+        # First run or reset: parse entire file
+        jq_input=$(cat "$transcript_path")
+    else
+        # Incremental: parse only new content, skip partial first line
+        jq_input=$(tail -c +$((offset + 1)) "$transcript_path" | tail -n +2)
+    fi
 
     # Single jq call extracts everything we need
     # Output is a JSON object we can query cheaply with simple jq calls
-    TRANSCRIPT_CACHE=$(jq -s --arg ts "$last_timestamp" '{
+    TRANSCRIPT_CACHE=$(echo "$jq_input" | jq -s --arg ts "$last_timestamp" '{
         # All assistant text content (joined for grep)
         assistant_texts: [.[] | select(.type == "assistant") |
             .message.content[]? | select(.type == "text") | .text],
@@ -89,7 +145,10 @@ parse_transcript_once() {
                 map(select(.[1] | test("^ \\[\\*") | not)) |
                 map(.[0]) | unique | sort)
         end)
-    }' "$transcript_path" 2>/dev/null || echo "{}")
+    }' 2>/dev/null || echo "{}")
+
+    # Update byte offset for next run (save current file size)
+    [[ -n "$session_id" ]] && set_transcript_offset "$session_id" "$current_size"
 }
 
 # Clean up orphaned checkpoint files (transcripts deleted but checkpoints remain)
@@ -414,8 +473,9 @@ main() {
     log_phase "startup" "$phase_start" "stop"
 
     # Parse transcript ONCE and cache all data (replaces 12+ jq calls)
+    # Uses byte-offset tracking to only parse new content since last run
     phase_start=$(get_elapsed_ms)
-    parse_transcript_once "$transcript_path" "$last_timestamp"
+    parse_transcript_once "$transcript_path" "$last_timestamp" "$session_id"
     log_phase "parse_transcript" "$phase_start" "stop"
 
     # Process AI LESSON: patterns (adds new AI-generated lessons)
