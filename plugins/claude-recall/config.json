@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "maxLessons": 30,
+  "topLessonsToShow": 5,
+  "relevanceTopN": 5,
+  "remindEvery": 12,
+  "promotionThreshold": 50,
+  "decayIntervalDays": 7,
+  "debugLevel": 1
+}

@@ -1,0 +1,406 @@
+/* Claude Recall Monitor - TUI Styles */
+
+/* Main screen layout */
+Screen {
+    background: $surface;
+}
+
+/* Header bar */
+#header {
+    dock: top;
+    height: 1;
+    background: $primary;
+    color: $text;
+    padding: 0 1;
+}
+
+/* Status bar at bottom */
+#status-bar {
+    dock: bottom;
+    height: 1;
+    background: $surface-darken-1;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* Tab container */
+TabbedContent {
+    height: 100%;
+}
+
+/* Content area needs to fill remaining space after tabs */
+ContentSwitcher {
+    height: 1fr;
+}
+
+/* Tab bar - fix height to prevent expansion */
+ContentTabs {
+    height: 2;
+}
+
+/* Fix internal container that uses 1fr by default */
+ContentTabs #tabs-scroll {
+    height: 1;
+}
+
+Tabs {
+    width: 100%;
+    height: auto;
+}
+
+/* Individual tab headers - add spacing between tabs
+   Using TabbedContent > Tabs Tab for higher specificity to override defaults */
+TabbedContent > Tabs Tab {
+    padding: 0 3;
+    margin: 0 1;
+}
+
+/* Active tab styling */
+TabbedContent > Tabs Tab.-active {
+    text-style: bold;
+}
+
+TabPane {
+    height: 1fr;
+    padding: 0 1;
+}
+
+/* Event log table/list */
+#event-log {
+    height: 100%;
+}
+
+#event-log > .datatable--header {
+    background: $surface-darken-1;
+    color: $text;
+    text-style: bold;
+}
+
+#event-log > .datatable--cursor {
+    background: $primary-darken-1;
+}
+
+/* RichLog widget */
+RichLog {
+    height: 100%;
+    border: solid $primary-darken-2;
+    scrollbar-size: 1 1;
+}
+
+/* Health stats panel */
+#health-panel {
+    height: 100%;
+    padding: 1;
+}
+
+.stat-box {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    margin-bottom: 1;
+    border: solid $primary-darken-2;
+}
+
+.stat-box-title {
+    text-style: bold;
+    color: $text;
+}
+
+.stat-value {
+    color: $success;
+}
+
+.stat-value-warning {
+    color: $warning;
+}
+
+.stat-value-error {
+    color: $error;
+}
+
+/* State overview panel */
+#state-panel {
+    height: 100%;
+    padding: 1;
+}
+
+/* Session list */
+#session-list {
+    height: 50%;
+    border: solid $primary-darken-2;
+}
+
+#session-events {
+    height: 50%;
+    border: solid $primary-darken-2;
+}
+
+/* Section headers */
+.section-title {
+    width: 100%;
+    text-style: bold;
+    background: $surface-darken-1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+/* Event type colors - applied via markup */
+.event-session {
+    color: cyan;
+}
+
+.event-citation {
+    color: green;
+}
+
+.event-error {
+    color: red;
+    text-style: bold;
+}
+
+.event-decay {
+    color: yellow;
+}
+
+.event-handoff {
+    color: magenta;
+}
+
+.event-timing {
+    color: $text-muted;
+}
+
+/* Handoff status colors */
+.handoff-active {
+    color: $success;
+}
+
+.handoff-blocked {
+    color: $error;
+}
+
+.handoff-review {
+    color: $warning;
+}
+
+/* Paused indicator */
+.paused-indicator {
+    background: $warning;
+    color: $text;
+    text-style: bold;
+    padding: 0 1;
+}
+
+/* Container panels */
+Vertical {
+    height: 100%;
+}
+
+Horizontal {
+    height: auto;
+}
+
+/* Static text blocks */
+Static {
+    height: auto;
+    padding: 0;
+    margin: 0;
+}
+
+/* Loading indicator */
+LoadingIndicator {
+    height: 3;
+    width: 100%;
+}
+
+/* Error message display */
+.error-message {
+    color: $error;
+    text-style: bold;
+    padding: 1;
+    border: solid $error;
+}
+
+/* Info message */
+.info-message {
+    color: $text-muted;
+    padding: 1;
+}
+
+/* Charts panel */
+#charts-panel {
+    height: 100%;
+    padding: 1;
+}
+
+#sparklines-panel {
+    height: auto;
+    min-height: 8;
+    padding: 0 1;
+    margin-bottom: 1;
+    border: solid $primary-darken-2;
+}
+
+#charts-row {
+    height: 1fr;
+    min-height: 15;
+}
+
+#activity-chart {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary-darken-2;
+    margin-right: 1;
+}
+
+#timing-chart {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary-darken-2;
+}
+
+/* Session Detail Modal */
+SessionDetailModal {
+    align: center middle;
+}
+
+#session-detail-modal {
+    width: 80;
+    height: auto;
+    max-height: 80%;
+    border: solid $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#session-detail-content {
+    height: auto;
+    max-height: 20;
+    padding: 1 0;
+}
+
+#session-detail-content Static {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.modal-title {
+    text-style: bold;
+    text-align: center;
+    padding: 0 0 1 0;
+    border-bottom: solid $primary-darken-2;
+    margin-bottom: 1;
+}
+
+#close-modal {
+    width: 100%;
+    margin-top: 1;
+}
+
+/* Handoff Action Modal - no background dimming */
+HandoffActionScreen {
+    align: center middle;
+    background: transparent;
+}
+
+#handoff-action-modal {
+    width: 40;
+    height: auto;
+    max-height: 80%;
+    border: solid $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+/* Status/Phase/Agent Select Modals - no background dimming */
+StatusSelectScreen, PhaseSelectScreen, AgentSelectScreen {
+    align: center middle;
+    background: transparent;
+}
+
+#status-select-modal, #phase-select-modal, #agent-select-modal {
+    width: 35;
+    height: auto;
+    max-height: 60%;
+    border: solid $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+/* Handoffs tab */
+#handoff-list {
+    height: 1fr;
+    border: solid $primary-darken-2;
+}
+
+#handoff-details {
+    height: 1fr;
+    border: solid $primary-darken-2;
+}
+
+/* Filter row */
+.filter-row {
+    width: 100%;
+    height: 3;
+    align: left middle;
+}
+
+.filter-label {
+    width: auto;
+    content-align: center middle;
+}
+
+#handoff-filter {
+    width: 1fr;
+    margin: 0 1;
+}
+
+#clear-filter {
+    width: 3;
+    min-width: 3;
+}
+
+/* Handoff status colors in DataTable */
+.handoff-status-not-started {
+    color: $text-muted;
+}
+
+.handoff-status-in-progress {
+    color: $success;
+}
+
+.handoff-status-blocked {
+    color: $error;
+}
+
+.handoff-status-ready-for-review {
+    color: $warning;
+}
+
+.handoff-status-completed {
+    color: cyan;
+}
+
+/* Loading Modal */
+LoadingScreen {
+    align: center middle;
+}
+
+#loading-modal {
+    width: 50;
+    height: auto;
+    border: solid $primary;
+    background: $surface;
+    padding: 2 4;
+}
+
+#loading-modal LoadingIndicator {
+    height: 3;
+    width: 100%;
+}
+
+#loading-status {
+    text-align: center;
+    margin-top: 1;
+    color: $text-muted;
+}

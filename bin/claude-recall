@@ -25,8 +25,12 @@ SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 if [[ -f "$SCRIPT_DIR/../core/cli.py" ]]; then
     RECALL_DIR="$SCRIPT_DIR/.."
     CLI_PATH="$RECALL_DIR/core/cli.py"
+elif [[ -f "$HOME/.claude/plugins/claude-recall/core/cli.py" ]]; then
+    # Plugin install location
+    RECALL_DIR="$HOME/.claude/plugins/claude-recall"
+    CLI_PATH="$RECALL_DIR/core/cli.py"
 elif [[ -f "$HOME/.config/claude-recall/core/cli.py" ]]; then
-    # Installed location (package structure)
+    # Legacy installed location (package structure)
     RECALL_DIR="$HOME/.config/claude-recall"
     CLI_PATH="$RECALL_DIR/core/cli.py"
 elif [[ -f "$HOME/.config/claude-recall/cli.py" ]]; then
