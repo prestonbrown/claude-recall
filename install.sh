@@ -344,15 +344,19 @@ install_plugin() {
     fi
 }
 
-install_commands() {
-    # Copy slash commands to user commands directory
+cleanup_old_commands() {
+    # Remove old slash commands from ~/.claude/commands/
+    # Commands are now served via plugin namespace (e.g., /claude-recall:lessons)
     local commands_dir="$HOME/.claude/commands"
-    mkdir -p "$commands_dir"
-
-    local plugin_commands="$SCRIPT_DIR/plugins/claude-recall/commands"
-    if [[ -d "$plugin_commands" ]]; then
-        cp "$plugin_commands/"*.md "$commands_dir/" 2>/dev/null || true
-        log_success "Installed slash commands to $commands_dir"
+    local removed=0
+    for cmd in lessons.md handoffs.md implement.md delegate.md review.md test-first.md; do
+        if [[ -f "$commands_dir/$cmd" ]]; then
+            rm -f "$commands_dir/$cmd"
+            ((removed++))
+        fi
+    done
+    if ((removed > 0)); then
+        log_info "Cleaned up $removed old command(s) from $commands_dir"
     fi
 }
 
@@ -447,7 +451,7 @@ install_claude() {
     merge_config
 
     # Install supporting files
-    install_commands
+    cleanup_old_commands
     install_state_dir
     install_venv
     install_cli
@@ -533,8 +537,9 @@ uninstall() {
     cleanup_old_hooks
     cleanup_legacy_base
 
-    # Remove slash commands
+    # Remove slash commands (legacy - now served via plugin namespace)
     rm -f "$HOME/.claude/commands/lessons.md"
+    rm -f "$HOME/.claude/commands/handoffs.md"
     rm -f "$HOME/.claude/commands/implement.md"
     rm -f "$HOME/.claude/commands/delegate.md"
     rm -f "$HOME/.claude/commands/review.md"
