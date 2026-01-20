@@ -279,7 +279,11 @@ log_hook_end() {
     local total_ms=$(get_elapsed_ms)
 
     if [[ -n "$PYTHON_MANAGER" && -f "$PYTHON_MANAGER" ]]; then
-        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" "$PHASE_TIMES_JSON" 2>/dev/null &
+        if [[ -n "$PHASE_TIMES_JSON" && "$PHASE_TIMES_JSON" != "{}" ]]; then
+            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" --phases "$PHASE_TIMES_JSON" 2>/dev/null &
+        else
+            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" 2>/dev/null &
+        fi
     fi
 }
 

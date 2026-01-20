@@ -256,3 +256,77 @@ class TestCLIHookTiming:
 
         log_file = temp_state_dir / "debug.log"
         assert not log_file.exists(), "hook-end should not log at level 0"
+
+    def test_cli_hook_end_with_phases_flag_works(
+        self, monkeypatch, temp_state_dir, temp_project_root
+    ):
+        """CLI debug hook-end with --phases flag works correctly."""
+        env = {
+            **os.environ,
+            "CLAUDE_RECALL_STATE": str(temp_state_dir),
+            "CLAUDE_RECALL_DEBUG": "1",
+            "PROJECT_DIR": str(temp_project_root),
+        }
+
+        # This is the CORRECT way to pass phases - using --phases flag
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "core.cli",
+                "debug",
+                "hook-end",
+                "inject",
+                "50.5",
+                "--phases",
+                '{"parse":10,"sync":20}',
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent.parent,
+        )
+
+        assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+        log_file = temp_state_dir / "debug.log"
+        assert log_file.exists(), "hook-end should create log at level 1"
+
+        entry = json.loads(log_file.read_text().strip())
+        assert entry["event"] == "hook_end"
+        assert entry["hook"] == "inject"
+        assert entry["total_ms"] == 50.5
+        assert entry["phases"]["parse"] == 10
+        assert entry["phases"]["sync"] == 20
+
+    def test_cli_hook_end_with_phases_positional_fails(
+        self, monkeypatch, temp_state_dir, temp_project_root
+    ):
+        """CLI debug hook-end with phases as positional arg fails (documents the bash bug)."""
+        env = {
+            **os.environ,
+            "CLAUDE_RECALL_STATE": str(temp_state_dir),
+            "CLAUDE_RECALL_DEBUG": "1",
+            "PROJECT_DIR": str(temp_project_root),
+        }
+
+        # This mimics what bash INCORRECTLY does - passing phases as positional arg
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "core.cli",
+                "debug",
+                "hook-end",
+                "inject",
+                "50.5",
+                '{"parse":10}',
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent.parent,
+        )
+
+        # This SHOULD fail because phases is a positional arg, not --phases flag
+        assert result.returncode != 0, "Positional phases should fail (argparse rejects it)"
