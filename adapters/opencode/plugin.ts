@@ -217,11 +217,16 @@ function findPythonManager(): string {
 const MANAGER = findPythonManager()
 
 export const LessonsPlugin: Plugin = async ({ $, client }) => {
-  const fastModel = await detectFastModel(client, CONFIG.small_model);
-
-  if (!fastModel) {
-    log('warn', 'plugin.no_fast_model', {});
-  }
+  // Detect fast model in background - don't block plugin initialization
+  // The result is logged but not currently used for scoring (Python CLI handles that)
+  detectFastModel(client, CONFIG.small_model).then(model => {
+    cachedFastModel = model;
+    if (!model) {
+      log('warn', 'plugin.no_fast_model', {});
+    }
+  }).catch(e => {
+    log('warn', 'plugin.model_detection_failed', { error: String(e) });
+  });
 
   const sessionCheckpoints = new Map<string, number>();
   const sessionState = new Map<string, { isFirstPrompt: boolean; promptCount: number; compactionOccurred: boolean }>();
@@ -234,7 +239,8 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
         // Initialize session state
         sessionState.set(input.session.id, {
           isFirstPrompt: true,
-          promptCount: 0
+          promptCount: 0,
+          compactionOccurred: false
         });
 
         // Run decay if it's been more than CONFIG.decayIntervalDays since last run
