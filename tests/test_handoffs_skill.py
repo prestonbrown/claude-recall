@@ -26,7 +26,6 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 SKILL_PATHS = [
     PROJECT_ROOT / "plugins" / "claude-recall" / "commands" / "handoffs.md",
-    PROJECT_ROOT / "adapters" / "claude-code" / "commands" / "handoffs.md",
 ]
 
 # User-facing commands that SHOULD be in the skill (sorted for deterministic test order)
@@ -145,8 +144,8 @@ class TestSkillFilesExist:
         """Skill file should exist at expected path."""
         assert skill_path.exists(), f"Skill file not found: {skill_path}"
 
-    def test_both_locations_have_skill(self):
-        """Both plugin and adapter locations should have the handoffs skill."""
+    def test_plugin_location_has_skill(self):
+        """Plugin location should have the handoffs skill."""
         for path in SKILL_PATHS:
             assert path.exists(), f"Missing skill at: {path}"
 
