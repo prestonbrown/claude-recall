@@ -382,6 +382,7 @@ capture_todowrite() {
     local transcript_path="$1"
     local project_root="$2"
     local last_timestamp="$3"
+    local session_id="$4"
 
     # Get the LAST TodoWrite from cached data
     # Cache already has the final state, no need for tail -1
@@ -401,8 +402,10 @@ capture_todowrite() {
     # Call Python manager to sync todos to handoff
     if [[ -f "$PYTHON_MANAGER" ]]; then
         local result
+        local session_id_arg=""
+        [[ -n "$session_id" ]] && session_id_arg="--session-id $session_id"
         result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" approach sync-todos "$todo_json" 2>&1 || true)
+            python3 "$PYTHON_MANAGER" approach sync-todos "$todo_json" $session_id_arg 2>&1 || true)
 
         if [[ -n "$result" && "$result" != Error:* ]]; then
             echo "[handoffs] Synced TodoWrite to handoff" >&2
@@ -533,7 +536,7 @@ main() {
         process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
 
         # Capture TodoWrite
-        capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
+        capture_todowrite "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
 
         # Cite lessons individually (bash fallback)
         if [[ -n "$citation_ids" && -x "$BASH_MANAGER" ]]; then

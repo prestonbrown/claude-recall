@@ -2127,6 +2127,7 @@ Consider extracting lessons about:
         self,
         todos: List[dict],
         session_handoff: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Optional[str]:
         """
         Sync TodoWrite todos to a handoff.
@@ -2144,10 +2145,13 @@ Consider extracting lessons about:
         1. Session-based: If session_handoff is provided and handoff is active
         2. Explicit prefix: If todos contain [hf-XXXXXXX]
         3. Most recent: Fall back to most recently updated active handoff
+           (only if session_id is NOT provided - prevents cross-session pollution)
 
         Args:
             todos: List of todo dicts with 'content', 'status', 'activeForm'
             session_handoff: Optional handoff ID from session lookup (highest priority)
+            session_id: Optional session ID - if provided without session_handoff,
+                       indicates new work that shouldn't auto-link to existing handoffs
 
         Returns:
             Handoff ID that was updated/created, or None if no todos or
@@ -2189,7 +2193,8 @@ Consider extracting lessons about:
                     break
 
         # Priority 3: Most recently updated active handoff
-        if not handoff_id:
+        # Only use this fallback if session_id is NOT provided (prevents cross-session pollution)
+        if not handoff_id and not session_id:
             active_handoffs = self.handoff_list(include_completed=False)
             if active_handoffs:
                 handoff = max(active_handoffs, key=lambda h: h.updated)
@@ -2217,7 +2222,7 @@ Consider extracting lessons about:
             else:
                 phase = "implementing"  # Default for TodoWrite-created handoffs
 
-            handoff_id = self.handoff_add(title=title, phase=phase)
+            handoff_id = self.handoff_add(title=title, phase=phase, session_id=session_id)
             # handoff_add already logs creation via debug_logger
 
         # If still no handoff (< 3 todos and no active handoff), skip

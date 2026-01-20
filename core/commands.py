@@ -403,7 +403,9 @@ class StopHookBatchCommand(Command):
                         if session_id:
                             session_handoff = manager.handoff_get_by_session(session_id)
                         sync_result = manager.handoff_sync_todos(
-                            last_todowrite, session_handoff=session_handoff
+                            last_todowrite,
+                            session_handoff=session_handoff,
+                            session_id=session_id,  # Prevents cross-session pollution
                         )
                         results["todos_synced"] = sync_result is not None
 

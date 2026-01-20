@@ -222,6 +222,7 @@ def main():
     )
     sync_todos_parser.add_argument("todos_json", help="JSON array of todos from TodoWrite")
     sync_todos_parser.add_argument("--session-handoff", help="Handoff ID from session lookup (highest priority)")
+    sync_todos_parser.add_argument("--session-id", help="Session ID - if provided without session-handoff, prevents fallback to most recent handoff")
 
     # handoff inject-todos (format handoffs as todo suggestions)
     handoff_subparsers.add_parser(
@@ -590,7 +591,8 @@ def main():
                         print("Error: todos_json must be a JSON array", file=sys.stderr)
                         sys.exit(1)
                     session_handoff = getattr(args, 'session_handoff', None)
-                    result = manager.handoff_sync_todos(todos, session_handoff=session_handoff)
+                    session_id = getattr(args, 'session_id', None)
+                    result = manager.handoff_sync_todos(todos, session_handoff=session_handoff, session_id=session_id)
                     if result:
                         print(f"Synced {len(todos)} todo(s) to handoff {result}")
                 except json_module.JSONDecodeError as e:

@@ -7134,6 +7134,165 @@ class TestExplicitHandoffIdInTodos:
 
 
 # =============================================================================
+# Session ID Gating for Fallback (Prevents Cross-Session Pollution)
+# =============================================================================
+
+
+class TestSessionIdGating:
+    """Tests for session_id gating in handoff_sync_todos.
+
+    When a session has a session_id but no session_handoff link, it indicates
+    genuinely new work that shouldn't auto-link to existing handoffs. This
+    prevents cross-session pollution where unrelated sessions accidentally
+    share the same handoff.
+    """
+
+    def test_sync_todos_with_session_id_no_link_skips_fallback(
+        self, manager: LessonsManager
+    ) -> None:
+        """When session_id provided but no session_handoff, fallback is skipped."""
+        # Create an existing active handoff (would be picked up by fallback)
+        existing_handoff = manager.handoff_add(title="Existing work")
+
+        # Sync todos WITH session_id but WITHOUT session_handoff
+        # This simulates a new session that hasn't been linked to any handoff
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "in_progress", "activeForm": "Task B"},
+            {"content": "Task C", "status": "pending", "activeForm": "Task C"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,  # No linked handoff
+            session_id="new-session-123",  # But we have a session ID
+        )
+
+        # Should NOT fall back to existing_handoff - should create new or return None
+        # Since we have 3+ todos, it will create a new handoff
+        assert result != existing_handoff
+        assert result is not None  # Created new handoff
+        assert result.startswith("hf-")
+
+    def test_sync_todos_without_session_id_uses_fallback(
+        self, manager: LessonsManager
+    ) -> None:
+        """When session_id NOT provided, fallback to most recent still works (legacy)."""
+        # Create an existing active handoff
+        existing_handoff = manager.handoff_add(title="Existing work")
+
+        # Sync todos WITHOUT session_id (legacy behavior)
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "pending", "activeForm": "Task B"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id=None,  # No session_id - legacy caller
+        )
+
+        # Should fall back to existing handoff
+        assert result == existing_handoff
+
+    def test_sync_todos_with_explicit_ref_ignores_session_gate(
+        self, manager: LessonsManager
+    ) -> None:
+        """Explicit [hf-XXX] references work even when session_id is provided."""
+        # Create target handoff
+        target_handoff = manager.handoff_add(title="Target work")
+
+        # Create another handoff (to ensure we're not just picking most recent)
+        manager.handoff_add(title="Other work")
+
+        # Sync todos with session_id but explicit handoff reference
+        todos = [
+            {"content": f"[{target_handoff}] Task 1", "status": "completed", "activeForm": "Task 1"},
+            {"content": "Task 2", "status": "pending", "activeForm": "Task 2"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id="some-session-456",  # Session ID present
+        )
+
+        # Should sync to explicitly referenced handoff despite session_id gating
+        assert result == target_handoff
+
+    def test_sync_todos_with_session_handoff_takes_priority(
+        self, manager: LessonsManager
+    ) -> None:
+        """session_handoff takes priority even when session_id is provided."""
+        # Create handoffs
+        linked_handoff = manager.handoff_add(title="Linked work")
+        other_handoff = manager.handoff_add(title="Other work")
+
+        # Update other to make it most recently updated
+        manager.handoff_update_checkpoint(other_handoff, "Recent activity")
+
+        # Sync todos with both session_handoff and session_id
+        todos = [
+            {"content": "Task 1", "status": "completed", "activeForm": "Task 1"},
+            {"content": "Task 2", "status": "pending", "activeForm": "Task 2"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=linked_handoff,  # Explicit link
+            session_id="session-789",
+        )
+
+        # Should use linked handoff, not other_handoff
+        assert result == linked_handoff
+
+    def test_sync_todos_with_session_id_no_link_returns_none_when_few_todos(
+        self, manager: LessonsManager
+    ) -> None:
+        """When session_id blocks fallback and <3 todos, returns None."""
+        existing_handoff = manager.handoff_add(title="Existing work")
+
+        # Only 2 todos - not enough to auto-create
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "pending", "activeForm": "Task B"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id="new-session-123",
+        )
+
+        # Should return None - fallback blocked by session_id, too few for auto-create
+        assert result is None
+
+        # Verify existing handoff was NOT touched
+        handoff = manager.handoff_get(existing_handoff)
+        assert len(handoff.tried) == 0
+
+    def test_sync_todos_autocreate_respects_subagent_guard(
+        self, manager: LessonsManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Auto-create from sync_todos should respect sub-agent guard."""
+        # Mock as Explore sub-agent
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Explore"
+        )
+
+        # 3+ todos to trigger auto-create
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "in_progress", "activeForm": "Task B"},
+            {"content": "Task C", "status": "pending", "activeForm": "Task C"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id="explore-session-123",
+        )
+
+        # Sub-agent should NOT be able to auto-create handoff
+        assert result is None
+
+
+# =============================================================================
 # Batch Handoff Processing
 # =============================================================================
 
