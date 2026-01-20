@@ -12,17 +12,17 @@ Manage your personal learning system: capture patterns, corrections, gotchas, pr
 
 ## Finding the CLI
 
-The CLI location varies by installation. Use this pattern to find and run it:
+The CLI is managed by the plugin. Use subprocess calls:
 
 ```bash
-RECALL_CLI=$(ls ~/.claude/plugins/cache/claude-recall/claude-recall/*/core/cli.py 2>/dev/null | head -1)
-python3 "$RECALL_CLI" <command> [args...]
+python3 ~/.config/claude-recall/core/cli.py <command> [args...]
 ```
 
-Or as a one-liner for each command:
+Or detect installed location:
 
 ```bash
-python3 "$(ls ~/.claude/plugins/cache/claude-recall/claude-recall/*/core/cli.py 2>/dev/null | head -1)" <command>
+PYTHON_CLI=$(find ~/.config/claude-recall -name "cli.py" 2>/dev/null | head -1)
+python3 "$PYTHON_CLI" <command>
 ```
 
 ## Categories
@@ -52,26 +52,23 @@ Based on the first argument, execute the corresponding operation:
 ## Full Command Examples
 
 ```bash
-# Find CLI (set once per session)
-RECALL_CLI=$(ls ~/.claude/plugins/cache/claude-recall/claude-recall/*/core/cli.py 2>/dev/null | head -1)
-
 # List all lessons
-python3 "$RECALL_CLI" list
+python3 ~/.config/claude-recall/core/cli.py list
 
 # Search for lessons about git
-python3 "$RECALL_CLI" search "git"
+python3 ~/.config/claude-recall/core/cli.py search "git"
 
 # Show a specific lesson
-python3 "$RECALL_CLI" show L001
+python3 ~/.config/claude-recall/core/cli.py show L001
 
 # Add a new lesson
-python3 "$RECALL_CLI" add correction "Stage files explicitly" "Use git add <file> for specific files"
+python3 ~/.config/claude-recall/core/cli.py add correction "Stage files explicitly" "Use git add <file> for specific files"
 
 # Cite a lesson (increments usage count)
-python3 "$RECALL_CLI" cite L001
+python3 ~/.config/claude-recall/core/cli.py cite L001
 
 # Edit a lesson
-python3 "$RECALL_CLI" edit L001 "Updated content here"
+python3 ~/.config/claude-recall/core/cli.py edit L001 "Updated content here"
 ```
 
 ## Output Format

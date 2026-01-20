@@ -81,22 +81,65 @@ Add to `~/.claude/settings.json`:
 
 ### OpenCode
 
-1. **Navigate to plugins directory:**
+**Recommended installation:**
+
 ```bash
-cd ~/.opencode/plugins
+./install.sh --opencode
 ```
 
-2. **Link or copy adapter:**
-```bash
-# Symlink (recommended for development)
-ln -s /path/to/claude-recall/adapters/opencode lessons-plugin
+This installs:
+- `~/.config/opencode/plugin/lessons.ts` - Plugin file
+- `~/.config/opencode/command/lessons.md` - /lessons command
+- `~/.config/opencode/command/handoffs.md` - /handoffs command
+- `~/.config/opencode/AGENTS.md` - Global instructions
 
-# Or copy files
-mkdir -p lessons-plugin
-cp -r /path/to/claude-recall/adapters/opencode/* lessons-plugin/
+**Configuration:**
+
+Edit `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "claudeRecall": {
+    "enabled": true,
+    "topLessonsToShow": 5,
+    "relevanceTopN": 5,
+    "remindEvery": 12,
+    "decayIntervalDays": 7,
+    "debugLevel": 1,
+    "small_model": "claude-3-5-haiku-latest"
+  }
+}
 ```
 
-3. **Register plugin** (method depends on OpenCode version)
+**Troubleshooting:**
+
+- **Plugin not loading:**
+  - Check plugin file exists: `ls ~/.config/opencode/plugin/lessons.ts`
+  - Check TypeScript compilation: View OpenCode logs for errors
+
+- **Lessons not injecting:**
+  - Verify enabled: Check opencode.json has `claudeRecall.enabled: true`
+  - Check debug logs: View `~/.local/state/claude-recall/debug.log`
+  - Increase debugLevel to 2 for detailed logging
+
+- **Handoffs not syncing:**
+  - Verify active handoff exists: Run `/handoffs list --active`
+  - Check TodoWrite sync: Enable debugLevel 2 and look for "todowrite.sync" events
+
+**Manual installation (for development):**
+
+1. **Navigate to config directory:**
+```bash
+mkdir -p ~/.config/opencode/plugin
+mkdir -p ~/.config/opencode/command
+```
+
+2. **Copy adapter files:**
+```bash
+cp adapters/opencode/plugin/lessons.ts ~/.config/opencode/plugin/
+cp adapters/opencode/command/lessons.md ~/.config/opencode/command/
+cp adapters/opencode/command/handoffs.md ~/.config/opencode/command/
+```
 
 ## File Locations
 

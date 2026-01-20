@@ -493,41 +493,58 @@ install_opencode() {
 
     mkdir -p "$plugin_dir" "$command_dir"
 
-    # Install from adapters directory (OpenCode still uses adapter approach)
+    # Install from adapters directory
     if [[ -f "$SCRIPT_DIR/adapters/opencode/plugin.ts" ]]; then
         cp "$SCRIPT_DIR/adapters/opencode/plugin.ts" "$plugin_dir/lessons.ts"
-    fi
-
-    if [[ -f "$SCRIPT_DIR/plugins/opencode-lesson-reminder.ts" ]]; then
-        cp "$SCRIPT_DIR/plugins/opencode-lesson-reminder.ts" "$plugin_dir/lesson-reminder.ts"
-        log_success "Installed OpenCode reminder plugin"
+        log_success "Installed lessons.ts plugin"
     fi
 
     if [[ -f "$SCRIPT_DIR/adapters/opencode/command/lessons.md" ]]; then
         cp "$SCRIPT_DIR/adapters/opencode/command/lessons.md" "$command_dir/"
+        log_success "Installed /lessons command"
     fi
 
+    if [[ -f "$SCRIPT_DIR/adapters/opencode/command/handoffs.md" ]]; then
+        cp "$SCRIPT_DIR/adapters/opencode/command/handoffs.md" "$command_dir/"
+        log_success "Installed /handoffs command"
+    fi
+
+    # Ensure AGENTS.md exists and update Claude Recall section
     local agents_md="$opencode_dir/AGENTS.md"
-    local lessons_section='
+    if [[ ! -f "$agents_md" ]]; then
+        echo "# Global OpenCode Instructions" > "$agents_md"
+    fi
+
+    # Remove old "Lessons System" section if it exists (deprecated)
+    if grep -q "^## Lessons System$" "$agents_md" 2>/dev/null; then
+        sed -i.tmp '/^## Lessons System$/,/^$/d' "$agents_md"
+        rm -f "${agents_md}.tmp"
+        log_info "Removed old Lessons System section from AGENTS.md"
+    fi
+
+    local claude_recall_section='
 ## Claude Recall
 
-A tiered learning cache that tracks corrections/patterns across sessions.
+A learning system that tracks lessons and handoffs across sessions.
 
-- **Project lessons** (`[L###]`): `.claude-recall/LESSONS.md`
-- **System lessons** (`[S###]`): `~/.local/state/claude-recall/LESSONS.md`
+**Lessons System** - Track corrections/patterns:
+- Project lessons (`[L###]`): `.claude-recall/LESSONS.md`
+- System lessons (`[S###]`): `~/.local/state/claude-recall/LESSONS.md`
+- Add: Type `LESSON: title - content` or `SYSTEM LESSON: title - content`
+- Cite: Reference `[L001]` when applying lessons
+- View: `/lessons` command
 
-**Add**: Type `LESSON: title - content` or `SYSTEM LESSON: title - content`
-**Cite**: Reference `[L001]` when applying lessons (stars increase with use)
-**View**: `/lessons` command
+**Handoffs System** - Track multi-step work:
+- Active handoffs: `.claude-recall/HANDOFFS.md`
+- Create: Type `HANDOFF: title` or use `/handoffs add`
+- Update: `HANDOFF UPDATE H001: tried success - description`
+- Complete: `HANDOFF COMPLETE H001`
+- View: `/handoffs` command
 '
 
-    if [[ -f "$agents_md" ]]; then
-        if ! grep -q "Claude Recall\|Lessons System" "$agents_md"; then
-            echo "$lessons_section" >> "$agents_md"
-        fi
-    else
-        echo "# Global OpenCode Instructions" > "$agents_md"
-        echo "$lessons_section" >> "$agents_md"
+    if ! grep -q "^## Claude Recall$" "$agents_md" 2>/dev/null; then
+        echo "$claude_recall_section" >> "$agents_md"
+        log_success "Added Claude Recall section to AGENTS.md"
     fi
 
     log_success "Installed OpenCode adapter"

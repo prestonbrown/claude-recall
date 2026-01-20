@@ -38,6 +38,44 @@ cd claude-recall
 ./install.sh --opencode  # OpenCode only
 ```
 
+## OpenCode Adapter
+
+The OpenCode adapter provides the same learning capabilities as the Claude Code adapter, with ~95% feature parity.
+
+### Installation
+
+```bash
+./install.sh --opencode
+```
+
+### Features
+
+- [x] Lessons system (injection, capture, decay, reminders)
+- [x] Handoffs system (tracking, TodoWrite sync)
+- [x] Compaction support
+- [x] Debug logging
+
+### Configuration
+
+Create or edit `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "claudeRecall": {
+    "enabled": true,
+    "topLessonsToShow": 5,
+    "relevanceTopN": 5,
+    "remindEvery": 12,
+    "decayIntervalDays": 7,
+    "debugLevel": 1
+  }
+}
+```
+
+### Usage
+
+See `/lessons` and `/handoffs` commands in OpenCode for more details.
+
 ## Migrating from coding-agent-lessons
 
 Run the installer to automatically migrate:

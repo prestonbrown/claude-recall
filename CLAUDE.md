@@ -75,3 +75,14 @@ Stop hook parses these from agent output:
 - `HANDOFF: title` → start tracking work
 - `HANDOFF UPDATE H001: tried success|fail|partial - desc` → record attempt
 - `HANDOFF COMPLETE H001` → finish and extract lessons
+
+## OpenCode Adapter
+
+Claude Recall is also available as an OpenCode plugin. Installation and configuration differ slightly:
+
+- **Installation**: `./install.sh --opencode`
+- **Configuration**: `~/.config/opencode/opencode.json`
+- **CLI**: `python3 ~/.config/claude-recall/core/cli.py`
+- **Commands**: `/lessons`, `/handoffs`
+
+See docs/DEPLOYMENT.md for detailed instructions.
