@@ -2787,7 +2787,8 @@ Consider extracting lessons about:
                 {"op": "update", "id": "hf-xxx", "blocked_by": "id1,id2"}
                 {"op": "complete", "id": "hf-xxx"}
 
-                When "id" is "LAST", resolves to the most recently created handoff ID.
+                When "id" is "LAST", resolves to the most recently created handoff ID
+                in this batch, or falls back to the most recently updated active (non-completed) handoff.
 
         Returns:
             {
@@ -2879,9 +2880,16 @@ Consider extracting lessons about:
                             if last_created_id:
                                 handoff_id = last_created_id
                             else:
-                                op_result = {"ok": False, "error": "No handoff created yet for LAST reference"}
-                                results.append(op_result)
-                                continue
+                                # Fall back to most recently updated non-completed handoff
+                                active = [h for h in handoffs if h.status != "completed"]
+                                if active:
+                                    # Sort by updated date descending, then by creation for stability
+                                    active.sort(key=lambda h: (h.updated, h.created), reverse=True)
+                                    handoff_id = active[0].id
+                                else:
+                                    op_result = {"ok": False, "error": "No active handoff for LAST reference"}
+                                    results.append(op_result)
+                                    continue
 
                         handoff = handoffs_by_id.get(handoff_id)
                         if not handoff:
@@ -2984,9 +2992,16 @@ Consider extracting lessons about:
                             if last_created_id:
                                 handoff_id = last_created_id
                             else:
-                                op_result = {"ok": False, "error": "No handoff created yet for LAST reference"}
-                                results.append(op_result)
-                                continue
+                                # Fall back to most recently updated non-completed handoff
+                                active = [h for h in handoffs if h.status != "completed"]
+                                if active:
+                                    # Sort by updated date descending, then by creation for stability
+                                    active.sort(key=lambda h: (h.updated, h.created), reverse=True)
+                                    handoff_id = active[0].id
+                                else:
+                                    op_result = {"ok": False, "error": "No active handoff for LAST reference"}
+                                    results.append(op_result)
+                                    continue
 
                         handoff = handoffs_by_id.get(handoff_id)
                         if not handoff:

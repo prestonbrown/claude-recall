@@ -2874,6 +2874,81 @@ class TestStopHookLastReference:
         assert second is not None
         assert second.phase == "implementing"  # LAST referred to it
 
+    def test_last_falls_back_to_existing_handoff(self, temp_dirs, isolated_subprocess_env):
+        """LAST should find existing handoff when no handoff created in current batch."""
+        lessons_base, state_dir, project_root = temp_dirs
+        hook_path = Path("adapters/claude-code/stop-hook.sh")
+        if not hook_path.exists():
+            pytest.skip("stop-hook.sh not found")
+
+        # First "session": create a handoff
+        transcript1 = self.create_mock_transcript(project_root, [
+            "HANDOFF: Existing task",
+        ])
+
+        import json
+        input_data = json.dumps({
+            "cwd": str(project_root),
+            "transcript_path": str(transcript1),
+        })
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            env={
+                **isolated_subprocess_env,
+                "CLAUDE_RECALL_BASE": str(lessons_base),
+                "CLAUDE_RECALL_STATE": str(state_dir),
+                "PROJECT_DIR": str(project_root),
+            },
+        )
+        assert result.returncode == 0
+
+        # Verify handoff was created
+        from core import LessonsManager
+        manager = LessonsManager(lessons_base, project_root)
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 1
+        assert handoffs[0].status != "completed"
+
+        # Second "session": complete with LAST (no new handoff created)
+        # Use a new transcript file to simulate a new session
+        transcript2 = project_root / "transcript_session2.jsonl"
+        with open(transcript2, "w") as f:
+            json.dump({
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "HANDOFF COMPLETE LAST"}]},
+                "timestamp": "2024-01-01T12:01:00Z",
+            }, f)
+            f.write("\n")
+
+        input_data2 = json.dumps({
+            "cwd": str(project_root),
+            "transcript_path": str(transcript2),
+        })
+
+        result2 = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data2,
+            capture_output=True,
+            text=True,
+            env={
+                **isolated_subprocess_env,
+                "CLAUDE_RECALL_BASE": str(lessons_base),
+                "CLAUDE_RECALL_STATE": str(state_dir),
+                "PROJECT_DIR": str(project_root),
+            },
+        )
+        assert result2.returncode == 0
+
+        # Verify handoff was completed
+        completed = manager.handoff_list_completed()
+        assert len(completed) == 1
+        assert completed[0].title == "Existing task"
+        assert completed[0].status == "completed"
+
 
 # =============================================================================
 # Checkpoint Tests (Phase 1 of Context Handoff System)
