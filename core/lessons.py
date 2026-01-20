@@ -1215,10 +1215,10 @@ No explanations, just ID: SCORE lines."""
             triggers: List of trigger keywords
 
         Returns:
-            True if successful, False if lesson not found
+            True if successful
 
         Raises:
-            ValueError: If the lesson is not found
+            ValueError: If the lesson is not found or file doesn't exist
         """
         level = self._get_level_from_id(lesson_id)
         file_path = self._get_file_path_for_id(lesson_id)

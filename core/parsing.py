@@ -181,7 +181,7 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple
     triggers_match = re.search(r'\|\s*\*\*Triggers\*\*:\s*(.+?)(?:\||$)', meta_line)
     if triggers_match:
         triggers_str = triggers_match.group(1).strip()
-        triggers = [t.strip() for t in triggers_str.split(", ") if t.strip()]
+        triggers = [t.strip() for t in triggers_str.split(",") if t.strip()]
 
     # Parse content line
     content = ""

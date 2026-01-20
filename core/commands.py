@@ -501,6 +501,7 @@ Lessons:
         Returns:
             Dictionary mapping lesson IDs to lists of trigger keywords
         """
+        import re
         result = {}
         for line in response.strip().splitlines():
             line = line.strip()
@@ -511,6 +512,9 @@ Lessons:
             if len(parts) != 2:
                 continue
             lesson_id = parts[0].strip()
+            # Validate lesson ID format (L### or S###)
+            if not re.match(r'^[LS]\d{3}$', lesson_id):
+                continue  # Skip malformed IDs
             triggers_str = parts[1].strip()
             # Split by comma and clean up each trigger
             triggers = [t.strip() for t in triggers_str.split(",") if t.strip()]
@@ -520,23 +524,31 @@ Lessons:
 
     @staticmethod
     def call_haiku_api(prompt: str) -> str:
-        """Call Haiku API to generate triggers.
+        """Call the Haiku API to generate triggers.
 
         Args:
             prompt: The prompt to send to Haiku
 
         Returns:
             Response text from Haiku
+
+        Raises:
+            RuntimeError: If the API call fails
         """
         import anthropic
 
         client = anthropic.Anthropic()
-        message = client.messages.create(
-            model="claude-3-5-haiku-latest",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return message.content[0].text
+        try:
+            message = client.messages.create(
+                model="claude-3-5-haiku-latest",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            if not message.content:
+                raise ValueError("Empty response from API")
+            return message.content[0].text
+        except anthropic.APIError as e:
+            raise RuntimeError(f"Haiku API error: {e}") from e
 
     def execute(self, args: Namespace, manager: Any) -> int:
         """Execute the migrate-triggers command.
