@@ -216,6 +216,37 @@ function findPythonManager(): string {
 
 const MANAGER = findPythonManager()
 
+/**
+ * Sanitize user input for shell commands.
+ * Strips shell metacharacters that could enable command injection.
+ * The bun shell's $ template literal does escape arguments, but we add
+ * defense-in-depth by removing dangerous patterns before passing to shell.
+ */
+function sanitizeForShell(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  // Remove backticks, $(), ${}, and other shell expansion patterns
+  return str
+    .replace(/`/g, '')           // backticks for command substitution
+    .replace(/\$\(/g, '')        // $() command substitution
+    .replace(/\$\{/g, '')        // ${} variable expansion
+    .replace(/\$[a-zA-Z_]/g, '') // $VAR variable references
+    .replace(/[;&|<>]/g, '')     // command separators and redirects
+    .replace(/\n/g, ' ')         // newlines could break commands
+    .trim();
+}
+
+/**
+ * Check if an error indicates a critical/broken plugin state.
+ * These errors should be logged at warn/error level, not debug.
+ */
+function isCriticalError(e: unknown): boolean {
+  const errorStr = String(e);
+  return errorStr.includes('command not found') ||
+         errorStr.includes('ENOENT') ||
+         errorStr.includes('permission denied') ||
+         errorStr.includes('No such file or directory');
+}
+
 export const LessonsPlugin: Plugin = async ({ $, client }) => {
   // Detect fast model in background - don't block plugin initialization
   // The result is logged but not currently used for scoring (Python CLI handles that)
@@ -230,6 +261,7 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
 
   const sessionCheckpoints = new Map<string, number>();
   const sessionState = new Map<string, { isFirstPrompt: boolean; promptCount: number; compactionOccurred: boolean }>();
+  const processingCitations = new Set<string>();
   return {
     // Inject lessons and handoffs at session start
     "session.created": async (input) => {
@@ -248,7 +280,7 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
           await $`${MANAGER} decay ${CONFIG.decayIntervalDays}`
           log('debug', 'decay.run', { interval_days: CONFIG.decayIntervalDays });
         } catch (e) {
-          log('debug', 'decay.failed', { error: String(e) });
+          log(isCriticalError(e) ? 'warn' : 'debug', 'decay.failed', { error: String(e) });
         }
 
         // Get lesson context to inject
@@ -285,32 +317,48 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
       }
     },
 
+    // Clean up session state when session is deleted (memory leak prevention)
+    "session.deleted": async (input) => {
+      sessionCheckpoints.delete(input.session.id);
+      sessionState.delete(input.session.id);
+      processingCitations.delete(input.session.id);
+      log('debug', 'session.cleanup', { session_id: input.session.id });
+    },
+
     // Sync TodoWrite to handoff
     "tool.execute.after": async (input) => {
       try {
         // Only process TodoWrite tool calls
         if (input.tool !== "TodoWrite") return;
 
-        // Extract todos from tool result
+        // Extract todos from tool result with validation
         const todos = input.result?.todos;
-
         if (!todos || !Array.isArray(todos)) return;
 
-        // Convert todos to JSON for CLI
-        const todosJson = JSON.stringify(todos);
+        // Validate todos have required fields
+        const validTodos = todos.filter((t: any) =>
+          t && typeof t === 'object' &&
+          typeof t.content === 'string' &&
+          typeof t.status === 'string'
+        );
+        if (validTodos.length === 0) return;
+
+        // Convert validated todos to JSON for CLI
+        const todosJson = JSON.stringify(validTodos);
 
         // Get session ID for cross-session pollution prevention
         const sessionId = input.session?.id;
 
         // Sync todos to active handoff
         try {
-          const sessionIdArg = sessionId ? `--session-id ${sessionId}` : '';
-          const { stdout } = await $`${MANAGER} handoff sync-todos ${todosJson} ${sessionIdArg}`
+          const { stdout } = sessionId
+            ? await $`${MANAGER} handoff sync-todos ${todosJson} --session-id ${sessionId}`
+            : await $`${MANAGER} handoff sync-todos ${todosJson}`;
           if (stdout) {
             log('info', 'handoff.sync_todos', { result: stdout, sessionId });
           }
         } catch (e) {
-          log('debug', 'handoff.sync_failed', { error: String(e) });
+          log(isCriticalError(e) ? 'warn' : 'debug', 'handoff.sync_failed', { error: String(e) });
         }
       } catch (e) {
         log('debug', 'handoff.sync_error', { error: String(e) });
@@ -338,7 +386,8 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
         try {
           log('debug', 'injection.smart_start', { query_length: userQuery.length });
           // Score lessons by relevance to user's query
-          const { stdout } = await $`${MANAGER} score-relevance ${userQuery} --top ${CONFIG.relevanceTopN}`
+          const sanitizedQuery = sanitizeForShell(userQuery);
+          const { stdout } = await $`${MANAGER} score-relevance ${sanitizedQuery} --top ${CONFIG.relevanceTopN}`
 
           if (stdout && stdout.trim()) {
             log('debug', 'injection.smart_success', { output_length: stdout.length });
@@ -355,7 +404,7 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
             })
           }
         } catch (e) {
-          log('debug', 'injection.smart_failed', { error: String(e) });
+          log(isCriticalError(e) ? 'warn' : 'debug', 'injection.smart_failed', { error: String(e) });
         }
         state.isFirstPrompt = false;
       }
@@ -392,9 +441,13 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
 
     // Track citations when session goes idle (AI finished responding)
     "session.idle": async (input) => {
-      try {
-        const sessionId = input.session.id
+      const sessionId = input.session.id
 
+      // Prevent concurrent processing for the same session
+      if (processingCitations.has(sessionId)) return;
+      processingCitations.add(sessionId);
+
+      try {
         // Get the messages from this session
         const messages = await client.session.messages({
           path: { id: sessionId }
@@ -435,11 +488,15 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
           }
         }
 
-        // Cite each lesson
-        for (const cite of allCitations) {
-          const lessonId = cite.slice(1, -1) // Remove brackets
-          await $`${MANAGER} cite ${lessonId}`
-        }
+        // Cite each lesson in parallel
+        await Promise.all(
+          [...allCitations].map(cite => {
+            const lessonId = cite.slice(1, -1) // Remove brackets
+            return $`${MANAGER} cite ${lessonId}`.catch(e =>
+              log('debug', 'citation.failed', { lessonId, error: String(e) })
+            );
+          })
+        );
 
         // Update checkpoint to current message count
         sessionCheckpoints.set(sessionId, messages.length)
@@ -449,6 +506,8 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
         }
       } catch (e) {
         log('debug', 'session.idle_failed', { error: String(e) });
+      } finally {
+        processingCitations.delete(sessionId);
       }
     },
 
@@ -494,10 +553,13 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
               }
             }
 
-            // Add the lesson
+            // Add the lesson (sanitize user inputs)
             const cmd = isSystem ? "add-system" : "add"
-            const result = await $`${MANAGER} ${cmd} ${category} ${title} ${content}`
-            log('info', 'lessons.user_added', { category, title, is_system: isSystem, result: result.stdout });
+            const safeCategory = sanitizeForShell(category)
+            const safeTitle = sanitizeForShell(title)
+            const safeContent = sanitizeForShell(content)
+            const result = await $`${MANAGER} ${cmd} ${safeCategory} ${safeTitle} ${safeContent}`
+            log('info', 'lessons.user_added', { category: safeCategory, title: safeTitle, is_system: isSystem, result: result.stdout });
           }
         } catch (e) {
           log('debug', 'lessons.user_add_failed', { error: String(e) });
@@ -535,9 +597,12 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
               }
             }
 
-            // Add the AI lesson (always as system level)
-            const result = await $`${MANAGER} add-ai ${category} ${title} ${content} --system`
-            log('info', 'lessons.ai_added', { category, title, result: result.stdout });
+            // Add the AI lesson (always as system level, sanitize inputs)
+            const safeCategory = sanitizeForShell(category)
+            const safeTitle = sanitizeForShell(title)
+            const safeContent = sanitizeForShell(content)
+            const result = await $`${MANAGER} add-ai ${safeCategory} ${safeTitle} ${safeContent} --system`
+            log('info', 'lessons.ai_added', { category: safeCategory, title: safeTitle, result: result.stdout });
           }
 
           // Capture HANDOFF: patterns
@@ -553,13 +618,15 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
               description = descMatch[2].trim()
             }
 
-            // Create handoff
+            // Create handoff (sanitize user inputs)
             try {
-              const cmd = description
-                ? $`${MANAGER} handoff add ${handoffTitle} --desc ${description}`
-                : $`${MANAGER} handoff add ${handoffTitle}`
+              const safeTitle = sanitizeForShell(handoffTitle)
+              const safeDesc = sanitizeForShell(description)
+              const cmd = safeDesc
+                ? $`${MANAGER} handoff add ${safeTitle} --desc ${safeDesc}`
+                : $`${MANAGER} handoff add ${safeTitle}`
               const result = await cmd
-              log('info', 'handoff.created', { title: handoffTitle, result: result.stdout });
+              log('info', 'handoff.created', { title: safeTitle, result: result.stdout });
             } catch (e) {
               log('debug', 'handoff.create_failed', { error: String(e) });
             }
@@ -589,7 +656,9 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
               const outcome = triedMatch[1].toLowerCase()
               const description = triedMatch[2].trim()
               try {
-                const result = await $`${MANAGER} handoff update ${handoffId} --tried ${outcome} ${description}`
+                // Sanitize user-provided description
+                const safeDesc = sanitizeForShell(description)
+                const result = await $`${MANAGER} handoff update ${handoffId} --tried ${outcome} ${safeDesc}`
                 log('info', 'handoff.updated', { handoff_id: handoffId, outcome, result: result.stdout });
               } catch (e) {
                 log('debug', 'handoff.update_failed', { handoff_id: handoffId, error: String(e) });
