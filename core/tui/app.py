@@ -1403,6 +1403,7 @@ class RecallMonitorApp(App):
 
         # Clear any existing session data
         self.state.session.data.clear()
+        session_table.clear()
 
         # Update the section title with counts
         self._update_session_title(sessions)
