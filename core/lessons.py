@@ -764,6 +764,46 @@ class LessonsMixin:
 
         return lessons
 
+    def _auto_migrate_triggers(self, lessons: List[Lesson]) -> None:
+        """Auto-migrate lessons without triggers by generating them via Haiku.
+
+        This is called transparently during inject to ensure all lessons have triggers.
+        Failures are logged but don't block the inject operation.
+
+        Args:
+            lessons: List of Lesson objects that need triggers
+        """
+        if not lessons:
+            return
+
+        try:
+            from core.commands import MigrateTriggersCommand
+        except ImportError:
+            from commands import MigrateTriggersCommand
+
+        try:
+            # Generate prompt for all lessons needing triggers
+            prompt = MigrateTriggersCommand.generate_haiku_prompt(lessons)
+            if not prompt:
+                return
+
+            # Call Haiku API
+            response = MigrateTriggersCommand.call_haiku_api(prompt)
+
+            # Parse response and update lessons
+            triggers_map = MigrateTriggersCommand.parse_haiku_response(response)
+
+            for lesson_id, triggers in triggers_map.items():
+                try:
+                    self.update_lesson_triggers(lesson_id, triggers)
+                except Exception as e:
+                    import logging
+                    logging.debug(f"Failed to update triggers for {lesson_id}: {e}")
+
+        except Exception as e:
+            import logging
+            logging.warning(f"Auto-migration of triggers failed: {e}")
+
     def inject_context(self, top_n: int = 5) -> InjectionResult:
         """
         Generate context injection with top lessons.
@@ -775,6 +815,15 @@ class LessonsMixin:
             InjectionResult with lessons for injection
         """
         all_lessons = self.list_lessons(scope="all")
+
+        # Auto-migrate lessons without triggers (once per session)
+        if not getattr(self, "_migration_done", False):
+            lessons_without_triggers = [l for l in all_lessons if not l.triggers]
+            if lessons_without_triggers:
+                self._auto_migrate_triggers(lessons_without_triggers)
+                # Reload lessons to get updated triggers
+                all_lessons = self.list_lessons(scope="all")
+            self._migration_done = True
 
         # Sort by weighted score (uses * 0.7 + velocity * 0.3) descending
         # This balances lifetime value (uses) with recent activity (velocity)

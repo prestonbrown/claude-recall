@@ -4498,5 +4498,273 @@ class TestAutoTriggers:
             )
 
 
+# =============================================================================
+# Auto-Migration of Triggers During Inject
+# =============================================================================
+
+
+class TestAutoMigrateTriggers:
+    """Tests for auto-migration of triggers during inject_context().
+
+    Feature behavior:
+    - During inject_context(), check if any lessons lack triggers
+    - If found, auto-generate triggers via Haiku and update the lessons file
+    - Cache migration status to avoid repeated API calls in same session
+    - Should be silent/transparent to user
+    """
+
+    def test_inject_auto_migrates_lessons_without_triggers(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Add lessons without triggers, call inject(), verify triggers were added to the lessons file."""
+        from unittest.mock import patch, MagicMock
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add lessons WITHOUT triggers (pass empty list explicitly)
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Use dependency injection",
+            content="Inject dependencies to improve testability.",
+            triggers=[],  # No triggers
+        )
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="Avoid circular imports",
+            content="Circular imports cause ImportError at runtime.",
+            triggers=[],  # No triggers
+        )
+
+        # Verify lessons have no triggers before inject
+        lesson1 = manager.get_lesson("L001")
+        lesson2 = manager.get_lesson("L002")
+        assert lesson1.triggers == [], "Lesson should start without triggers"
+        assert lesson2.triggers == [], "Lesson should start without triggers"
+
+        # Mock the Haiku API call to return triggers
+        mock_response = """L001: dependency, injection, testability, DI
+L002: circular, import, ImportError, module"""
+
+        with patch.object(MigrateTriggersCommand, "call_haiku_api", return_value=mock_response) as mock_api:
+            # Call inject_context - this should trigger auto-migration
+            result = manager.inject_context(top_n=5)
+
+            # Verify API was called (migration happened)
+            mock_api.assert_called_once()
+
+        # Re-read lessons from file to verify they were updated
+        manager2 = LessonsManager(temp_lessons_base, temp_project_root)
+        lesson1_after = manager2.get_lesson("L001")
+        lesson2_after = manager2.get_lesson("L002")
+
+        assert lesson1_after.triggers, "L001 should have triggers after migration"
+        assert lesson2_after.triggers, "L002 should have triggers after migration"
+        assert "dependency" in lesson1_after.triggers or "injection" in lesson1_after.triggers
+        assert "circular" in lesson2_after.triggers or "import" in lesson2_after.triggers
+
+    def test_inject_skips_lessons_with_triggers(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Add lessons WITH triggers, call inject(), verify NO API call was made."""
+        from unittest.mock import patch
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # First, verify the auto-migration feature exists on the manager
+        assert hasattr(manager, "_auto_migrate_triggers") or hasattr(manager, "_migration_done"), (
+            "LessonsManager should have auto-migration capability (_auto_migrate_triggers method or _migration_done flag)"
+        )
+
+        # Add lessons WITH triggers already set
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Use RAII for resource management",
+            content="RAII ensures resources are properly cleaned up.",
+            triggers=["RAII", "resource", "cleanup", "destructor"],
+        )
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="Check return values",
+            content="Always check return values for errors.",
+            triggers=["return", "error", "check", "validation"],
+        )
+
+        # Verify lessons have triggers
+        lesson1 = manager.get_lesson("L001")
+        lesson2 = manager.get_lesson("L002")
+        assert len(lesson1.triggers) > 0, "Lesson should have triggers"
+        assert len(lesson2.triggers) > 0, "Lesson should have triggers"
+
+        with patch.object(MigrateTriggersCommand, "call_haiku_api") as mock_api:
+            # Call inject_context
+            result = manager.inject_context(top_n=5)
+
+            # Verify API was NOT called (no migration needed)
+            mock_api.assert_not_called()
+
+    def test_inject_caches_migration_to_avoid_repeated_calls(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Call inject() twice, verify Haiku API only called once (not on second inject)."""
+        from unittest.mock import patch, call
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add a lesson without triggers
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Cache expensive operations",
+            content="Use caching to avoid repeated expensive computations.",
+            triggers=[],  # No triggers
+        )
+
+        mock_response = "L001: cache, expensive, computation, memoization"
+
+        with patch.object(MigrateTriggersCommand, "call_haiku_api", return_value=mock_response) as mock_api:
+            # First inject - should trigger migration
+            result1 = manager.inject_context(top_n=5)
+
+            # Second inject - should NOT call API again (cached)
+            result2 = manager.inject_context(top_n=5)
+
+            # API should only be called ONCE (first inject migrates, second uses cache)
+            assert mock_api.call_count == 1, (
+                f"API should only be called once, but was called {mock_api.call_count} times"
+            )
+
+    def test_inject_handles_api_failure_gracefully(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Mock API to fail, verify inject() still returns results (doesn't crash)."""
+        from unittest.mock import patch, MagicMock
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add a lesson without triggers
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Handle errors gracefully",
+            content="Always handle errors without crashing.",
+            triggers=[],  # No triggers - will need migration
+        )
+
+        # Track whether API was actually called (to verify migration was attempted)
+        api_was_called = False
+
+        def mock_api_that_fails(prompt):
+            nonlocal api_was_called
+            api_was_called = True
+            raise Exception("API unavailable")
+
+        # Mock API to raise an exception
+        with patch.object(MigrateTriggersCommand, "call_haiku_api", side_effect=mock_api_that_fails):
+            # inject_context should NOT crash, should return results
+            result = manager.inject_context(top_n=5)
+
+            # Verify migration was attempted (API was called)
+            assert api_was_called, (
+                "Auto-migration should have attempted to call the API for lesson without triggers"
+            )
+
+            # Verify we still get a valid result despite API failure
+            assert result is not None
+            assert result.total_count == 1
+            assert len(result.top_lessons) == 1
+            assert result.top_lessons[0].title == "Handle errors gracefully"
+
+        # Lesson should still have no triggers (migration failed gracefully)
+        lesson = manager.get_lesson("L001")
+        assert lesson.triggers == [], "Triggers should remain empty after failed migration"
+
+    def test_inject_migrates_mix_of_lessons(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Add some lessons with triggers, some without. Verify only lessons without triggers get migrated."""
+        from unittest.mock import patch
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add lesson WITH triggers
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Has triggers already",
+            content="This lesson already has triggers.",
+            triggers=["existing", "trigger", "keywords"],
+        )
+
+        # Add lesson WITHOUT triggers
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="Needs triggers",
+            content="This lesson needs triggers to be generated.",
+            triggers=[],  # No triggers
+        )
+
+        # Add another lesson WITH triggers
+        manager.add_lesson(
+            level="system",
+            category="preference",
+            title="Also has triggers",
+            content="Another lesson with existing triggers.",
+            triggers=["more", "keywords"],
+        )
+
+        # Mock API response - should only be called for L002 (the one without triggers)
+        mock_response = "L002: needs, triggers, generated, migration"
+
+        with patch.object(MigrateTriggersCommand, "call_haiku_api", return_value=mock_response) as mock_api:
+            result = manager.inject_context(top_n=5)
+
+            # API should be called
+            mock_api.assert_called_once()
+
+            # Verify the prompt only includes the lesson without triggers
+            call_args = mock_api.call_args[0][0]  # First positional arg (prompt)
+            assert "L002" in call_args, "Prompt should include L002 (needs migration)"
+            assert "Needs triggers" in call_args, "Prompt should include lesson title"
+            # L001 and S001 should NOT be in the prompt (they have triggers)
+            assert "L001" not in call_args or "Has triggers already" not in call_args, (
+                "Prompt should NOT include L001 (already has triggers)"
+            )
+
+        # Verify L002 now has triggers
+        manager2 = LessonsManager(temp_lessons_base, temp_project_root)
+        lesson2 = manager2.get_lesson("L002")
+        assert lesson2.triggers, "L002 should have triggers after migration"
+
+        # Verify L001 and S001 still have their original triggers (unchanged)
+        lesson1 = manager2.get_lesson("L001")
+        lesson3 = manager2.get_lesson("S001")
+        assert lesson1.triggers == ["existing", "trigger", "keywords"], (
+            "L001 triggers should be unchanged"
+        )
+        assert lesson3.triggers == ["more", "keywords"], (
+            "S001 triggers should be unchanged"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

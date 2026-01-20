@@ -110,6 +110,9 @@ class LessonsManager(LessonsMixin, HandoffsMixin):
         )
         self.max_lessons = recall_settings.get("maxLessons", DEFAULT_MAX_LESSONS)
 
+        # Auto-migration cache (triggers migration runs once per session)
+        self._migration_done = False
+
     def _migrate_system_lessons(self) -> None:
         """Migrate system lessons from old ~/.config location to ~/.local/state."""
         old_location = self.lessons_base / "LESSONS.md"
