@@ -163,14 +163,8 @@ main() {
     local handoffs="$HANDOFFS_SUMMARY"
     local todo_continuation="$TODOS_PROMPT"
 
-    # Link session to continuation handoff so updates go to the right place
-    if [[ -n "$todo_continuation" && -n "$claude_session_id" ]]; then
-        priority_handoff_id=$(echo "$todo_continuation" | grep -oE 'hf-[0-9a-f]+' | head -1)
-        if [[ -n "$priority_handoff_id" ]]; then
-            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-                python3 "$PYTHON_MANAGER" handoff set-session "$priority_handoff_id" "$claude_session_id" >/dev/null 2>&1 || true
-        fi
-    fi
+    # NOTE: Session linking removed - now happens only when Claude explicitly
+    # works on a handoff (via TodoWrite sync after user confirms continuation)
 
     # Build combined summary
     local summary="$LESSONS_SUMMARY_RAW"

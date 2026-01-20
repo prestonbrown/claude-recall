@@ -65,20 +65,17 @@ def inject_hook_path() -> Path:
 class TestInjectHookSessionLinking:
     """Tests for inject hook session-handoff linking behavior."""
 
-    def test_inject_hook_links_session_to_continuation_handoff(
+    def test_inject_hook_does_not_auto_link_session_to_handoff(
         self, tmp_path, inject_hook_path, temp_claude_home, temp_project_root
     ):
         """
-        When inject-hook identifies a handoff to continue via inject-todos,
-        it should link the current session to that handoff.
+        Inject-hook should NOT auto-link sessions to handoffs.
 
-        Bug: inject-hook.sh does not call 'handoff set-session' after getting
-        todo_continuation from 'handoff inject-todos'. This means ready_for_review
-        handoffs have no sessions associated with them.
+        Session linking now only happens when the user explicitly confirms
+        continuation (via TodoWrite sync after user approves).
 
-        Expected: After inject-hook.sh runs with an active handoff, the
-        session-handoffs.json should contain an entry linking the session_id
-        to the handoff_id from the continuation.
+        This prevents cross-worktree pollution where a handoff from one
+        branch/worktree gets auto-continued in a different context.
         """
         # Setup state directory
         state_dir = tmp_path / ".local" / "state" / "claude-recall"
@@ -137,43 +134,27 @@ class TestInjectHookSessionLinking:
             timeout=30,
         )
 
-        # The hook may succeed or fail based on other factors, but we're checking
-        # if it creates the session-handoff link
-        # Note: exit code 0 expected if lessons are enabled and hook completes
-
-        # Verify: session-handoffs.json should contain the session -> handoff link
+        # After the fix: session should NOT be auto-linked at inject time
         session_handoffs_file = state_dir / "session-handoffs.json"
 
-        assert session_handoffs_file.exists(), (
-            f"session-handoffs.json should exist after inject-hook runs with active handoff.\n"
-            f"stdout: {result.stdout}\n"
-            f"stderr: {result.stderr}\n"
-            f"exit code: {result.returncode}"
-        )
+        if session_handoffs_file.exists():
+            session_data = json.loads(session_handoffs_file.read_text())
+            assert session_id not in session_data, (
+                f"Session {session_id} should NOT be auto-linked to handoff at inject time.\n"
+                f"Session linking now happens only after user confirms continuation.\n"
+                f"session-handoffs.json content: {json.dumps(session_data, indent=2)}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
 
-        session_data = json.loads(session_handoffs_file.read_text())
-
-        assert session_id in session_data, (
-            f"Session {session_id} should be linked to handoff {handoff_id}.\n"
-            f"session-handoffs.json content: {json.dumps(session_data, indent=2)}\n"
-            f"stdout: {result.stdout}\n"
-            f"stderr: {result.stderr}"
-        )
-
-        linked_handoff = session_data[session_id].get("handoff_id")
-        assert linked_handoff == handoff_id, (
-            f"Session should be linked to handoff {handoff_id}, but got {linked_handoff}.\n"
-            f"session-handoffs.json content: {json.dumps(session_data, indent=2)}"
-        )
-
-    def test_inject_hook_links_session_to_ready_for_review_handoff(
+    def test_inject_hook_does_not_auto_link_ready_for_review_handoff(
         self, tmp_path, inject_hook_path, temp_claude_home, temp_project_root
     ):
         """
-        Specifically test ready_for_review handoffs, which is the reported bug case.
+        Specifically test ready_for_review handoffs are NOT auto-linked.
 
-        When a handoff is ready_for_review, inject-hook should still link the
-        session to it so the TUI can display associated sessions.
+        Even ready_for_review handoffs should not auto-link at inject time.
+        Session linking happens only when user explicitly confirms continuation.
         """
         # Setup state directory
         state_dir = tmp_path / ".local" / "state" / "claude-recall"
@@ -231,24 +212,16 @@ class TestInjectHookSessionLinking:
             timeout=30,
         )
 
+        # After the fix: session should NOT be auto-linked at inject time
         session_handoffs_file = state_dir / "session-handoffs.json"
 
-        assert session_handoffs_file.exists(), (
-            f"session-handoffs.json should exist.\n"
-            f"stderr: {result.stderr}"
-        )
-
-        session_data = json.loads(session_handoffs_file.read_text())
-
-        assert session_id in session_data, (
-            f"Session {session_id} should be linked to ready_for_review handoff {handoff_id}.\n"
-            f"This is the reported bug: ready_for_review handoffs have no sessions.\n"
-            f"session-handoffs.json: {json.dumps(session_data, indent=2)}"
-        )
-
-        assert session_data[session_id].get("handoff_id") == handoff_id, (
-            f"Session should link to {handoff_id}"
-        )
+        if session_handoffs_file.exists():
+            session_data = json.loads(session_handoffs_file.read_text())
+            assert session_id not in session_data, (
+                f"Session {session_id} should NOT be auto-linked to ready_for_review handoff.\n"
+                f"Session linking now happens only after user confirms continuation.\n"
+                f"session-handoffs.json: {json.dumps(session_data, indent=2)}"
+            )
 
     def test_inject_hook_no_session_link_when_no_handoffs(
         self, tmp_path, inject_hook_path, temp_claude_home, temp_project_root

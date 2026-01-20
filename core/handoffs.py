@@ -2364,18 +2364,22 @@ Consider extracting lessons about:
             else:
                 session_ago = f"{days}d ago"
 
-        # Format as continuation prompt
+        # Format as informational prompt with hard stop (require explicit permission)
         lines = []
-        lines.append(f"**CONTINUE PREVIOUS WORK** ({handoff.id}: {handoff.title})")
+        lines.append(f"## Previous Work Found ({handoff.id}: {handoff.title})")
         if session_ago:
-            lines.append(f"Last session: {session_ago}")
+            lines.append(f"- **Status**: {handoff.status} | **Phase**: {handoff.phase} | **Last**: {session_ago}")
         lines.append("")
         lines.append("Previous state:")
         for todo in todos:
             status_icon = {"completed": "✓", "in_progress": "→", "pending": "○"}.get(todo["status"], "?")
             lines.append(f"  {status_icon} {todo['content']}")
         lines.append("")
-        lines.append("**Use TodoWrite to resume tracking.** Copy this starting point:")
+        lines.append("⚠️ **STOP - DO NOT CONTINUE THIS WORK** without explicit user permission.")
+        lines.append(f'ASK: "I see previous work on {handoff.title}. Should I continue this, or work on something else?"')
+        lines.append("Only proceed with this handoff if the user explicitly confirms.")
+        lines.append("")
+        lines.append("If user confirms, use TodoWrite to resume tracking. Starting point:")
         lines.append("```json")
         # Only include non-completed todos in the suggested JSON
         active_todos = [t for t in todos if t["status"] != "completed"]

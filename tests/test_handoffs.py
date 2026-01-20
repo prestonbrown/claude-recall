@@ -3401,7 +3401,8 @@ class TestHandoffInjectTodos:
 
         result = manager.handoff_inject_todos()
 
-        assert "CONTINUE PREVIOUS WORK" in result
+        assert "Previous Work Found" in result
+        assert "STOP - DO NOT CONTINUE THIS WORK" in result
         assert "First task succeeded" in result
         assert "Current task" in result
         assert "Next task" in result
