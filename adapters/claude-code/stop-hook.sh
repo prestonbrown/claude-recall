@@ -165,8 +165,9 @@ cleanup_orphaned_checkpoints() {
     (( RANDOM % 10 != 0 )) && return 0
 
     # Build a list of existing sessions ONCE (much faster than per-file find)
+    # PERF: Use sed to extract basename instead of xargs -n1 which spawns one process per file
     local existing_sessions
-    existing_sessions=$(find ~/.claude/projects -name "*.jsonl" -type f 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.jsonl$//' | sort -u)
+    existing_sessions=$(find ~/.claude/projects -name "*.jsonl" -type f 2>/dev/null | sed 's|.*/||; s/\.jsonl$//' | sort -u)
 
     for state_file in "$STATE_DIR"/*; do
         [[ -f "$state_file" ]] || continue
