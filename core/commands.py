@@ -15,7 +15,7 @@ Commands are registered in COMMAND_REGISTRY and dispatched via dispatch_command(
 import sys
 from abc import ABC, abstractmethod
 from argparse import Namespace
-from typing import Any, Dict, Type
+from typing import Any, Dict, List, Type
 
 # Handle both module import and direct script execution
 try:
@@ -57,6 +57,15 @@ class AddCommand(Command):
         level = "system" if getattr(args, "system", False) else "project"
         promotable = not getattr(args, "no_promote", False)
         lesson_type = getattr(args, "type", "")
+
+        # Handle --triggers flag
+        triggers = None
+        auto_triggers = True
+        triggers_str = getattr(args, "triggers", None)
+        if triggers_str:
+            triggers = [t.strip() for t in triggers_str.split(",") if t.strip()]
+            auto_triggers = False
+
         lesson_id = manager.add_lesson(
             level=level,
             category=args.category,
@@ -65,6 +74,8 @@ class AddCommand(Command):
             force=getattr(args, "force", False),
             promotable=promotable,
             lesson_type=lesson_type,
+            triggers=triggers,
+            auto_triggers=auto_triggers,
         )
         promo_note = " (no-promote)" if not promotable else ""
         print(f"Added {level} lesson {lesson_id}: {args.title}{promo_note}")
@@ -423,6 +434,170 @@ class StopHookBatchCommand(Command):
         return 0
 
 
+class MigrateTriggersCommand(Command):
+    """Migrate existing lessons by auto-generating triggers using Claude Haiku."""
+
+    @staticmethod
+    def find_lessons_without_triggers(manager) -> List:
+        """Find all lessons that don't have triggers yet.
+
+        Args:
+            manager: LessonsManager instance
+
+        Returns:
+            List of Lesson objects without triggers
+        """
+        all_lessons = (
+            manager.list_lessons("project").lessons
+            if hasattr(manager.list_lessons("project"), "lessons")
+            else manager.list_lessons("project")
+        ) + (
+            manager.list_lessons("system").lessons
+            if hasattr(manager.list_lessons("system"), "lessons")
+            else manager.list_lessons("system")
+        )
+        return [l for l in all_lessons if not l.triggers]
+
+    @staticmethod
+    def generate_haiku_prompt(lessons: List) -> str:
+        """Generate a batch prompt for Haiku to generate triggers.
+
+        Args:
+            lessons: List of Lesson objects needing triggers
+
+        Returns:
+            Prompt string for Haiku API
+        """
+        if not lessons:
+            return ""
+
+        lesson_texts = []
+        for lesson in lessons:
+            lesson_texts.append(
+                f"[{lesson.id}] Category: {lesson.category}\n"
+                f"Title: {lesson.title}\n"
+                f"Content: {lesson.content}"
+            )
+
+        prompt = """Generate 3-5 keyword triggers for each lesson below. These keywords should indicate when the lesson applies - what terms or concepts would appear in a query where this lesson is relevant.
+
+Output format (one line per lesson):
+L001: keyword1, keyword2, keyword3
+
+Lessons:
+"""
+        prompt += "\n\n".join(lesson_texts)
+        prompt += "\n\nOutput ONLY the ID: keywords lines, nothing else."
+
+        return prompt
+
+    @staticmethod
+    def parse_haiku_response(response: str) -> Dict[str, List[str]]:
+        """Parse Haiku response into lesson_id -> triggers mapping.
+
+        Args:
+            response: Raw response text from Haiku
+
+        Returns:
+            Dictionary mapping lesson IDs to lists of trigger keywords
+        """
+        result = {}
+        for line in response.strip().splitlines():
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            # Parse lines like "L001: destructor, mutex, shutdown"
+            parts = line.split(":", 1)
+            if len(parts) != 2:
+                continue
+            lesson_id = parts[0].strip()
+            triggers_str = parts[1].strip()
+            # Split by comma and clean up each trigger
+            triggers = [t.strip() for t in triggers_str.split(",") if t.strip()]
+            if triggers:
+                result[lesson_id] = triggers
+        return result
+
+    @staticmethod
+    def call_haiku_api(prompt: str) -> str:
+        """Call Haiku API to generate triggers.
+
+        Args:
+            prompt: The prompt to send to Haiku
+
+        Returns:
+            Response text from Haiku
+        """
+        import anthropic
+
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model="claude-3-5-haiku-latest",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        """Execute the migrate-triggers command.
+
+        Args:
+            args: Parsed command-line arguments (includes dry_run flag)
+            manager: LessonsManager instance
+
+        Returns:
+            Exit code (0 for success)
+        """
+        dry_run = getattr(args, "dry_run", False)
+
+        # 1. Find lessons without triggers
+        lessons = self.find_lessons_without_triggers(manager)
+
+        if not lessons:
+            print("No lessons found without triggers.")
+            return 0
+
+        print(f"Found {len(lessons)} lesson(s) without triggers.")
+
+        # 2. Generate Haiku prompt
+        prompt = self.generate_haiku_prompt(lessons)
+
+        # 3. If dry_run, show prompt and what would happen
+        if dry_run:
+            print("\n[Dry run] Would call Haiku API with prompt:")
+            print("-" * 40)
+            print(prompt[:500] + "..." if len(prompt) > 500 else prompt)
+            print("-" * 40)
+            for lesson in lessons:
+                print(f"  - {lesson.id}: {lesson.title}")
+            return 0
+
+        # 4. Call Haiku API
+        print("Calling Haiku API...")
+        response = MigrateTriggersCommand.call_haiku_api(prompt)
+
+        # 5. Parse response
+        triggers_map = self.parse_haiku_response(response)
+
+        if not triggers_map:
+            print("Error: Could not parse triggers from Haiku response")
+            return 1
+
+        # 6. Update each lesson's triggers
+        updated_count = 0
+        for lesson_id, triggers in triggers_map.items():
+            try:
+                manager.update_lesson_triggers(lesson_id, triggers)
+                print(f"  Updated {lesson_id}: {', '.join(triggers)}")
+                updated_count += 1
+            except (ValueError, KeyError) as e:
+                print(f"  Warning: Could not update {lesson_id}: {e}", file=sys.stderr)
+
+        # 7. Print summary
+        print(f"\nUpdated triggers for {updated_count} lesson(s).")
+        return 0
+
+
 # =============================================================================
 # Command Registry
 # =============================================================================
@@ -445,6 +620,7 @@ COMMAND_REGISTRY: Dict[str, Type[Command]] = {
     "score-relevance": ScoreRelevanceCommand,
     "prescore-cache": PrescoreCacheCommand,
     "stop-hook-batch": StopHookBatchCommand,
+    "migrate-triggers": MigrateTriggersCommand,
 }
 
 

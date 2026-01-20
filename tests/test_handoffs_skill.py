@@ -183,13 +183,13 @@ class TestSkillFrontmatter:
         assert "allowed-tools" in frontmatter, f"Missing 'allowed-tools' in {skill_path}"
 
     @pytest.mark.parametrize("skill_path", SKILL_PATHS)
-    def test_allowed_tools_includes_bash_python3(self, skill_path: Path):
-        """allowed-tools should include Bash(python3:*)."""
+    def test_allowed_tools_includes_bash_recall_cli(self, skill_path: Path):
+        """allowed-tools should include Bash(RECALL_CLI=*)."""
         content = skill_path.read_text()
         frontmatter = parse_frontmatter(content)
         allowed_tools = frontmatter.get("allowed-tools", "")
-        assert "Bash(python3:*)" in allowed_tools, (
-            f"allowed-tools should include 'Bash(python3:*)' in {skill_path}"
+        assert "Bash(RECALL_CLI=*)" in allowed_tools, (
+            f"allowed-tools should include 'Bash(RECALL_CLI=*)' in {skill_path}"
         )
 
 

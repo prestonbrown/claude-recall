@@ -1,7 +1,7 @@
 ---
 description: Manage the Claude Recall lessons system - a learning cache that tracks corrections and patterns across sessions.
 argument-hint: [list | search <term> | category <cat> | stale | show <id> | add <cat> <title> - <content> | cite <id> | delete <id>]
-allowed-tools: Bash(python3:*)
+allowed-tools: Bash(RECALL_CLI=*)
 ---
 
 # Lesson Management

@@ -355,6 +355,8 @@ class LessonsMixin:
         force: bool = False,
         promotable: bool = True,
         lesson_type: str = "",
+        triggers: Optional[List[str]] = None,
+        auto_triggers: bool = True,
     ) -> str:
         """
         Add a new lesson.
@@ -368,6 +370,8 @@ class LessonsMixin:
             force: If True, bypass duplicate detection
             promotable: If False, lesson will never be promoted to system level
             lesson_type: 'constraint', 'informational', or 'preference' (auto-classified if empty)
+            triggers: List of keywords for matching relevance (auto-generated if None)
+            auto_triggers: If True and triggers is None, auto-generate triggers via Haiku
 
         Returns:
             The assigned lesson ID (e.g., 'L001' or 'S001')
@@ -383,6 +387,12 @@ class LessonsMixin:
             prefix = "L"
 
         self.init_lessons_file(level)
+
+        # Auto-generate triggers if not provided
+        if triggers is None and auto_triggers:
+            triggers = self.generate_single_lesson_triggers(title, content, category)
+        elif triggers is None:
+            triggers = []
 
         with FileLock(file_path):
             # Check for duplicates
@@ -409,6 +419,7 @@ class LessonsMixin:
                 level=level,
                 promotable=promotable,
                 lesson_type=lesson_type,
+                triggers=triggers,
             )
 
             # Append to file
@@ -476,6 +487,10 @@ class LessonsMixin:
         lessons = self._parse_lessons_file(file_path, level)
         for lesson in lessons:
             if lesson.id == lesson_id:
+                # Cache the lesson for potential _save_lessons() call
+                if not hasattr(self, "_lesson_cache"):
+                    self._lesson_cache = {}
+                self._lesson_cache[lesson_id] = lesson
                 return lesson
 
         return None
@@ -1192,6 +1207,146 @@ No explanations, just ID: SCORE lines."""
     # Helper Methods for Testing
     # -------------------------------------------------------------------------
 
+    def update_lesson_triggers(self, lesson_id: str, triggers: List[str]) -> bool:
+        """Update the triggers field of an existing lesson.
+
+        Args:
+            lesson_id: The lesson ID (e.g., 'L001' or 'S001')
+            triggers: List of trigger keywords
+
+        Returns:
+            True if successful, False if lesson not found
+
+        Raises:
+            ValueError: If the lesson is not found
+        """
+        level = self._get_level_from_id(lesson_id)
+        file_path = self._get_file_path_for_id(lesson_id)
+
+        if not file_path.exists():
+            raise ValueError(f"Lesson {lesson_id} not found")
+
+        state = {"found": False}
+
+        def update_fn(lessons):
+            for lesson in lessons:
+                if lesson.id == lesson_id:
+                    lesson.triggers = triggers
+                    state["found"] = True
+                    break
+
+        self._atomic_update_lessons_file(file_path, update_fn, level)
+
+        if not state["found"]:
+            raise ValueError(f"Lesson {lesson_id} not found")
+
+        logger = get_logger()
+        logger.mutation("update_triggers", lesson_id, {"triggers": triggers})
+
+        return True
+
+    def generate_single_lesson_triggers(
+        self,
+        title_or_lesson,
+        content: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> List[str]:
+        """Generate triggers for a single lesson using Haiku.
+
+        Can be called with either:
+        - A Lesson object: generate_single_lesson_triggers(lesson)
+        - Separate params: generate_single_lesson_triggers(title, content, category)
+
+        Args:
+            title_or_lesson: Either a Lesson object or the lesson title (str)
+            content: Lesson content (only when title_or_lesson is a string)
+            category: Lesson category (only when title_or_lesson is a string)
+
+        Returns:
+            List of 3-5 trigger keywords
+        """
+        # Import the command to reuse API call logic
+        try:
+            from core.commands import MigrateTriggersCommand
+        except ImportError:
+            from commands import MigrateTriggersCommand
+
+        # Handle both Lesson object and separate params
+        # Check for Lesson object by looking for 'content' attribute (strings don't have it)
+        if hasattr(title_or_lesson, 'content') and hasattr(title_or_lesson, 'category'):
+            # It's a Lesson object
+            title = title_or_lesson.title
+            content = title_or_lesson.content
+            category = title_or_lesson.category
+        else:
+            # It's a string (title)
+            title = title_or_lesson
+            if content is None or category is None:
+                raise ValueError("content and category are required when title is a string")
+
+        # Create a minimal prompt for single lesson (format matches MigrateTriggersCommand)
+        prompt = f"""Generate 3-5 keyword triggers for this lesson. These keywords should indicate when the lesson applies.
+
+Category: {category}
+Title: {title}
+Content: {content}
+
+Output format (one line only):
+ID: keyword1, keyword2, keyword3
+
+Output ONLY the ID: keywords line, nothing else."""
+
+        try:
+            response = MigrateTriggersCommand.call_haiku_api(prompt)
+            # Parse response - look for lines with ":" separator (ID: or TRIGGERS:)
+            for line in response.splitlines():
+                line = line.strip()
+                if ":" in line:
+                    triggers_str = line.split(":", 1)[1].strip()
+                    triggers = [t.strip() for t in triggers_str.split(",") if t.strip()]
+                    if triggers:
+                        return triggers
+        except Exception as e:
+            # If API fails, return empty - don't block lesson creation
+            import logging
+            logging.warning(f"Failed to generate triggers: {e}")
+
+        return []
+
+    def _save_lessons(self) -> None:
+        """Save cached lessons back to files (testing helper).
+
+        This method persists any lessons that were retrieved via get_lesson()
+        and modified in-place. It's primarily for test compatibility.
+
+        In production code, use update_lesson_triggers() or other specific
+        update methods instead.
+        """
+        if not hasattr(self, "_lesson_cache"):
+            return
+
+        # Group cached lessons by level
+        for lesson in self._lesson_cache.values():
+            level = self._get_level_from_id(lesson.id)
+            file_path = self._get_file_path_for_id(lesson.id)
+
+            if not file_path.exists():
+                continue
+
+            # Create a closure that captures this specific lesson
+            def make_update_fn(cached_lesson):
+                def update_fn(lessons):
+                    for i, l in enumerate(lessons):
+                        if l.id == cached_lesson.id:
+                            lessons[i] = cached_lesson
+                            break
+                return update_fn
+
+            self._atomic_update_lessons_file(file_path, make_update_fn(lesson), level)
+
+        # Clear cache after save
+        self._lesson_cache = {}
+
     def _update_lesson_date(self, lesson_id: str, last_used: date) -> None:
         """Update a lesson's last-used date (for testing)."""
         level = self._get_level_from_id(lesson_id)
@@ -1707,3 +1862,11 @@ No explanations, just ID: SCORE lines."""
                 scored_queries.append(query[:50] + "..." if len(query) > 50 else query)
 
         return scored_queries
+
+
+# Lazy import for LessonsManager to enable patching in tests (avoids circular import)
+def __getattr__(name):
+    if name == "LessonsManager":
+        from core.manager import LessonsManager
+        return LessonsManager
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

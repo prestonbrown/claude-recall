@@ -56,6 +56,12 @@ def main():
         default="",
         help="Lesson type for framing (auto-classified if not specified)",
     )
+    add_parser.add_argument(
+        "--triggers",
+        type=str,
+        default=None,
+        help="Comma-separated trigger keywords (skip auto-generation)",
+    )
 
     # add-ai command
     add_ai_parser = subparsers.add_parser("add-ai", help="Add an AI-generated lesson")
@@ -379,6 +385,17 @@ def main():
         choices=["string", "int", "bool"],
         default="string",
         help="Value type (string, int, bool)"
+    )
+
+    # migrate-triggers command - auto-generate triggers for lessons
+    migrate_triggers_parser = subparsers.add_parser(
+        "migrate-triggers",
+        help="Auto-generate triggers for lessons using Claude Haiku"
+    )
+    migrate_triggers_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show prompt without calling API"
     )
 
     # stop-hook-batch command - batch processing for stop-hook.sh

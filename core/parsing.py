@@ -176,6 +176,13 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple
     # Check for promotable flag (defaults to True if not present)
     promotable = "**Promotable**: no" not in meta_line
 
+    # Extract triggers (optional, defaults to empty list)
+    triggers = []
+    triggers_match = re.search(r'\|\s*\*\*Triggers\*\*:\s*(.+?)(?:\||$)', meta_line)
+    if triggers_match:
+        triggers_str = triggers_match.group(1).strip()
+        triggers = [t.strip() for t in triggers_str.split(", ") if t.strip()]
+
     # Parse content line
     content = ""
     end_idx = start_idx + 2
@@ -205,6 +212,7 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple
         level=level,
         promotable=promotable,
         lesson_type=lesson_type,
+        triggers=triggers,
     )
 
     return (lesson, end_idx)
@@ -243,6 +251,9 @@ def format_lesson(lesson: Lesson) -> str:
     # Only store type if explicitly set (not auto-classified)
     if lesson.lesson_type:
         meta_parts.append(f"**Type**: {lesson.lesson_type}")
+    # Only store triggers if non-empty
+    if lesson.triggers:
+        meta_parts.append(f"**Triggers**: {', '.join(lesson.triggers)}")
 
     meta_line = f"- {' | '.join(meta_parts)}"
     content_line = f"> {lesson.content}"

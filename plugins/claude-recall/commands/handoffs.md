@@ -1,7 +1,7 @@
 ---
 description: Manage active handoffs - track multi-step work across sessions with status, phase, and progress.
 argument-hint: [list | show <id> | add <title> | update <id> [--status|--phase|--tried|--next] | complete <id> | archive <id> | delete <id> | ready]
-allowed-tools: Bash(python3:*)
+allowed-tools: Bash(RECALL_CLI=*)
 ---
 
 # Handoffs
