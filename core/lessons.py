@@ -776,6 +776,8 @@ class LessonsMixin:
         if not lessons:
             return
 
+        logger = get_logger()
+
         try:
             from core.commands import MigrateTriggersCommand
         except ImportError:
@@ -793,16 +795,19 @@ class LessonsMixin:
             # Parse response and update lessons
             triggers_map = MigrateTriggersCommand.parse_haiku_response(response)
 
+            # Create a set of valid lesson IDs we're migrating
+            valid_ids = {l.id for l in lessons}
+
             for lesson_id, triggers in triggers_map.items():
+                if lesson_id not in valid_ids:
+                    continue  # Skip hallucinated IDs
                 try:
                     self.update_lesson_triggers(lesson_id, triggers)
                 except Exception as e:
-                    import logging
-                    logging.debug(f"Failed to update triggers for {lesson_id}: {e}")
+                    logger.error("auto_migrate_trigger_update", str(e), {"lesson_id": lesson_id})
 
         except Exception as e:
-            import logging
-            logging.warning(f"Auto-migration of triggers failed: {e}")
+            logger.error("auto_migrate_triggers", str(e))
 
     def inject_context(self, top_n: int = 5) -> InjectionResult:
         """

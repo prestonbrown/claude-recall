@@ -4746,9 +4746,7 @@ L002: circular, import, ImportError, module"""
             assert "L002" in call_args, "Prompt should include L002 (needs migration)"
             assert "Needs triggers" in call_args, "Prompt should include lesson title"
             # L001 and S001 should NOT be in the prompt (they have triggers)
-            assert "L001" not in call_args or "Has triggers already" not in call_args, (
-                "Prompt should NOT include L001 (already has triggers)"
-            )
+            assert "Has triggers already" not in call_args, "Prompt should NOT include lessons with triggers"
 
         # Verify L002 now has triggers
         manager2 = LessonsManager(temp_lessons_base, temp_project_root)
