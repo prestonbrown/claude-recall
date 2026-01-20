@@ -1267,3 +1267,81 @@ class TestPhase6DebugLogging:
         # Should have debug.log filename
         assert "debug.log" in plugin_content, \
             "Plugin should use debug.log as log file name"
+
+
+class TestOpenCodeSessionIdHandling:
+    """Tests for session_id handling in OpenCode adapter.
+
+    OpenCode uses input.session.id for session identification. This must
+    be passed to CLI commands (especially handoff sync-todos) to:
+    1. Prevent cross-session handoff pollution
+    2. Enable sub-agent origin guard in handoff_add
+    """
+
+    def test_tool_execute_handler_accepts_session_context(self) -> None:
+        """tool.execute.after handler should have access to session context."""
+        plugin_path = PROJECT_ROOT / "adapters" / "opencode" / "plugin.ts"
+        plugin_content = plugin_path.read_text()
+
+        # Should have tool.execute.after handler
+        assert '"tool.execute.after"' in plugin_content, \
+            "Plugin should have tool.execute.after handler for TodoWrite sync"
+
+        # Handler should accept input parameter
+        assert 'async (input)' in plugin_content, \
+            "Tool handler should accept input parameter"
+
+    def test_session_id_accessible_in_plugin_context(self) -> None:
+        """Plugin should be able to access session.id from context."""
+        plugin_path = PROJECT_ROOT / "adapters" / "opencode" / "plugin.ts"
+        plugin_content = plugin_path.read_text()
+
+        # Should access session.id in session.created handler
+        assert 'input.session.id' in plugin_content, \
+            "Plugin should access input.session.id for session identification"
+
+        # Should use session.id for state management
+        assert 'sessionState.get(input.session.id)' in plugin_content or \
+               'sessionState.set(input.session.id' in plugin_content, \
+            "Plugin should use session.id for per-session state tracking"
+
+    @pytest.mark.skip(reason="Requires integration test with actual OpenCode session object")
+    def test_todowrite_sync_passes_session_id(self) -> None:
+        """TodoWrite sync should pass session_id to prevent cross-session pollution.
+
+        This is an integration test that would require:
+        1. Mock OpenCode session object with id
+        2. Simulate TodoWrite tool execution
+        3. Verify CLI receives --session-id argument
+
+        Skipping for now as this requires deeper integration with OpenCode API.
+        """
+        pass
+
+    def test_handoff_sync_uses_correct_cli_command(self) -> None:
+        """handoff sync-todos command should be called for TodoWrite sync."""
+        plugin_path = PROJECT_ROOT / "adapters" / "opencode" / "plugin.ts"
+        plugin_content = plugin_path.read_text()
+
+        # Should call handoff sync-todos
+        assert 'handoff sync-todos' in plugin_content, \
+            "Plugin should call handoff sync-todos for TodoWrite sync"
+
+        # Should be in tool.execute.after handler
+        handler_section = plugin_content.split('"tool.execute.after"')[1].split('"message.created"')[0]
+        assert 'sync-todos' in handler_section, \
+            "sync-todos should be called within tool.execute.after handler"
+
+    def test_session_state_initialized_on_session_created(self) -> None:
+        """session.created handler should initialize session state."""
+        plugin_path = PROJECT_ROOT / "adapters" / "opencode" / "plugin.ts"
+        plugin_content = plugin_path.read_text()
+
+        # Should initialize sessionState with session.id
+        assert 'sessionState.set(input.session.id' in plugin_content, \
+            "Plugin should initialize session state on session creation"
+
+        # Should store isFirstPrompt and promptCount
+        assert 'isFirstPrompt' in plugin_content and 'promptCount' in plugin_content, \
+            "Session state should track prompt count and first prompt flag"
+

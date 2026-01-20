@@ -2150,8 +2150,11 @@ Consider extracting lessons about:
         Args:
             todos: List of todo dicts with 'content', 'status', 'activeForm'
             session_handoff: Optional handoff ID from session lookup (highest priority)
-            session_id: Optional session ID - if provided without session_handoff,
-                       indicates new work that shouldn't auto-link to existing handoffs
+            session_id: Optional session ID - enables two behaviors:
+                       1. If provided without session_handoff, prevents fallback to
+                          most recent handoff (avoids cross-session pollution)
+                       2. Enables sub-agent origin guard in handoff_add to
+                          prevent Explore/General agents from creating handoffs
 
         Returns:
             Handoff ID that was updated/created, or None if no todos or

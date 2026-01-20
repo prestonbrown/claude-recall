@@ -285,7 +285,7 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
         // Only process TodoWrite tool calls
         if (input.tool !== "TodoWrite") return;
 
-        // Extract todos from the tool result
+        // Extract todos from tool result
         const todos = input.result?.todos;
 
         if (!todos || !Array.isArray(todos)) return;
@@ -293,11 +293,15 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
         // Convert todos to JSON for CLI
         const todosJson = JSON.stringify(todos);
 
+        // Get session ID for cross-session pollution prevention
+        const sessionId = input.session?.id;
+
         // Sync todos to active handoff
         try {
-          const { stdout } = await $`${MANAGER} handoff sync-todos ${todosJson}`
+          const sessionIdArg = sessionId ? `--session-id ${sessionId}` : '';
+          const { stdout } = await $`${MANAGER} handoff sync-todos ${todosJson} ${sessionIdArg}`
           if (stdout) {
-            log('info', 'handoff.sync_todos', { result: stdout });
+            log('info', 'handoff.sync_todos', { result: stdout, sessionId });
           }
         } catch (e) {
           log('debug', 'handoff.sync_failed', { error: String(e) });

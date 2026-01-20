@@ -402,10 +402,10 @@ capture_todowrite() {
     # Call Python manager to sync todos to handoff
     if [[ -f "$PYTHON_MANAGER" ]]; then
         local result
-        local session_id_arg=""
-        [[ -n "$session_id" ]] && session_id_arg="--session-id $session_id"
+        local session_id_args=()
+        [[ -n "$session_id" ]] && session_id_args+=("--session-id" "$session_id")
         result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" approach sync-todos "$todo_json" $session_id_arg 2>&1 || true)
+            python3 "$PYTHON_MANAGER" approach sync-todos "$todo_json" "${session_id_args[@]}" 2>&1 || true)
 
         if [[ -n "$result" && "$result" != Error:* ]]; then
             echo "[handoffs] Synced TodoWrite to handoff" >&2
