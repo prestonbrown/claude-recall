@@ -195,3 +195,68 @@ After"""
         content = "<system-reminder>first</system-reminder>middle<system-reminder>second</system-reminder>end"
         result = collapse_system_tags(content)
         assert result == "middleend"
+
+
+class TestStripTags:
+    """Tests for the strip_tags function."""
+
+    def test_strips_xml_tags_keeps_content(self):
+        """XML tags should be stripped but inner content preserved."""
+        from core.tui.tag_renderer import strip_tags
+
+        content = "<local-command-caveat>some text</local-command-caveat>"
+        result = strip_tags(content)
+        assert result == "some text"
+
+    def test_strips_multiple_tags(self):
+        """Multiple different tags should all be stripped."""
+        from core.tui.tag_renderer import strip_tags
+
+        content = "<system-reminder>context</system-reminder>Hello <command-name>/test</command-name>"
+        result = strip_tags(content)
+        assert result == "contextHello /test"
+
+    def test_strips_self_closing_tags(self):
+        """Self-closing tags should be stripped."""
+        from core.tui.tag_renderer import strip_tags
+
+        content = "before <br/> after"
+        result = strip_tags(content)
+        assert result == "before  after"
+
+    def test_empty_content_returns_empty(self):
+        """Empty content should return empty string."""
+        from core.tui.tag_renderer import strip_tags
+
+        assert strip_tags("") == ""
+
+    def test_none_returns_none(self):
+        """None content should return None (falsy check)."""
+        from core.tui.tag_renderer import strip_tags
+
+        # strip_tags checks `if not content` which is True for None
+        assert strip_tags(None) is None
+
+    def test_content_without_tags_unchanged(self):
+        """Content without tags should pass through unchanged."""
+        from core.tui.tag_renderer import strip_tags
+
+        content = "Just plain text with no tags"
+        result = strip_tags(content)
+        assert result == content
+
+    def test_nested_tags_stripped(self):
+        """Nested tags should both be stripped."""
+        from core.tui.tag_renderer import strip_tags
+
+        content = "<outer><inner>text</inner></outer>"
+        result = strip_tags(content)
+        assert result == "text"
+
+    def test_typical_session_topic(self):
+        """Typical session topic with system tags should be cleaned."""
+        from core.tui.tag_renderer import strip_tags
+
+        content = "<system-reminder>Hook context here</system-reminder>Implement the feature"
+        result = strip_tags(content)
+        assert result == "Hook context hereImplement the feature"

@@ -382,6 +382,24 @@ EOF
     fi
 }
 
+sync_working_dir() {
+    # Copy working directory files to installed plugin cache
+    # This ensures local development changes are immediately available
+    local install_path
+    install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
+        "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
+
+    if [[ -z "$install_path" || ! -d "$install_path" ]]; then
+        return 0
+    fi
+
+    # Sync core Python code from working directory
+    if [[ -d "$SCRIPT_DIR/core" ]]; then
+        cp -R "$SCRIPT_DIR/core/"* "$install_path/core/" 2>/dev/null || true
+        log_success "Synced working directory to plugin cache"
+    fi
+}
+
 install_venv() {
     log_info "Setting up Python virtual environment for TUI..."
 
@@ -446,6 +464,9 @@ install_claude() {
 
     # Install plugin via marketplace (handles registration and enabling)
     install_plugin
+
+    # Sync working directory changes to plugin cache (for local development)
+    sync_working_dir
 
     # Merge configs: defaults < saved existing < settings.json migration
     merge_config

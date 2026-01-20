@@ -343,7 +343,7 @@ async def test_multiple_tab_switches_only_load_once(temp_log_with_events: Path):
         originals = {
             "health": app._update_health,
             "state": app._update_state,
-            "session": app._setup_session_list,
+            "session": app._setup_session_list_async,
             "handoffs": app._setup_handoff_list,
             "charts": app._update_charts,
         }
@@ -357,7 +357,7 @@ async def test_multiple_tab_switches_only_load_once(temp_log_with_events: Path):
 
         app._update_health = make_counter("health", originals["health"])
         app._update_state = make_counter("state", originals["state"])
-        app._setup_session_list = make_counter("session", originals["session"])
+        app._setup_session_list_async = make_counter("session", originals["session"])
         app._setup_handoff_list = make_counter("handoffs", originals["handoffs"])
         app._update_charts = make_counter("charts", originals["charts"])
 

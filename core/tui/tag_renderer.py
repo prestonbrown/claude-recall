@@ -90,3 +90,14 @@ def collapse_system_tags(content: str) -> str:
         flags=re.DOTALL,
     )
     return content.strip()
+
+
+def strip_tags(content: str) -> str:
+    """Remove all XML-like tags from content, keeping inner text.
+
+    Useful for DataTable columns and other displays that don't support
+    Rich markup and have limited space.
+    """
+    if not content:
+        return content
+    return re.sub(r"<[^>]+>", "", content)

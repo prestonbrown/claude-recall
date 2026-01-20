@@ -58,7 +58,7 @@ try:
         extract_event_details,
     )
     from core.tui.app_state import AppState
-    from core.tui.tag_renderer import render_tags
+    from core.tui.tag_renderer import render_tags, strip_tags
 except ImportError:
     from .analytics import BLOCKED_ALERT_THRESHOLD_DAYS
     from .log_reader import LogReader, format_event_line
@@ -73,7 +73,7 @@ except ImportError:
         extract_event_details,
     )
     from .app_state import AppState
-    from .tag_renderer import render_tags
+    from .tag_renderer import render_tags, strip_tags
 
 # Backward compatibility alias for EVENT_COLORS
 EVENT_COLORS = EVENT_TYPE_COLORS
@@ -865,6 +865,7 @@ class RecallMonitorApp(App):
             with TabPane("Session", id="session"):
                 yield Vertical(
                     Static("Sessions", classes="section-title"),
+                    LoadingIndicator(id="session-loading"),
                     DataTable(id="session-list"),
                     Static("Session Events", classes="section-title"),
                     RichLog(id="session-events", highlight=True, markup=True, wrap=True, auto_scroll=False),
@@ -1358,8 +1359,8 @@ class RecallMonitorApp(App):
             # If we can't find or update the title, silently ignore
             pass
 
-    def _setup_session_list(self) -> None:
-        """Initialize the session list DataTable with sortable columns."""
+    def _setup_session_columns(self) -> None:
+        """Set up DataTable columns for session list (UI only, instant)."""
         session_table = self.query_one("#session-list", DataTable)
 
         # Enable row cursor for RowHighlighted events on arrow key navigation
@@ -1378,17 +1379,30 @@ class RecallMonitorApp(App):
         session_table.add_column("Tokens", key="tokens")
         session_table.add_column("Msgs", key="messages")
 
-        # Clear any existing session data
-        self.state.session.data.clear()
+    def _load_session_data(self) -> List[TranscriptSummary]:
+        """Load session data from transcript files (pure I/O, thread-safe).
 
-        # Get sessions from TranscriptReader
+        Returns:
+            List of TranscriptSummary objects.
+        """
         # _show_all toggles: all projects + all sessions (including empty) vs current project + non-empty
         if self._show_all:
-            sessions = self.transcript_reader.list_all_sessions_fast(limit=50, max_age_hours=168, include_empty=True)  # 7 days
+            return self.transcript_reader.list_all_sessions_fast(limit=50, max_age_hours=168, include_empty=True)  # 7 days
         else:
-            sessions = self.transcript_reader.list_sessions(
+            return self.transcript_reader.list_sessions(
                 self._current_project, limit=50, include_empty=False
             )
+
+    def _populate_session_data(self, sessions: List[TranscriptSummary]) -> None:
+        """Populate the session DataTable with loaded data (UI only).
+
+        Args:
+            sessions: List of TranscriptSummary objects to display.
+        """
+        session_table = self.query_one("#session-list", DataTable)
+
+        # Clear any existing session data
+        self.state.session.data.clear()
 
         # Update the section title with counts
         self._update_session_title(sessions)
@@ -1403,6 +1417,16 @@ class RecallMonitorApp(App):
 
             self._populate_session_row(session_table, session_id, summary)
 
+    def _setup_session_list(self) -> None:
+        """Initialize the session list DataTable synchronously.
+
+        Used for direct navigation when async loading isn't appropriate.
+        For normal tab activation, use _setup_session_list_async instead.
+        """
+        self._setup_session_columns()
+        sessions = self._load_session_data()
+        self._populate_session_data(sessions)
+
     def _populate_session_row(
         self, session_table: DataTable, session_id: str, summary: TranscriptSummary
     ) -> None:
@@ -1413,8 +1437,9 @@ class RecallMonitorApp(App):
             session_id: The session identifier (used as row key)
             summary: TranscriptSummary containing session data
         """
-        # Format display values
-        topic = summary.first_prompt[:40] + "..." if len(summary.first_prompt) > 40 else summary.first_prompt
+        # Format display values - strip XML tags for clean display
+        topic = strip_tags(summary.first_prompt)
+        topic = topic[:40] + "..." if len(topic) > 40 else topic
         topic = topic.replace("\n", " ")  # Remove newlines for display
         total_tools = sum(summary.tool_breakdown.values())
 
@@ -1433,6 +1458,32 @@ class RecallMonitorApp(App):
         ])
 
         session_table.add_row(*row_data, key=session_id)
+
+    @work(exclusive=True, group="session_setup")
+    async def _setup_session_list_async(self) -> None:
+        """Load session list asynchronously to avoid UI freeze."""
+        loading = self.query_one("#session-loading", LoadingIndicator)
+        session_table = self.query_one("#session-list", DataTable)
+
+        try:
+            loading.add_class("loading")
+            session_table.add_class("loading")
+
+            # Yield to event loop so loading indicator renders before blocking I/O
+            await asyncio.sleep(0)
+
+            self._setup_session_columns()  # Instant UI chrome
+
+            # Yield again after column setup to keep UI responsive
+            await asyncio.sleep(0)
+
+            sessions = await asyncio.to_thread(self._load_session_data)  # Background I/O
+            self._populate_session_data(sessions)  # Populate UI
+        except Exception as e:
+            self.notify(f"Error loading sessions: {e}", severity="error")
+        finally:
+            loading.remove_class("loading")
+            session_table.remove_class("loading")
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Handle row highlight (arrow key navigation) in data tables."""
@@ -1547,11 +1598,8 @@ class RecallMonitorApp(App):
                 except Exception as e:
                     self.notify(f"Error loading state: {e}", severity="error")
             elif tab_id == "session":
-                try:
-                    self._setup_session_list()
-                    self.state.tabs_loaded[tab_id] = True
-                except Exception as e:
-                    self.notify(f"Error loading sessions: {e}", severity="error")
+                self.state.tabs_loaded[tab_id] = True  # Prevent re-trigger
+                self._setup_session_list_async()
             elif tab_id == "handoffs":
                 try:
                     self._setup_handoff_list()

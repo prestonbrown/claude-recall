@@ -443,7 +443,7 @@ class TestLazyTabLoading:
                     assert not list_sessions_called, (
                         "list_all_sessions should NOT be called during mount. "
                         "Sessions tab should load lazily when first viewed. "
-                        "Fix: Remove _setup_session_list() from on_mount() and "
+                        "Fix: Remove _setup_session_list_async() from on_mount() and"
                         "call it in on_tabbed_content_tab_activated() instead."
                     )
 
@@ -457,16 +457,16 @@ class TestLazyTabLoading:
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            # Track refresh calls
+            # Track refresh calls (use async version since that's what tab activation calls)
             setup_called = False
-            original_setup = app._setup_session_list
+            original_setup = app._setup_session_list_async
 
             def track_setup():
                 nonlocal setup_called
                 setup_called = True
                 return original_setup()
 
-            app._setup_session_list = track_setup
+            app._setup_session_list_async = track_setup
 
             # Switch to Sessions tab
             await pilot.press("f4")
@@ -480,7 +480,7 @@ class TestLazyTabLoading:
 
             assert setup_called or has_data, (
                 "Sessions tab should load data when first activated. "
-                "Add tab activation handler to call _setup_session_list()."
+                "Add tab activation handler to call _setup_session_list_async()."
             )
 
     @pytest.mark.asyncio
@@ -497,16 +497,16 @@ class TestLazyTabLoading:
             await pilot.press("f4")
             await pilot.pause()
 
-            # Track setup calls
+            # Track setup calls (use async version since that's what tab activation calls)
             setup_count = 0
-            original_setup = app._setup_session_list
+            original_setup = app._setup_session_list_async
 
             def count_setup():
                 nonlocal setup_count
                 setup_count += 1
                 return original_setup()
 
-            app._setup_session_list = count_setup
+            app._setup_session_list_async = count_setup
 
             # Switch away
             await pilot.press("f1")  # Live tab
