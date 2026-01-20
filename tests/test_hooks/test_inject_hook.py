@@ -88,8 +88,10 @@ class TestInjectHookSessionLinking:
         (state_dir / "debug.log").write_text("")
 
         # Create a handoff with in_progress status (using correct format)
+        # IMPORTANT: Use today's date to avoid auto-archiving (HANDOFF_STALE_DAYS=7)
         handoffs_file = temp_project_root / ".claude-recall" / "HANDOFFS.md"
         handoff_id = "hf-abc1234"
+        today = date.today().isoformat()
         handoffs_content = f"""# HANDOFFS.md - Active Work Tracking
 
 > Track ongoing work with tried steps and next steps.
@@ -100,7 +102,7 @@ class TestInjectHookSessionLinking:
 
 ### [{handoff_id}] Test Feature Implementation
 - **Status**: in_progress | **Phase**: implementing | **Agent**: user
-- **Created**: 2026-01-10 | **Updated**: 2026-01-10
+- **Created**: {today} | **Updated**: {today}
 - **Refs**:
 - **Description**:
 - **Checkpoint**: Finish implementation
