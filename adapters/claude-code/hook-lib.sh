@@ -83,18 +83,32 @@ load_debug_level() {
 # 1. Installed location: $CLAUDE_RECALL_BASE/core/cli.py
 # 2. Legacy flat structure: $CLAUDE_RECALL_BASE/cli.py
 # 3. Dev location: relative to this script's directory
+#
+# Also sets PYTHON_BIN to venv python if available (for anthropic support)
 find_python_manager() {
+    local base_dir=""
     if [[ -f "$CLAUDE_RECALL_BASE/core/cli.py" ]]; then
         PYTHON_MANAGER="$CLAUDE_RECALL_BASE/core/cli.py"
+        base_dir="$CLAUDE_RECALL_BASE"
     elif [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
         PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"  # Legacy flat structure
+        base_dir="$CLAUDE_RECALL_BASE"
     else
         # Dev location - relative to hook-lib.sh (adapters/claude-code/)
         local script_dir
         script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         PYTHON_MANAGER="$script_dir/../../core/cli.py"
+        base_dir="$script_dir/../.."
     fi
-    export PYTHON_MANAGER
+
+    # Use venv python if available (has anthropic for trigger generation)
+    if [[ -x "$base_dir/.venv/bin/python" ]]; then
+        PYTHON_BIN="$base_dir/.venv/bin/python"
+    else
+        PYTHON_BIN="python3"
+    fi
+
+    export PYTHON_MANAGER PYTHON_BIN
 }
 
 # ============================================================
@@ -186,7 +200,7 @@ log_phase() {
 
     # Background the debug logging
     if [[ -n "$PYTHON_MANAGER" && -f "$PYTHON_MANAGER" ]]; then
-        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-phase "$hook_name" "$phase" "$duration" 2>/dev/null &
+        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$PYTHON_BIN" "$PYTHON_MANAGER" debug hook-phase "$hook_name" "$phase" "$duration" 2>/dev/null &
     fi
 }
 
@@ -202,9 +216,9 @@ log_hook_end() {
 
     if [[ -n "$PYTHON_MANAGER" && -f "$PYTHON_MANAGER" ]]; then
         if [[ -n "$PHASE_TIMES_JSON" && "$PHASE_TIMES_JSON" != "{}" ]]; then
-            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" --phases "$PHASE_TIMES_JSON" 2>/dev/null &
+            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$PYTHON_BIN" "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" --phases "$PHASE_TIMES_JSON" 2>/dev/null &
         else
-            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" 2>/dev/null &
+            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$PYTHON_BIN" "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" 2>/dev/null &
         fi
     fi
 }
@@ -266,6 +280,6 @@ sanitize_input() {
 log_debug() {
     local message="$1"
     if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" python3 "$PYTHON_MANAGER" debug log "$message" 2>/dev/null || true
+        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$PYTHON_BIN" "$PYTHON_MANAGER" debug log "$message" 2>/dev/null || true
     fi
 }

@@ -64,7 +64,7 @@ score_and_format_lessons() {
     result=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
         LESSONS_SCORING_ACTIVE=1 \
         timeout "$RELEVANCE_TIMEOUT" \
-        python3 "$PYTHON_MANAGER" score-relevance "$prompt" \
+        "$PYTHON_BIN" "$PYTHON_MANAGER" score-relevance "$prompt" \
             --top "$TOP_LESSONS" \
             --min-score "$MIN_RELEVANCE_SCORE" \
             --timeout "$RELEVANCE_TIMEOUT" 2>/dev/null) || return 1

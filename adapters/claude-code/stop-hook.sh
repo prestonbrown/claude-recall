@@ -291,7 +291,7 @@ process_ai_lessons() {
         [[ -n "$explicit_type" ]] && type_args="--type $explicit_type"
         if [[ -f "$PYTHON_MANAGER" ]]; then
             result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                python3 "$PYTHON_MANAGER" add-ai $type_args -- "$category" "$title" "$content" 2>&1 || true)
+                "$PYTHON_BIN" "$PYTHON_MANAGER" add-ai $type_args -- "$category" "$title" "$content" 2>&1 || true)
         fi
 
         # Fall back to bash manager if Python fails
@@ -359,7 +359,7 @@ process_handoffs() {
     # Single Python call parses patterns, handles sub-agent blocking, and processes all operations
     local result
     result=$(echo "$TRANSCRIPT_CACHE" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-        python3 "$PYTHON_MANAGER" handoff process-transcript $session_arg 2>&1 || true)
+        "$PYTHON_BIN" "$PYTHON_MANAGER" handoff process-transcript $session_arg 2>&1 || true)
 
     [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && t2=$(get_elapsed_ms)
 
@@ -403,7 +403,7 @@ capture_todowrite() {
     if [[ -f "$PYTHON_MANAGER" ]]; then
         local result
         result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" approach sync-todos "$todo_json" 2>&1 || true)
+            "$PYTHON_BIN" "$PYTHON_MANAGER" approach sync-todos "$todo_json" 2>&1 || true)
 
         if [[ -n "$result" && "$result" != Error:* ]]; then
             echo "[handoffs] Synced TodoWrite to handoff" >&2
@@ -420,7 +420,7 @@ detect_and_warn_missing_handoff() {
     local handoff_exists=""
     if [[ -f "$PYTHON_MANAGER" ]]; then
         handoff_exists=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-            python3 "$PYTHON_MANAGER" handoff list 2>/dev/null | grep -E '\[hf-' | head -1 || true)
+            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff list 2>/dev/null | grep -E '\[hf-' | head -1 || true)
     fi
     [[ -n "$handoff_exists" ]] && return 0
 
@@ -516,7 +516,7 @@ main() {
 
         local batch_result
         batch_result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" stop-hook-batch $batch_args 2>&1 || echo '{}')
+            "$PYTHON_BIN" "$PYTHON_MANAGER" stop-hook-batch $batch_args 2>&1 || echo '{}')
 
         # Parse batch results for logging
         local handoffs_processed=$(echo "$batch_result" | jq -r '.handoffs_processed // 0' 2>/dev/null || echo "0")
@@ -564,7 +564,7 @@ main() {
     if (( RANDOM % 5 == 0 )) && [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
         # Run in background with nohup so it doesn't block session end
         # Redirect to background.log for debugging
-        nohup python3 "$PYTHON_MANAGER" prescore-cache \
+        nohup "$PYTHON_BIN" "$PYTHON_MANAGER" prescore-cache \
             --transcript "$transcript_path" \
             >> "$CLAUDE_RECALL_STATE/background.log" 2>&1 &
     fi

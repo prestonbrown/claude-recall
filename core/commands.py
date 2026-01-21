@@ -351,8 +351,13 @@ class StopHookBatchCommand(Command):
             "todos_synced": False,
             "citations_count": 0,
             "transcript_added": False,
+            "git_commit_detected": False,
+            "auto_completed": False,
             "errors": [],
         }
+
+        # Track if git commit was detected in transcript
+        git_commit_detected = False
 
         # 1. Process handoffs from transcript
         if transcript_path and Path(transcript_path).exists():
@@ -380,6 +385,11 @@ class StopHookBatchCommand(Command):
                                     assistant_texts.append(item.get("text", ""))
                                 elif item.get("type") == "tool_use" and item.get("name") == "TodoWrite":
                                     last_todowrite = item.get("input", {}).get("todos")
+                                # Detect git commit in Bash tool calls
+                                elif item.get("type") == "tool_use" and item.get("name") == "Bash":
+                                    cmd = item.get("input", {}).get("command", "")
+                                    if "git commit" in cmd:
+                                        git_commit_detected = True
 
                     transcript_data = {
                         "assistant_texts": assistant_texts,
@@ -430,6 +440,29 @@ class StopHookBatchCommand(Command):
                 results["transcript_added"] = add_result is not None
             except Exception as e:
                 results["errors"].append(f"add_transcript: {str(e)}")
+
+        # 5. Auto-complete ready_for_review handoffs when git commit detected
+        results["git_commit_detected"] = git_commit_detected
+        if git_commit_detected:
+            try:
+                # Find handoff to complete - prefer session-linked, else any ready_for_review
+                handoff_to_complete = None
+                if session_id:
+                    handoff_to_complete = manager.handoff_get_by_session(session_id)
+
+                if handoff_to_complete and handoff_to_complete.status == "ready_for_review":
+                    manager.handoff_complete(handoff_to_complete.id)
+                    results["auto_completed"] = True
+                elif not handoff_to_complete:
+                    # No session-linked handoff - check for any ready_for_review
+                    handoffs = manager.handoff_list()
+                    for hf in handoffs:
+                        if hf.status == "ready_for_review":
+                            manager.handoff_complete(hf.id)
+                            results["auto_completed"] = True
+                            break
+            except Exception as e:
+                results["errors"].append(f"auto_complete: {str(e)}")
 
         # Output results as JSON for parsing by stop-hook.sh
         print(json.dumps(results))

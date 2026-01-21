@@ -424,12 +424,24 @@ install_venv() {
         log_success "Created virtual environment"
     fi
 
-    log_info "Installing TUI dependencies..."
-    if "$venv_dir/bin/pip" install --quiet --upgrade pip 2>/dev/null && \
-       "$venv_dir/bin/pip" install --quiet textual textual-plotext 2>/dev/null; then
-        log_success "Installed TUI dependencies"
+    log_info "Installing dependencies..."
+    if "$venv_dir/bin/pip" install --quiet --upgrade pip 2>/dev/null; then
+        # Install core dependencies (anthropic for trigger generation)
+        if [[ -f "$install_path/requirements.txt" ]]; then
+            if "$venv_dir/bin/pip" install --quiet -r "$install_path/requirements.txt" 2>/dev/null; then
+                log_success "Installed core dependencies (anthropic)"
+            else
+                log_warn "Could not install core dependencies (network issue?)"
+            fi
+        fi
+        # Install TUI dependencies
+        if "$venv_dir/bin/pip" install --quiet textual textual-plotext 2>/dev/null; then
+            log_success "Installed TUI dependencies"
+        else
+            log_warn "Could not install TUI dependencies (network issue?)"
+        fi
     else
-        log_warn "Could not install TUI dependencies (network issue?)"
+        log_warn "Could not upgrade pip"
     fi
 }
 

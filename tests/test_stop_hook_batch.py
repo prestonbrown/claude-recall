@@ -156,6 +156,34 @@ def transcript_with_todos(tmp_path: Path) -> Path:
     return transcript_path
 
 
+@pytest.fixture
+def transcript_with_git_commit(tmp_path: Path) -> Path:
+    """Create a transcript with a git commit Bash command."""
+    transcript_path = tmp_path / "session_git_commit.jsonl"
+    entries = [
+        {
+            "type": "assistant",
+            "timestamp": "2024-01-01T10:00:00Z",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "I'll commit these changes."},
+                    {
+                        "type": "tool_use",
+                        "name": "Bash",
+                        "input": {
+                            "command": "git commit -m \"feat: add new feature\""
+                        }
+                    }
+                ]
+            }
+        },
+    ]
+    with open(transcript_path, "w") as f:
+        for entry in entries:
+            f.write(json.dumps(entry) + "\n")
+    return transcript_path
+
+
 # =============================================================================
 # Basic Execution Tests
 # =============================================================================
@@ -483,6 +511,129 @@ class TestStopHookBatchCombined:
         # All operations should have been attempted
         assert output["citations_count"] == 1
         assert output["todos_synced"] is True  # Should sync to existing handoff
+
+
+# =============================================================================
+# Git Commit Auto-Completion Tests
+# =============================================================================
+
+
+class TestStopHookBatchGitCommit:
+    """Tests for git commit detection and auto-completion of ready_for_review handoffs."""
+
+    def test_git_commit_detected_in_transcript(
+        self, manager, transcript_with_git_commit, capsys
+    ):
+        """Should detect git commit in Bash tool calls."""
+        from core.commands import StopHookBatchCommand
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript=str(transcript_with_git_commit),
+            citations="",
+            session_id="",
+        )
+
+        cmd = StopHookBatchCommand()
+        cmd.execute(args, manager)
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["git_commit_detected"] is True
+
+    def test_git_commit_auto_completes_ready_for_review_handoff(
+        self, manager, transcript_with_git_commit, capsys
+    ):
+        """Should auto-complete ready_for_review handoffs when git commit detected."""
+        from core.commands import StopHookBatchCommand
+
+        # Create a handoff in ready_for_review status
+        handoff_id = manager.handoff_add(title="Test Feature")
+        manager.handoff_update_status(handoff_id, "ready_for_review")
+
+        # Verify it's ready_for_review
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "ready_for_review"
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript=str(transcript_with_git_commit),
+            citations="",
+            session_id="",
+        )
+
+        cmd = StopHookBatchCommand()
+        cmd.execute(args, manager)
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        assert output["git_commit_detected"] is True
+        assert output["auto_completed"] is True
+
+        # Verify the handoff is now completed
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
+
+    def test_git_commit_does_not_complete_in_progress_handoff(
+        self, manager, transcript_with_git_commit, capsys
+    ):
+        """Should NOT auto-complete in_progress handoffs (only ready_for_review)."""
+        from core.commands import StopHookBatchCommand
+
+        # Create a handoff in in_progress status
+        handoff_id = manager.handoff_add(title="In Progress Feature")
+        manager.handoff_update_status(handoff_id, "in_progress")
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript=str(transcript_with_git_commit),
+            citations="",
+            session_id="",
+        )
+
+        cmd = StopHookBatchCommand()
+        cmd.execute(args, manager)
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        assert output["git_commit_detected"] is True
+        assert output["auto_completed"] is False  # Should NOT auto-complete
+
+        # Verify the handoff is still in_progress
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "in_progress"
+
+    def test_no_git_commit_does_not_auto_complete(
+        self, manager, sample_transcript, capsys
+    ):
+        """Should NOT auto-complete when no git commit in transcript."""
+        from core.commands import StopHookBatchCommand
+
+        # Create a handoff in ready_for_review status
+        handoff_id = manager.handoff_add(title="Test Feature")
+        manager.handoff_update_status(handoff_id, "ready_for_review")
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript=str(sample_transcript),  # No git commit
+            citations="",
+            session_id="",
+        )
+
+        cmd = StopHookBatchCommand()
+        cmd.execute(args, manager)
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+
+        assert output["git_commit_detected"] is False
+        assert output["auto_completed"] is False
+
+        # Verify the handoff is still ready_for_review
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "ready_for_review"
 
 
 # =============================================================================

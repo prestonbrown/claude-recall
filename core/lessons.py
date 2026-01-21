@@ -1360,8 +1360,11 @@ Output ONLY the ID: keywords line, nothing else."""
                     triggers = [t.strip() for t in triggers_str.split(",") if t.strip()]
                     if triggers:
                         return triggers
+        except (ImportError, ModuleNotFoundError):
+            # anthropic not installed - silently skip trigger generation
+            pass
         except Exception as e:
-            # If API fails, return empty - don't block lesson creation
+            # Only warn for actual API failures (not missing dependencies)
             import logging
             logging.warning(f"Failed to generate triggers: {e}")
 

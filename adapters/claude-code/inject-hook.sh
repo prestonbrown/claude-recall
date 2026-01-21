@@ -43,7 +43,7 @@ run_decay_if_due() {
         # Run decay in background so it doesn't slow down session start
         # Try Python first, fall back to bash
         if [[ -f "$PYTHON_MANAGER" ]]; then
-            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" decay 30 >/dev/null 2>&1 &
+            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$PYTHON_BIN" "$PYTHON_MANAGER" decay 30 >/dev/null 2>&1 &
         elif [[ -x "$BASH_MANAGER" ]]; then
             "$BASH_MANAGER" decay 30 >/dev/null 2>&1 &
         fi
@@ -72,7 +72,7 @@ generate_combined_context() {
         combined_output=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
             CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
             CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" inject-combined "$top_n" 2>"$stderr_file")
+            "$PYTHON_BIN" "$PYTHON_MANAGER" inject-combined "$top_n" 2>"$stderr_file")
 
         local exit_code=$?
         if [[ $exit_code -eq 0 && -n "$combined_output" ]]; then
@@ -90,7 +90,7 @@ generate_combined_context() {
             error_msg=$(cat "$stderr_file" 2>/dev/null | head -c 500)
             PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
                 CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-                python3 "$PYTHON_MANAGER" debug log-error \
+                "$PYTHON_BIN" "$PYTHON_MANAGER" debug log-error \
                 "inject_combined_failed" "exit=$exit_code: $error_msg" 2>/dev/null &
         fi
         rm -f "$stderr_file" 2>/dev/null
@@ -110,7 +110,7 @@ generate_context_fallback() {
         LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
             CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
             CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" inject "$top_n" 2>/dev/null || true)
+            "$PYTHON_BIN" "$PYTHON_MANAGER" inject "$top_n" 2>/dev/null || true)
     fi
     if [[ -z "$LESSONS_SUMMARY_RAW" && -x "$BASH_MANAGER" ]]; then
         LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" inject "$top_n" 2>/dev/null || true)
@@ -121,7 +121,7 @@ generate_context_fallback() {
         HANDOFFS_SUMMARY=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
             CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
             CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
+            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
         if [[ "$HANDOFFS_SUMMARY" == "(no active handoffs)" ]]; then
             HANDOFFS_SUMMARY=""
         fi
@@ -131,7 +131,7 @@ generate_context_fallback() {
     if [[ -n "$HANDOFFS_SUMMARY" && -f "$PYTHON_MANAGER" ]]; then
         TODOS_PROMPT=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
             CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-            python3 "$PYTHON_MANAGER" handoff inject-todos 2>/dev/null || true)
+            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff inject-todos 2>/dev/null || true)
     fi
 }
 
@@ -268,7 +268,8 @@ HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
   MINOR = single-file fix, config, docs (no handoff needed)
   COMPLETION: When all todos done in this session:
     - If code changed, run /review
-    - Commit your changes (auto-completes the handoff)
+    - ASK: \"Any lessons from this work?\" (context is fresh now!)
+    - Commit your changes (git commit auto-completes the handoff)
     - Or manually: HANDOFF COMPLETE <id>"
 
         # Add todo continuation if available
@@ -306,7 +307,7 @@ $todo_continuation"
             PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
                 CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
                 CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-                python3 "$PYTHON_MANAGER" debug injection-budget \
+                "$PYTHON_BIN" "$PYTHON_MANAGER" debug injection-budget \
                 "$total_tokens" "$lessons_tokens" "$handoffs_tokens" "$duties_tokens" \
                 >/dev/null 2>&1 &
         fi
