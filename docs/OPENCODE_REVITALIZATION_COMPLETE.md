@@ -22,7 +22,7 @@ All 7 phases of the OpenCode adapter revitalization plan have been successfully 
 - 2 tests PASS (Phase 1 specific), others expected to fail (Phase 2 features)
 
 ### Phase 2: Configuration System ✅
-- Implemented config loading from `~/.config/opencode/opencode.json`
+- Implemented config loading from `~/.config/claude-recall/config.json`
 - Added fast model detection with quality filtering (tool_call + reasoning)
 - Integrated config and model detection into plugin initialization
 - All 8 tests PASS
@@ -117,7 +117,7 @@ All 7 phases of the OpenCode adapter revitalization plan have been successfully 
 
 **Infrastructure** ✅
 - Test infrastructure complete (76+ tests)
-- Configuration system reads from opencode.json
+- Configuration system reads from config.json
 - Documentation updated (README, DEPLOYMENT, CLAUDE.md)
 - Install script verified
 
@@ -152,27 +152,25 @@ All 7 phases of the OpenCode adapter revitalization plan have been successfully 
 ```
 
 This installs:
-- `~/.config/opencode/plugin/lessons.ts` - Plugin file
+- `~/.config/opencode/plugins/lessons.ts` - Plugin file
 - `~/.config/opencode/command/lessons.md` - /lessons command
 - `~/.config/opencode/command/handoffs.md` - /handoffs command
 - `~/.config/opencode/AGENTS.md` - Global instructions
 
 ## Configuration
 
-Edit `~/.config/opencode/opencode.json`:
+Edit `~/.config/claude-recall/config.json`:
 
 ```json
 {
-  "claudeRecall": {
-    "enabled": true,
-    "topLessonsToShow": 5,
-    "relevanceTopN": 5,
-    "remindEvery": 12,
-    "promotionThreshold": 50,
-    "decayIntervalDays": 7,
-    "debugLevel": 1,
-    "small_model": "claude-3-5-haiku-latest"
-  }
+  "enabled": true,
+  "topLessonsToShow": 5,
+  "relevanceTopN": 5,
+  "remindEvery": 12,
+  "promotionThreshold": 50,
+  "decayIntervalDays": 7,
+  "debugLevel": 1,
+  "small_model": "claude-3-5-haiku-latest"
 }
 ```
 

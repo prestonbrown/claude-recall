@@ -57,18 +57,16 @@ The OpenCode adapter provides the same learning capabilities as the Claude Code 
 
 ### Configuration
 
-Create or edit `~/.config/opencode/opencode.json`:
+Create or edit `~/.config/claude-recall/config.json`:
 
 ```json
 {
-  "claudeRecall": {
-    "enabled": true,
-    "topLessonsToShow": 5,
-    "relevanceTopN": 5,
-    "remindEvery": 12,
-    "decayIntervalDays": 7,
-    "debugLevel": 1
-  }
+  "enabled": true,
+  "topLessonsToShow": 5,
+  "relevanceTopN": 5,
+  "remindEvery": 12,
+  "decayIntervalDays": 7,
+  "debugLevel": 1
 }
 ```
 
@@ -268,6 +266,7 @@ LESSON: category: title - content    # Add with category
 
 ```bash
 CLAUDE_RECALL_BASE=~/.config/claude-recall    # System lessons location (preferred)
+CLAUDE_RECALL_CONFIG=~/.config/claude-recall/config.json  # Shared config override
 RECALL_BASE=~/.config/claude-recall           # Legacy alias
 LESSONS_BASE=~/.config/claude-recall          # Legacy alias
 PROJECT_DIR=/path/to/project                  # Project root
@@ -286,21 +285,27 @@ export CLAUDE_RECALL_DEBUG=1   # 0=off, 1=info, 2=debug, 3=trace
 
 Logs written to `~/.local/state/claude-recall/debug.log` (XDG state directory).
 
-### Claude Code Settings
+### Claude Recall Settings
+
+In `~/.config/claude-recall/config.json`:
+```json
+{
+  "enabled": true,
+  "debugLevel": 0,
+  "remindEvery": 12,
+  "topLessonsToShow": 5,
+  "relevanceTopN": 5,
+  "promotionThreshold": 50,
+  "decayIntervalDays": 7,
+  "maxLessons": 30
+}
+```
+
+### Claude Code Hooks
 
 In `~/.claude/settings.json`:
 ```json
 {
-  "claudeRecall": {
-    "enabled": true,
-    "debugLevel": 0,
-    "remindEvery": 12,
-    "topLessonsToShow": 5,
-    "relevanceTopN": 5,
-    "promotionThreshold": 50,
-    "decayIntervalDays": 7,
-    "maxLessons": 30
-  },
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-hook.sh"}]}],
     "UserPromptSubmit": [{"hooks": [

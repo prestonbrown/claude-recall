@@ -23,7 +23,7 @@
 
 ### Critical Issues Identified
 1. **Manager Path Error** (Line 11): References `~/.config/coding-agent-lessons/lessons-manager.sh` (old path)
-2. **No Config System**: Doesn't read from `opencode.json`
+2. **No Config System**: Doesn't read from `config.json`
 3. **No Model Detection**: Assumes Haiku available (not always true)
 4. **Missing Features** (~60% of Claude Code adapter):
    - ❌ Smart injection (relevance scoring on first prompt)
@@ -77,7 +77,7 @@
 
 4. **Infrastructure** (Foundational)
    - [ ] Test infrastructure complete (76+ tests)
-   - [ ] Configuration system reads from `opencode.json`
+   - [ ] Configuration system reads from `config.json`
    - [ ] Documentation updated (README, DEPLOYMENT)
    - [ ] Install script verified
 
@@ -119,7 +119,7 @@ Create foundational test framework for OpenCode adapter. All subsequent phases w
 - [ ] `temp_lessons_base(tmp_path)` - Creates lessons directory with LESSONS.md
 - [ ] `temp_state_dir(tmp_path)` - Creates state directory
 - [ ] `temp_project_root(tmp_path)` - Creates project with .git and .claude-recall
-- [ ] `temp_opencode_config(tmp_path)` - Creates opencode.json with claudeRecall key
+- [ ] `temp_opencode_config(tmp_path)` - Creates config.json with config key
 - [ ] `mock_providers()` - Mock provider.list() response for model detection
 - [ ] All fixtures follow existing patterns from `tests/conftest.py`
 
@@ -146,16 +146,16 @@ Create foundational test framework for OpenCode adapter. All subsequent phases w
   - **Input**: Read `adapters/opencode/command/lessons.md`
   - **Output**: PASS when fixed in Phase 1.3
 
-- [ ] Test 1.3: `test_config_reads_claudeRecall_key_from_opencode_json()`
-  - **Purpose**: Verify config reading from opencode.json
-  - **Expected**: Config reads `claudeRecall.enabled`, `claudeRecall.topLessonsToShow`
-  - **Input**: Create temp opencode.json, mock config loading
+- [ ] Test 1.3: `test_config_reads_from_shared_config_json()`
+  - **Purpose**: Verify config reading from config.json
+  - **Expected**: Config reads `config.enabled`, `config.topLessonsToShow`
+  - **Input**: Create temp config.json, mock config loading
   - **Output**: PASS when implemented in Phase 2.2
 
 - [ ] Test 1.4: `test_config_merges_with_defaults()`
-  - **Purpose**: Verify opencode.json merges with defaults
+  - **Purpose**: Verify config.json merges with defaults
   - **Expected**: Custom value overrides default, other defaults preserved
-  - **Input**: Create opencode.json with partial config
+  - **Input**: Create config.json with partial config
   - **Output**: PASS when implemented in Phase 2.2
 
 - [ ] Test 1.5: `test_detects_fast_model_from_providers()`
@@ -167,7 +167,7 @@ Create foundational test framework for OpenCode adapter. All subsequent phases w
 - [ ] Test 1.6: `test_small_model_config_overrides_detection()`
   - **Purpose**: Verify small_model config overrides auto-detection
   - **Expected**: Returns configured model if available
-  - **Input**: Set small_model in opencode.json, mock providers
+  - **Input**: Set small_model in config.json, mock providers
   - **Output**: PASS when implemented in Phase 2.4
 
 - [ ] Test 1.7: `test_filters_out_bad_models()`
@@ -293,7 +293,7 @@ Fix three critical issues that block all other features:
   2. Ensure `plugin/` and `command/` subdirectories created
   3. Copy correct files from `adapters/opencode/`
   4. Append to `AGENTS.md` (not overwrite)
-  5. Create placeholder `opencode.json` if missing
+  5. Create placeholder `config.json` if missing
 - [ ] **Implementation details**:
   ```bash
   install_opencode() {
@@ -345,7 +345,7 @@ Fix three critical issues that block all other features:
   ```
 - [ ] **Test verification**: Manual install test
   - Run: `./install.sh --opencode` in temp env
-  - Verify: `~/.config/opencode/plugin/lessons.ts` exists
+  - Verify: `~/.config/opencode/plugins/lessons.ts` exists
   - Verify: `~/.config/opencode/command/lessons.md` exists
   - Verify: `~/.config/opencode/AGENTS.md` contains Claude Recall section
 
@@ -372,7 +372,7 @@ REVIEW POINT: After all tasks complete, review each file change and verify tests
 ### Phase 2: Configuration System (Week 1-2)
 
 #### Overview
-Implement configuration system that reads from `opencode.json`, merges with defaults, and provides fast model detection without assuming Haiku availability.
+Implement configuration system that reads from `config.json`, merges with defaults, and provides fast model detection without assuming Haiku availability.
 
 #### Deliverables
 - [ ] Config loading function in `plugin.ts` (~50 lines)
@@ -416,18 +416,17 @@ Implement configuration system that reads from `opencode.json`, merges with defa
   };
   
   function loadConfig(): Config {
-    const opencodeConfig = join(homedir(), '.config', 'opencode', 'opencode.json');
+    const configPath = join(homedir(), '.config', 'claude-recall', 'config.json');
     
-    if (!existsSync(opencodeConfig)) {
-      console.warn('[claude-recall] No opencode.json found, using defaults');
+    if (!existsSync(configPath)) {
+      console.warn('[claude-recall] No config.json found, using defaults');
       return DEFAULT_CONFIG;
     }
     
     try {
-      const config = JSON.parse(readFileSync(opencodeConfig, 'utf8'));
-      const claudeRecall = config.claudeRecall || {};
+      const configValues = JSON.parse(readFileSync(configPath, 'utf8'));
       
-      const merged = { ...DEFAULT_CONFIG, ...claudeRecall };
+      const merged = { ...DEFAULT_CONFIG, ...configValues };
       
       if (merged.debugLevel >= 2) {
         console.log('[claude-recall] Loaded config:', merged);
@@ -442,7 +441,7 @@ Implement configuration system that reads from `opencode.json`, merges with defa
   
   const CONFIG = loadConfig();
   ```
-- [ ] **Test verification**: `test_config_reads_claudeRecall_key_from_opencode_json` should PASS
+- [ ] **Test verification**: `test_config_reads_from_shared_config_json` should PASS
 - [ ] **Test verification**: `test_config_merges_with_defaults` should PASS
 
 **Task 2.2: Add Fast Model Detection**
@@ -591,14 +590,14 @@ Implement configuration system that reads from `opencode.json`, merges with defa
 ```
 DELEGATE TO: general-purpose agent
 SCOPE: Implement Phase 2 tasks 2.1-2.3
-CONTEXT: "Implement configuration system for OpenCode adapter: 1) Add loadConfig() function that reads ~/.config/opencode/opencode.json, parses claudeRecall key, merges with DEFAULT_CONFIG from plugins/claude-recall/config.json. 2) Add detectFastModel() function that queries OpenCode's client.provider.list(), filters for models with tool_call=true AND reasoning=true, prefers PREFERRED_MODELS in order, falls back to first quality model. 3) Integrate config and model detection into plugin initialization. Follow exact code specifications in the plan. All changes should make existing Phase 2 tests PASS."
+CONTEXT: "Implement configuration system for OpenCode adapter: 1) Add loadConfig() function that reads ~/.config/claude-recall/config.json, parses config key, merges with DEFAULT_CONFIG from plugins/claude-recall/config.json. 2) Add detectFastModel() function that queries OpenCode's client.provider.list(), filters for models with tool_call=true AND reasoning=true, prefers PREFERRED_MODELS in order, falls back to first quality model. 3) Integrate config and model detection into plugin initialization. Follow exact code specifications in the plan. All changes should make existing Phase 2 tests PASS."
 REVIEW POINT: After all tasks complete, review config loading and model detection logic, verify tests pass, and verify plugin initializes correctly before proceeding to Phase 3.
 ```
 
 #### Review Checklist (After Phase 2)
-- [ ] Config loads from correct path (`~/.config/opencode/opencode.json`)
+- [ ] Config loads from correct path (`~/.config/claude-recall/config.json`)
 - [ ] Config merges with defaults correctly
-- [ ] `claudeRecall` key parsed properly
+- [ ] `config` key parsed properly
 - [ ] Model detection queries `client.provider.list()`
 - [ ] Quality filtering works (tool_call + reasoning)
 - [ ] Preferred models checked in order

@@ -81,9 +81,9 @@ Stop hook parses these from agent output:
 Claude Recall is also available as an OpenCode plugin. Installation and configuration differ slightly:
 
 - **Installation**: `./install.sh --opencode`
-- **Configuration**: `~/.config/opencode/opencode.json`
-- **Plugin source**: `adapters/opencode/plugin.ts` → installed to `~/.config/opencode/plugin/lessons.ts`
-- **CLI**: `python3 ~/.config/claude-recall/core/cli.py`
+- **Configuration**: `~/.config/claude-recall/config.json`
+- **Plugin source**: `adapters/opencode/plugin.ts` → installed to `~/.config/opencode/plugins/lessons.ts`
+- **CLI**: `claude-recall`
 - **Commands**: `/lessons`, `/handoffs`
 
 **Development workflow:**
@@ -98,7 +98,7 @@ vim adapters/opencode/plugin.ts
 opencode
 ```
 
-The install copies `adapters/opencode/plugin.ts` → `~/.config/opencode/plugin/lessons.ts`. There's no TypeScript compilation step - OpenCode loads `.ts` files directly via its plugin system.
+The install copies `adapters/opencode/plugin.ts` → `~/.config/opencode/plugins/lessons.ts`. There's no TypeScript compilation step - OpenCode loads `.ts` files directly via its plugin system.
 
 **Gotchas:**
 - **Never block plugin initialization** - OpenCode plugins are async functions that must return quickly. Blocking calls (like `await client.provider.list()`) during init will hang the entire UI. Use fire-and-forget patterns (`.then()`) for slow operations.
