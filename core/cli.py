@@ -379,7 +379,7 @@ def main():
 
     # config command - read settings for shell scripts
     config_parser = subparsers.add_parser("config", help="Get configuration value")
-    config_parser.add_argument("key", help="Config key (dot notation, e.g., claudeRecall.debugLevel)")
+    config_parser.add_argument("key", help="Config key (dot notation, e.g., debugLevel)")
     config_parser.add_argument("--default", "-d", default="", help="Default value if key not found")
     config_parser.add_argument(
         "--type", "-t",
