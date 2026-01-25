@@ -65,12 +65,12 @@ def temp_project_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def temp_opencode_config(tmp_path: Path) -> Path:
-    """Create a temporary OpenCode config directory with opencode.json."""
-    opencode_dir = tmp_path / ".config" / "opencode"
-    opencode_dir.mkdir(parents=True)
-    config_file = opencode_dir / "opencode.json"
-    config_file.write_text('{"claudeRecall": {"enabled": true}}')
-    return opencode_dir
+    """Create a temporary Claude Recall config directory with config.json."""
+    recall_dir = tmp_path / ".config" / "claude-recall"
+    recall_dir.mkdir(parents=True)
+    config_file = recall_dir / "config.json"
+    config_file.write_text('{"enabled": true}')
+    return recall_dir
 
 
 @pytest.fixture
@@ -307,9 +307,9 @@ class TestPhase1CriticalFixes:
         assert "~/.claude/plugins/cache/" not in lessons_content, \
             "/lessons docs still reference Claude Code paths"
 
-        # Should contain python3 for direct CLI calls
-        assert "python3" in lessons_content, \
-            "/lessons docs should use python3 for CLI calls"
+        # Should contain claude-recall wrapper
+        assert "claude-recall" in lessons_content, \
+            "/lessons docs should use claude-recall wrapper"
 
     @pytest.fixture
     def config_env(self, tmp_path, temp_lessons_base, temp_project_root):
@@ -324,10 +324,10 @@ class TestPhase1CriticalFixes:
             "PROJECT_DIR": str(temp_project_root),
         }
 
-    def test_config_reads_claudeRecall_key_from_opencode_json(self, config_env, tmp_path):
-        """Verify config reading from opencode.json.
+    def test_config_reads_from_shared_config_json(self, config_env, tmp_path):
+        """Verify config reading from shared config.json.
 
-        Expected: Config reads claudeRecall.enabled, claudeRecall.topLessonsToShow.
+        Expected: Config reads enabled and topLessonsToShow from config.json.
 
         This test will PASS when config loading is implemented in Phase 2.1.
         """
@@ -342,14 +342,13 @@ class TestPhase1CriticalFixes:
 
         # Should have loadConfig function
         assert "function loadConfig()" in plugin_content, "Plugin should have loadConfig function"
-        assert "opencode.json" in plugin_content, "Plugin should read from opencode.json"
-        assert "claudeRecall" in plugin_content, "Plugin should parse claudeRecall key"
+        assert "config.json" in plugin_content, "Plugin should read from shared config.json"
 
-        # Should have CONFIG constant
-        assert "const CONFIG = loadConfig()" in plugin_content, "Plugin should initialize CONFIG constant"
+        # Should have CONFIG initialization
+        assert "CONFIG = loadConfig()" in plugin_content, "Plugin should initialize CONFIG from loadConfig"
 
     def test_config_merges_with_defaults(self, config_env, tmp_path):
-        """Verify opencode.json merges with defaults.
+        """Verify shared config.json merges with defaults.
 
         Expected: Custom value overrides default, other defaults preserved.
 
@@ -366,8 +365,8 @@ class TestPhase1CriticalFixes:
         assert "maxLessons: 30" in plugin_content, "DEFAULT_CONFIG should have maxLessons=30"
         assert "topLessonsToShow: 5" in plugin_content, "DEFAULT_CONFIG should have topLessonsToShow=5"
 
-        # Should merge claudeRecall with defaults
-        assert "...DEFAULT_CONFIG, ...claudeRecall" in plugin_content, "Plugin should merge claudeRecall with DEFAULT_CONFIG"
+        # Should merge config values with defaults
+        assert "...DEFAULT_CONFIG, ...configValues" in plugin_content, "Plugin should merge configValues with DEFAULT_CONFIG"
 
     def test_detects_fast_model_from_providers(self, mock_providers):
         """Verify fast model detection from providers.
@@ -465,16 +464,15 @@ class TestPhase1CriticalFixes:
         plugin_content = plugin_path.read_text()
 
         # Plugin function should call detectFastModel
-        assert "await detectFastModel(client, CONFIG.small_model)" in plugin_content, \
+        assert "detectFastModel(client, CONFIG.small_model)" in plugin_content, \
             "Plugin should call detectFastModel at initialization"
 
         # Should handle case when no fast model available
-        assert ("console.warn" in plugin_content or "log('warn'" in plugin_content or \
-                'log("warn"' in plugin_content), \
+        assert ("plugin.no_fast_model" in plugin_content or "plugin.model_detection_failed" in plugin_content), \
             "Plugin should warn when no fast model available"
 
         # Should store fastModel result
-        assert "const fastModel = await detectFastModel" in plugin_content, \
+        assert "cachedFastModel = model" in plugin_content, \
             "Plugin should store fastModel result"
 
 
@@ -854,17 +852,11 @@ class TestPhase4HandoffsSystem:
         handoffs_path = PROJECT_ROOT / "adapters" / "opencode" / "command" / "handoffs.md"
         handoffs_content = handoffs_path.read_text()
 
-        # Should have CLI examples for all main commands
-        assert "python3" in handoffs_content, \
-            "/handoffs docs should have CLI examples"
-        assert "handoff list" in handoffs_content, \
-            "/handoffs docs should document list command"
-        assert "handoff add" in handoffs_content, \
-            "/handoffs docs should document add command"
-        assert "handoff update" in handoffs_content, \
-            "/handoffs docs should document update command"
-        assert "handoff complete" in handoffs_content, \
-            "/handoffs docs should document complete command"
+        # Should include CLI wrapper usage
+        assert "claude-recall handoff" in handoffs_content, \
+            "/handoffs docs should reference CLI wrapper"
+        assert "$ARGUMENTS" in handoffs_content, \
+            "/handoffs docs should pass through arguments"
 
     def test_handoffs_command_documentation_follows_lessons_pattern(self):
         """Verify /handoffs command documentation follows lessons.md pattern.
@@ -874,13 +866,13 @@ class TestPhase4HandoffsSystem:
         handoffs_path = PROJECT_ROOT / "adapters" / "opencode" / "command" / "handoffs.md"
         handoffs_content = handoffs_path.read_text()
 
-        # Should have similar structure to lessons.md
+        # Should have minimal structure with frontmatter and command
         assert "description:" in handoffs_content, \
             "/handoffs docs should have description"
         assert "argument-hint:" in handoffs_content, \
             "/handoffs docs should have argument-hint"
-        assert "#" in handoffs_content, \
-            "/handoffs docs should have headings"
+        assert "Command:" in handoffs_content, \
+            "/handoffs docs should include command section"
 
     def test_handoffs_command_documentation_describes_workflow(self):
         """Verify /handoffs command documentation describes workflow.

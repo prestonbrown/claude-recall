@@ -27,9 +27,11 @@ def temp_claude_home(tmp_path: Path) -> Path:
     projects_dir = claude_home / "projects"
     projects_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create settings.json with lessons enabled
-    settings = claude_home / "settings.json"
-    settings.write_text('{"claudeRecall":{"enabled":true}}')
+    # Create shared config.json with lessons enabled
+    config_dir = tmp_path / ".config" / "claude-recall"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.json"
+    config_file.write_text('{"enabled":true}')
 
     return claude_home
 

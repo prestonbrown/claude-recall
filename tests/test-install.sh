@@ -146,20 +146,18 @@ test_help_option() {
 # =============================================================================
 
 # These tests verify the jq merge logic directly without running the full installer.
-# The merge order should be: defaults < existing config < settings.json migration
+# The merge order should be: defaults < existing config
 
 test_config_merge_preserves_existing() {
     # Test: existing config values should override defaults
 
     local defaults='{"enabled": true, "maxLessons": 30, "debugLevel": 1}'
     local existing='{"debugLevel": 2}'
-    local migration='{}'
 
     local result
-    result=$(jq -s '.[0] * .[1] * .[2]' \
+    result=$(jq -s '.[0] * .[1]' \
         <(echo "$defaults") \
-        <(echo "$existing") \
-        <(echo "$migration"))
+        <(echo "$existing"))
 
     local debug_level
     debug_level=$(echo "$result" | jq -r '.debugLevel')
@@ -175,13 +173,11 @@ test_config_merge_with_new_defaults() {
 
     local defaults='{"enabled": true, "maxLessons": 30, "newField": "default", "debugLevel": 1}'
     local existing='{"debugLevel": 2}'
-    local migration='{}'
 
     local result
-    result=$(jq -s '.[0] * .[1] * .[2]' \
+    result=$(jq -s '.[0] * .[1]' \
         <(echo "$defaults") \
-        <(echo "$existing") \
-        <(echo "$migration"))
+        <(echo "$existing"))
 
     local debug_level new_field
     debug_level=$(echo "$result" | jq -r '.debugLevel')
@@ -191,41 +187,16 @@ test_config_merge_with_new_defaults() {
     assert_eq "default" "$new_field" "New default field should be added"
 }
 
-test_config_merge_settings_json_migration() {
-    # Test: settings.json migration takes precedence over existing config
-
-    local defaults='{"enabled": true, "maxLessons": 30, "debugLevel": 1}'
-    local existing='{"debugLevel": 2}'
-    local migration='{"maxLessons": 50}'
-
-    local result
-    result=$(jq -s '.[0] * .[1] * .[2]' \
-        <(echo "$defaults") \
-        <(echo "$existing") \
-        <(echo "$migration"))
-
-    local max_lessons debug_level
-    max_lessons=$(echo "$result" | jq -r '.maxLessons')
-    debug_level=$(echo "$result" | jq -r '.debugLevel')
-
-    # maxLessons from settings.json (50) should override default (30)
-    assert_eq "50" "$max_lessons" "settings.json migration should take precedence"
-    # debugLevel from existing config (2) should be preserved (not in migration)
-    assert_eq "2" "$debug_level" "Existing config values not in migration should be preserved"
-}
-
 test_config_merge_fresh_install() {
     # Test: fresh install with no existing config should use defaults
 
     local defaults='{"enabled": true, "maxLessons": 30, "debugLevel": 1}'
     local existing='{}'
-    local migration='{}'
 
     local result
-    result=$(jq -s '.[0] * .[1] * .[2]' \
+    result=$(jq -s '.[0] * .[1]' \
         <(echo "$defaults") \
-        <(echo "$existing") \
-        <(echo "$migration"))
+        <(echo "$existing"))
 
     local debug_level
     debug_level=$(echo "$result" | jq -r '.debugLevel')
@@ -233,24 +204,22 @@ test_config_merge_fresh_install() {
 }
 
 test_config_merge_priority_order() {
-    # Test: priority is defaults < existing < settings.json
+    # Test: priority is defaults < existing
 
     local defaults='{"enabled": true, "maxLessons": 30, "debugLevel": 1}'
     local existing='{"debugLevel": 2, "maxLessons": 25}'
-    local migration='{"debugLevel": 3}'
 
     local result
-    result=$(jq -s '.[0] * .[1] * .[2]' \
+    result=$(jq -s '.[0] * .[1]' \
         <(echo "$defaults") \
-        <(echo "$existing") \
-        <(echo "$migration"))
+        <(echo "$existing"))
 
     local debug_level max_lessons
     debug_level=$(echo "$result" | jq -r '.debugLevel')
     max_lessons=$(echo "$result" | jq -r '.maxLessons')
 
-    # Priority: defaults (1) < existing (2) < settings.json (3)
-    assert_eq "3" "$debug_level" "settings.json migration should have highest priority"
+    # Priority: defaults (1) < existing (2)
+    assert_eq "2" "$debug_level" "Existing config value should override default"
     assert_eq "25" "$max_lessons" "Existing config value should override default"
 }
 
@@ -312,46 +281,14 @@ test_config_merge_variable_with_closing_brace() {
         saved_config="{}"
     fi
 
-    local migration='{}'
-
     local result
-    result=$(jq -s '.[0] * .[1] * .[2]' \
+    result=$(jq -s '.[0] * .[1]' \
         <(echo "$defaults") \
-        <(echo "$saved_config") \
-        <(echo "$migration"))
+        <(echo "$saved_config"))
 
     local debug_level
     debug_level=$(echo "$result" | jq -r '.debugLevel')
     assert_eq "2" "$debug_level" "Variable containing JSON with } should merge correctly"
-}
-
-test_config_backup_persists_across_runs() {
-    # Test: backup file should persist so re-runs after failure use original config
-
-    local backup_file="/tmp/test-claude-recall-config-backup.json"
-    rm -f "$backup_file"
-
-    # First "run" - save config to backup
-    echo '{"debugLevel": 2, "customField": "value"}' > "$backup_file"
-
-    # Simulate re-run: backup exists, should use it
-    local defaults='{"enabled": true, "debugLevel": 1}'
-    local migration='{}'
-
-    local result
-    result=$(jq -s '.[0] * .[1] * .[2]' \
-        <(echo "$defaults") \
-        "$backup_file" \
-        <(echo "$migration"))
-
-    local debug_level custom_field
-    debug_level=$(echo "$result" | jq -r '.debugLevel')
-    custom_field=$(echo "$result" | jq -r '.customField')
-
-    assert_eq "2" "$debug_level" "Backup should preserve debugLevel across failed installs"
-    assert_eq "value" "$custom_field" "Backup should preserve custom fields across failed installs"
-
-    rm -f "$backup_file"
 }
 
 # =============================================================================
@@ -369,12 +306,10 @@ main() {
     # Config preservation (plugin-based installation)
     run_test "config merge preserves existing" test_config_merge_preserves_existing
     run_test "config merge with new defaults" test_config_merge_with_new_defaults
-    run_test "config merge settings.json migration" test_config_merge_settings_json_migration
     run_test "config merge fresh install" test_config_merge_fresh_install
     run_test "config merge priority order" test_config_merge_priority_order
     run_test "config merge multiline JSON" test_config_merge_multiline_json
     run_test "config merge variable with closing brace" test_config_merge_variable_with_closing_brace
-    run_test "config backup persists across runs" test_config_backup_persists_across_runs
     
     echo ""
     echo -e "${YELLOW}=== Test Results ===${NC}"

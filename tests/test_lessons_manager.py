@@ -1723,11 +1723,12 @@ class TestReminderHook:
         home = Path(isolated_subprocess_env["HOME"])
 
         # Create config with custom remindEvery
-        config_dir = home / ".claude"
-        config_dir.mkdir()
-        config_file = config_dir / "settings.json"
+        config_dir = home / ".config" / "claude-recall"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_file = config_dir / "config.json"
         config_file.write_text(json.dumps({
-            "claudeRecall": {"enabled": True, "remindEvery": 3}
+            "enabled": True,
+            "remindEvery": 3
         }))
 
         # Create state file at count 2 (next will be 3, triggering reminder)
@@ -1763,10 +1764,10 @@ class TestReminderHook:
         home = Path(isolated_subprocess_env["HOME"])
 
         # Config says remind every 100
-        config_dir = home / ".claude"
-        config_dir.mkdir()
-        (config_dir / "settings.json").write_text(json.dumps({
-            "claudeRecall": {"remindEvery": 100}
+        config_dir = home / ".config" / "claude-recall"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.json").write_text(json.dumps({
+            "remindEvery": 100
         }))
 
         # State at count 4, env says remind every 5
