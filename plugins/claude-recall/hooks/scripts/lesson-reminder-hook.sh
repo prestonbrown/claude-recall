@@ -18,13 +18,13 @@ LESSONS_BASE="$CLAUDE_RECALL_BASE"
 LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
 
 STATE_FILE="$CLAUDE_RECALL_BASE/.reminder-state"
-CONFIG_FILE="$HOME/.claude/settings.json"
+CONFIG_FILE="${CLAUDE_RECALL_CONFIG:-$HOME/.config/claude-recall/config.json}"
 
 # Priority: env var > config file > default (12)
 if [[ -n "${LESSON_REMIND_EVERY:-}" ]]; then
   REMIND_EVERY="$LESSON_REMIND_EVERY"
 elif [[ -f "$CONFIG_FILE" ]]; then
-  REMIND_EVERY=$(jq -r '.claudeRecall.remindEvery // 12' "$CONFIG_FILE" 2>/dev/null || echo 12)
+  REMIND_EVERY=$(jq -r '.remindEvery // 12' "$CONFIG_FILE" 2>/dev/null || echo 12)
 else
   REMIND_EVERY=12
 fi

@@ -121,83 +121,32 @@ migrate_old_locations() {
     fi
 }
 
-# Persistent temp file for config - survives failed installs
-CONFIG_BACKUP_FILE="/tmp/claude-recall-config-backup.json"
-
-# Save existing config.json BEFORE plugin install overwrites it
-# Uses persistent temp file so re-runs after failure still have original config
-save_existing_config() {
-    # If backup already exists from a previous failed run, keep it
-    if [[ -f "$CONFIG_BACKUP_FILE" ]]; then
-        log_info "Using saved config from previous install attempt"
-        return 0
-    fi
-
-    local install_path
-    install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
-        "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
-
-    if [[ -n "$install_path" && -f "$install_path/config.json" ]]; then
-        cp "$install_path/config.json" "$CONFIG_BACKUP_FILE"
-        log_info "Saved existing config.json for preservation"
-    fi
-}
-
-# Merge configs after plugin install: defaults < saved config < settings.json migration
+# Ensure shared config.json exists and is up to date
 merge_config() {
-    log_info "Merging configuration..."
+    log_info "Ensuring shared configuration..."
 
-    # Find the installed plugin path
-    local install_path
-    install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
-        "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
-
-    if [[ -z "$install_path" || ! -d "$install_path" ]]; then
-        log_warn "Could not find installed plugin path, skipping config merge"
-        return 0
-    fi
-
-    local config_file="$install_path/config.json"
+    local config_dir="$HOME/.config/claude-recall"
+    local config_file="$config_dir/config.json"
     local default_config="$SCRIPT_DIR/plugins/claude-recall/config.json"
 
-    # Get settings.json migration data (if any)
-    local settings="$HOME/.claude/settings.json"
-    local settings_migration="{}"
-    if [[ -f "$settings" ]]; then
-        local has_recall
-        has_recall=$(jq -r 'has("claudeRecall")' "$settings" 2>/dev/null || echo "false")
-        if [[ "$has_recall" == "true" ]]; then
-            settings_migration=$(jq '.claudeRecall // {}' "$settings")
-            log_info "Found claudeRecall settings in settings.json to migrate"
-        fi
+    mkdir -p "$config_dir"
+
+    if [[ ! -f "$default_config" ]]; then
+        log_warn "Default config.json not found, skipping config creation"
+        return 0
     fi
 
-    # Merge order: defaults < saved existing config < settings.json migration
-    # This preserves user customizations while allowing migration from old format
-    if [[ -f "$default_config" ]]; then
-        local has_backup=false
-        if [[ -f "$CONFIG_BACKUP_FILE" ]]; then
-            has_backup=true
-            jq -s '.[0] * .[1] * .[2]' \
-                "$default_config" \
-                "$CONFIG_BACKUP_FILE" \
-                <(echo "$settings_migration") \
-                > "$config_file.tmp"
+    if [[ -f "$config_file" ]]; then
+        if jq -s '.[0] * .[1]' "$default_config" "$config_file" > "$config_file.tmp" 2>/dev/null; then
+            mv "$config_file.tmp" "$config_file"
+            log_success "Updated config.json with defaults"
         else
-            jq -s '.[0] * .[1]' \
-                "$default_config" \
-                <(echo "$settings_migration") \
-                > "$config_file.tmp"
+            rm -f "$config_file.tmp"
+            log_warn "Could not merge config.json; keeping existing file"
         fi
-        mv "$config_file.tmp" "$config_file"
-
-        if [[ "$has_backup" == "true" ]]; then
-            log_success "Merged config.json (preserved existing customizations)"
-            # Clean up backup after successful merge
-            rm -f "$CONFIG_BACKUP_FILE"
-        else
-            log_success "Created config.json with defaults"
-        fi
+    else
+        cp "$default_config" "$config_file"
+        log_success "Created config.json with defaults"
     fi
 }
 # ============================================================
@@ -471,16 +420,13 @@ install_claude() {
     cleanup_old_hooks
     cleanup_legacy_base
 
-    # Save existing config BEFORE plugin install overwrites it
-    save_existing_config
-
     # Install plugin via marketplace (handles registration and enabling)
     install_plugin
 
     # Sync working directory changes to plugin cache (for local development)
     sync_working_dir
 
-    # Merge configs: defaults < saved existing < settings.json migration
+    # Ensure shared config exists
     merge_config
 
     # Install supporting files
@@ -500,7 +446,7 @@ install_opencode() {
     log_info "Installing OpenCode adapter..."
 
     local opencode_dir="$HOME/.config/opencode"
-    local plugin_dir="$opencode_dir/plugin"
+    local plugin_dir="$opencode_dir/plugins"
     local command_dir="$opencode_dir/command"
 
     mkdir -p "$plugin_dir" "$command_dir"
@@ -520,6 +466,9 @@ install_opencode() {
         cp "$SCRIPT_DIR/adapters/opencode/command/handoffs.md" "$command_dir/"
         log_success "Installed /handoffs command"
     fi
+
+    # Ensure shared config exists
+    merge_config
 
     # Ensure AGENTS.md exists and update Claude Recall section
     local agents_md="$opencode_dir/AGENTS.md"
@@ -559,6 +508,8 @@ A learning system that tracks lessons and handoffs across sessions.
         log_success "Added Claude Recall section to AGENTS.md"
     fi
 
+    install_cli
+
     log_success "Installed OpenCode adapter"
 }
 
@@ -596,6 +547,8 @@ uninstall() {
     rm -f "$HOME/.claude/commands/test-first.md"
 
     # Remove OpenCode adapter
+    rm -f "$HOME/.config/opencode/plugins/lessons.ts"
+    rm -f "$HOME/.config/opencode/plugins/lesson-reminder.ts"
     rm -f "$HOME/.config/opencode/plugin/lessons.ts"
     rm -f "$HOME/.config/opencode/plugin/lesson-reminder.ts"
     rm -f "$HOME/.config/opencode/command/lessons.md"

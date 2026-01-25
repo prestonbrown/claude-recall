@@ -31,7 +31,7 @@ DEBUG_ENV_VAR_LEGACY = "LESSONS_DEBUG"  # Legacy name for backward compat
 LOG_FILE_NAME = "debug.log"
 MAX_LOG_SIZE_MB = 50  # 50MB keeps ~500K events
 MAX_LOG_FILES = 3  # 3 files = 150MB max disk usage
-CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+CLAUDE_RECALL_CONFIG_PATH = Path(os.environ.get("CLAUDE_RECALL_CONFIG", "")) if os.environ.get("CLAUDE_RECALL_CONFIG") else Path.home() / ".config" / "claude-recall" / "config.json"
 
 # Session ID - from environment or generated once per process
 _SESSION_ID: Optional[str] = None
@@ -53,16 +53,18 @@ def _get_session_id() -> str:
 
 
 def _read_settings_debug_level() -> Optional[int]:
-    """Read debugLevel from ~/.claude/settings.json if it exists.
+    """Read debugLevel from ~/.config/claude-recall/config.json if it exists.
 
     Returns None if file doesn't exist or debugLevel isn't set.
     """
     try:
-        if not CLAUDE_SETTINGS_PATH.exists():
+        if not CLAUDE_RECALL_CONFIG_PATH.exists():
             return None
-        with open(CLAUDE_SETTINGS_PATH) as f:
+        with open(CLAUDE_RECALL_CONFIG_PATH) as f:
             settings = json.load(f)
-        level = settings.get("claudeRecall", {}).get("debugLevel")
+        if not isinstance(settings, dict):
+            return None
+        level = settings.get("debugLevel")
         if level is not None:
             return int(level)
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
@@ -75,7 +77,7 @@ def _get_debug_level() -> int:
 
     Checks in order of precedence:
     1. CLAUDE_RECALL_DEBUG env var (temporary override)
-    2. claudeRecall.debugLevel in ~/.claude/settings.json
+    2. debugLevel in ~/.config/claude-recall/config.json
     3. Default: 1
     """
     # Check env vars first (highest precedence)
@@ -91,7 +93,7 @@ def _get_debug_level() -> int:
             # Treat any non-numeric truthy value as level 1
             return 1 if env_level.lower() in ("true", "yes", "on") else 0
 
-    # Check settings.json
+    # Check config.json
     settings_level = _read_settings_debug_level()
     if settings_level is not None:
         return settings_level

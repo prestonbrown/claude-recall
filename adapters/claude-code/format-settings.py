@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Format settings.json to match the user's preferred style."""
+"""Format config.json to match the user's preferred style."""
 import json
 import sys
 
@@ -74,7 +74,7 @@ def format_settings(data):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: format-settings.py <settings.json>", file=sys.stderr)
+        print("Usage: format-settings.py <config.json>", file=sys.stderr)
         sys.exit(1)
 
     with open(sys.argv[1]) as f:

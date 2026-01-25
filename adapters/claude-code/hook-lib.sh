@@ -9,13 +9,13 @@
 # Functions provided:
 #   setup_env()         - Environment variable resolution + legacy exports
 #   find_python_manager() - Locate core/cli.py with fallback chain
-#   load_debug_level()  - Read from env > settings.json > default
+#   load_debug_level()  - Read from env > config.json > default
 #   get_ms()            - Get current time in milliseconds
 #   log_phase()         - Log timing for a phase
 #   log_hook_end()      - Log total hook timing
 #   find_project_root() - Git root detection
 #   get_git_ref()       - Current git ref (short hash)
-#   is_enabled()        - Check settings.json for claudeRecall.enabled
+#   is_enabled()        - Check config.json for enabled flag
 
 # Guard against double-sourcing
 [[ -n "${HOOK_LIB_LOADED:-}" ]] && return 0
@@ -42,7 +42,7 @@ setup_env() {
     CLAUDE_RECALL_BASE="${CLAUDE_RECALL_BASE:-${RECALL_BASE:-${LESSONS_BASE:-$HOME/.config/claude-recall}}}"
     CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
 
-    # Load debug level (env var > settings.json > default)
+    # Load debug level (env var > config.json > default)
     load_debug_level
 
     # Export for downstream Python manager and child processes
@@ -64,15 +64,16 @@ setup_env() {
     export BASH_MANAGER
 }
 
-# Load debug level from env var, settings.json, or default to "1"
+# Load debug level from env var, config.json, or default to "1"
 load_debug_level() {
     local _env_debug="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}"
+    local config_path="${CLAUDE_RECALL_CONFIG:-$HOME/.config/claude-recall/config.json}"
 
     if [[ -n "$_env_debug" ]]; then
         CLAUDE_RECALL_DEBUG="$_env_debug"
-    elif [[ -f "$HOME/.claude/settings.json" ]]; then
+    elif [[ -f "$config_path" ]]; then
         local _settings_debug
-        _settings_debug=$(jq -r '.claudeRecall.debugLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
+        _settings_debug=$(jq -r '.debugLevel // empty' "$config_path" 2>/dev/null || true)
         CLAUDE_RECALL_DEBUG="${_settings_debug:-1}"
     else
         CLAUDE_RECALL_DEBUG="1"
@@ -115,15 +116,15 @@ find_python_manager() {
 # SETTINGS HELPERS
 # ============================================================
 
-# Check if Claude Recall is enabled in settings
+# Check if Claude Recall is enabled in config.json
 # Returns 0 (true) if enabled, 1 (false) if disabled
 is_enabled() {
-    local config="$HOME/.claude/settings.json"
+    local config="${CLAUDE_RECALL_CONFIG:-$HOME/.config/claude-recall/config.json}"
     [[ -f "$config" ]] || return 0  # Enabled by default if no config
 
     # Note: jq // operator treats false as falsy, so we check explicitly
     local enabled
-    enabled=$(jq -r '.claudeRecall.enabled' "$config" 2>/dev/null)
+    enabled=$(jq -r '.enabled' "$config" 2>/dev/null)
     [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
 }
 
@@ -132,10 +133,10 @@ is_enabled() {
 get_setting() {
     local key="$1"
     local default="$2"
-    local config="$HOME/.claude/settings.json"
+    local config="${CLAUDE_RECALL_CONFIG:-$HOME/.config/claude-recall/config.json}"
 
     if [[ -f "$config" ]]; then
-        jq -r ".claudeRecall.$key // $default" "$config" 2>/dev/null || echo "$default"
+        jq -r ".$key // $default" "$config" 2>/dev/null || echo "$default"
     else
         echo "$default"
     fi

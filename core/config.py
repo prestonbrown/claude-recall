@@ -11,26 +11,26 @@ from typing import Any, Optional
 
 
 def get_settings_path() -> Path:
-    """Get path to Claude Code settings.json.
+    """Get path to Claude Recall config.json.
 
     Returns:
-        Path to settings.json, respecting CLAUDE_CODE_SETTINGS env var.
+        Path to config.json, respecting CLAUDE_RECALL_CONFIG env var.
     """
-    custom = os.environ.get("CLAUDE_CODE_SETTINGS")
+    custom = os.environ.get("CLAUDE_RECALL_CONFIG")
     if custom:
         return Path(custom)
-    return Path.home() / ".claude" / "settings.json"
+    return Path.home() / ".config" / "claude-recall" / "config.json"
 
 
 def get_setting(key: str, default: Any = None) -> Any:
-    """Get a setting value by dot-notation key.
+    """Get a config value by dot-notation key.
 
     Args:
-        key: Dot-notation key like "claudeRecall.debugLevel"
+        key: Dot-notation key like "debugLevel"
         default: Default value if key not found
 
     Returns:
-        Setting value or default
+        Config value or default
     """
     settings_path = get_settings_path()
 

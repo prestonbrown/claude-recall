@@ -20,20 +20,20 @@ except ImportError:
 # Default values for configurable settings
 DEFAULT_PROMOTION_THRESHOLD = 50
 DEFAULT_MAX_LESSONS = 30
-CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+CLAUDE_RECALL_CONFIG_PATH = Path(os.environ.get("CLAUDE_RECALL_CONFIG", "")) if os.environ.get("CLAUDE_RECALL_CONFIG") else Path.home() / ".config" / "claude-recall" / "config.json"
 
 
 def _read_claude_recall_settings() -> dict:
-    """Read claudeRecall settings from ~/.claude/settings.json.
+    """Read Claude Recall settings from ~/.config/claude-recall/config.json.
 
     Returns dict with settings or empty dict if not available.
     """
     try:
-        if not CLAUDE_SETTINGS_PATH.exists():
+        if not CLAUDE_RECALL_CONFIG_PATH.exists():
             return {}
-        with open(CLAUDE_SETTINGS_PATH) as f:
+        with open(CLAUDE_RECALL_CONFIG_PATH) as f:
             settings = json.load(f)
-        return settings.get("claudeRecall", {})
+        return settings if isinstance(settings, dict) else {}
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         return {}
 
@@ -103,7 +103,7 @@ class LessonsManager(LessonsMixin, HandoffsMixin):
         project_data_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_gitignore(project_data_dir)
 
-        # Read configurable settings from ~/.claude/settings.json
+        # Read configurable settings from ~/.config/claude-recall/config.json
         recall_settings = _read_claude_recall_settings()
         self.promotion_threshold = recall_settings.get(
             "promotionThreshold", DEFAULT_PROMOTION_THRESHOLD
