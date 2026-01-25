@@ -1,1 +1,6 @@
-../../requirements.txt
+# Core dependencies for Claude Recall
+# Install with: pip install -r requirements.txt
+
+# Anthropic SDK - required for trigger generation (auto-generates keywords for lessons)
+# Uses Claude Haiku for fast, low-cost keyword extraction
+anthropic>=0.40.0

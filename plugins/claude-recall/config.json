@@ -6,5 +6,15 @@
   "remindEvery": 12,
   "promotionThreshold": 50,
   "decayIntervalDays": 7,
-  "debugLevel": 1
+  "debugLevel": 1,
+  "claudeRecall": {
+    "alerts": {
+      "enabled": false,
+      "staleHandoffDays": 7,
+      "latencySpikeMultiplier": 2.0,
+      "errorRateThreshold": 0.10,
+      "effectivenessThreshold": 0.30,
+      "webhookUrl": null
+    }
+  }
 }
