@@ -11,8 +11,8 @@
 
 import type { Plugin } from "@opencode-ai/plugin"
 import * as os from "os"
-import { readFileSync, existsSync, appendFileSync, mkdirSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync, appendFileSync, mkdirSync, writeFileSync, readdirSync, accessSync, constants } from 'fs';
+import { join, delimiter, dirname } from 'path';
 import { homedir } from 'os';
 
 interface Config {
@@ -38,32 +38,50 @@ const DEFAULT_CONFIG: Config = {
   debugLevel: 1,
 };
 
-function loadConfig(): Config {
-  const opencodeConfig = join(homedir(), '.config', 'opencode', 'opencode.json');
+let CONFIG: Config | undefined = DEFAULT_CONFIG;
 
-  if (!existsSync(opencodeConfig)) {
+function loadConfig(): Config {
+  const configPath = process.env.CLAUDE_RECALL_CONFIG
+    ? process.env.CLAUDE_RECALL_CONFIG
+    : join(homedir(), '.config', 'claude-recall', 'config.json');
+  const debugEnv = process.env.CLAUDE_RECALL_DEBUG
+    ?? process.env.RECALL_DEBUG
+    ?? process.env.LESSONS_DEBUG;
+
+  const applyDebugOverride = (config: Config): Config => {
+    if (debugEnv === undefined || debugEnv === "") return config;
+    const parsed = Number(debugEnv);
+    if (Number.isNaN(parsed)) {
+      log('warn', 'config.debug_env_invalid', { value: debugEnv });
+      return config;
+    }
+    return { ...config, debugLevel: parsed };
+  };
+
+  if (!existsSync(configPath)) {
     log('warn', 'config.not_found', { using_defaults: true });
-    return DEFAULT_CONFIG;
+    return applyDebugOverride({ ...DEFAULT_CONFIG });
   }
 
   try {
-    const config = JSON.parse(readFileSync(opencodeConfig, 'utf8'));
-    const claudeRecall = config.claudeRecall || {};
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    const configValues = typeof config === 'object' && config ? config : {};
 
-    const merged = { ...DEFAULT_CONFIG, ...claudeRecall };
+    const merged = { ...DEFAULT_CONFIG, ...configValues };
+    const finalConfig = applyDebugOverride(merged);
 
-    if (merged.debugLevel >= 2) {
-      log('debug', 'config.loaded', merged);
+    if (finalConfig.debugLevel >= 2) {
+      log('debug', 'config.loaded', finalConfig);
     }
 
-    return merged;
+    return finalConfig;
   } catch (e) {
     log('error', 'config.load_failed', { error: String(e) });
-    return DEFAULT_CONFIG;
+    return applyDebugOverride({ ...DEFAULT_CONFIG });
   }
 }
 
-const CONFIG = loadConfig();
+CONFIG = loadConfig();
 
 // =============================================================================
 // Debug Logging
@@ -87,7 +105,7 @@ function getDebugLogPath(): string {
 }
 
 function shouldLog(level: LogLevel): boolean {
-  const debugLevel = CONFIG.debugLevel;
+  const debugLevel = CONFIG?.debugLevel ?? DEFAULT_CONFIG.debugLevel;
 
   if (debugLevel === 0) return false;
   if (debugLevel === 1) return level === 'warn' || level === 'error';
@@ -107,7 +125,7 @@ function log(level: LogLevel, event: string, data?: Record<string, any>): void {
 
   try {
     const logPath = getDebugLogPath();
-    const logDir = join(logPath, '..');
+    const logDir = dirname(logPath);
 
     mkdirSync(logDir, { recursive: true });
     appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf8');
@@ -200,21 +218,56 @@ async function detectFastModel(
   }
 }
 
-// Detect Python CLI: installed → legacy → dev
+// Detect CLI: wrapper → installed python → legacy → dev
+function isExecutable(filePath: string): boolean {
+  try {
+    accessSync(filePath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findCliWrapper(): string | null {
+  const pathEnv = process.env.PATH || '';
+  for (const entry of pathEnv.split(delimiter)) {
+    if (!entry) continue;
+    const candidate = join(entry, 'claude-recall');
+    if (isExecutable(candidate)) return candidate;
+  }
+
+  const localBin = join(os.homedir(), '.local', 'bin', 'claude-recall');
+  if (isExecutable(localBin)) return localBin;
+
+  const legacyPlugin = join(os.homedir(), '.claude', 'plugins', 'claude-recall', 'bin', 'claude-recall');
+  if (isExecutable(legacyPlugin)) return legacyPlugin;
+
+  const cacheRoot = join(os.homedir(), '.claude', 'plugins', 'cache', 'claude-recall', 'claude-recall');
+  if (existsSync(cacheRoot)) {
+    const versions = readdirSync(cacheRoot)
+      .filter((entry) => entry && !entry.startsWith('.'))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const latest = versions[versions.length - 1];
+    if (latest) {
+      const cachedWrapper = join(cacheRoot, latest, 'bin', 'claude-recall');
+      if (isExecutable(cachedWrapper)) return cachedWrapper;
+    }
+  }
+
+  return null;
+}
+
 function findPythonManager(): string {
-  const fs = require('fs');
-  const path = require('path');
+  const installed = join(os.homedir(), '.config', 'claude-recall', 'core', 'cli.py');
+  const legacy = join(os.homedir(), '.config', 'claude-recall', 'cli.py');
+  const dev = join(__dirname, '..', '..', 'core', 'cli.py');
 
-  const installed = path.join(os.homedir(), '.config', 'claude-recall', 'core', 'cli.py');
-  const legacy = path.join(os.homedir(), '.config', 'claude-recall', 'cli.py');
-  const dev = path.join(__dirname, '..', '..', 'core', 'cli.py');
-
-  if (fs.existsSync(installed)) return installed;
-  if (fs.existsSync(legacy)) return legacy;
+  if (existsSync(installed)) return installed;
+  if (existsSync(legacy)) return legacy;
   return dev;
 }
 
-const MANAGER = findPythonManager()
+const MANAGER = findCliWrapper() ?? findPythonManager()
 
 /**
  * Sanitize user input for shell commands.
@@ -247,7 +300,66 @@ function isCriticalError(e: unknown): boolean {
          errorStr.includes('No such file or directory');
 }
 
+const CLAUDE_RECALL_COMMANDS = new Set(["lessons", "handoffs"]);
+
+function normalizeCommandName(name: string): string {
+  return name.trim().replace(/^\/+/, "").toLowerCase();
+}
+
+function splitCommandArguments(argumentText: string): string[] {
+  if (!argumentText) return [];
+  return argumentText.trim().split(/\s+/).filter(Boolean);
+}
+
+function parseCommandText(text: string): { name: string; args: string } | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^\/?(\S+)(?:\s+([\s\S]+))?$/);
+  if (!match) return null;
+  return {
+    name: normalizeCommandName(match[1]),
+    args: match[2]?.trim() ?? "",
+  };
+}
+
+function buildClaudeRecallArgs(commandName: string, argumentText: string): string[] {
+  const rawArgs = splitCommandArguments(argumentText)
+    .map(sanitizeForShell)
+    .filter(Boolean);
+
+  if (commandName === "lessons") {
+    return rawArgs.length > 0 ? rawArgs : ["list"];
+  }
+
+  if (commandName === "handoffs") {
+    if (rawArgs.length === 0) return ["handoff", "list"];
+    if (rawArgs[0] !== "handoff") return ["handoff", ...rawArgs];
+    return rawArgs;
+  }
+
+  return rawArgs;
+}
+
+function extractTextFromParts(parts: any[]): string {
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .filter((p: any) => p && p.type === "text")
+    .map((p: { text: string }) => p.text)
+    .join(" ")
+    .trim();
+}
+
+function quoteShellArg(value: string): string {
+  if (value === "") return "''";
+  return `'${value.replace(/'/g, "'\"'\"'")}'`;
+}
+
+function buildShellCommand(executable: string, args: string[]): string {
+  return [executable, ...args].map(quoteShellArg).join(" ");
+}
+
 export const LessonsPlugin: Plugin = async ({ $, client }) => {
+  log('info', 'plugin.loaded', { manager: MANAGER });
   // Detect fast model in background - don't block plugin initialization
   // The result is logged but not currently used for scoring (Python CLI handles that)
   detectFastModel(client, CONFIG.small_model).then(model => {
@@ -262,6 +374,66 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
   const sessionCheckpoints = new Map<string, number>();
   const sessionState = new Map<string, { isFirstPrompt: boolean; promptCount: number; compactionOccurred: boolean }>();
   const processingCitations = new Set<string>();
+  const processedCommandMessages = new Map<string, Set<string>>();
+
+  const getProcessedCommandSet = (sessionId: string): Set<string> => {
+    let set = processedCommandMessages.get(sessionId);
+    if (!set) {
+      set = new Set<string>();
+      processedCommandMessages.set(sessionId, set);
+    }
+    return set;
+  };
+
+  const isCommandMessageProcessed = (sessionId: string, messageId: string): boolean =>
+    processedCommandMessages.get(sessionId)?.has(messageId) ?? false;
+
+  const markCommandMessageProcessed = (sessionId: string, messageId: string): void => {
+    getProcessedCommandSet(sessionId).add(messageId);
+  };
+
+  const runClaudeRecallCommand = async (
+    sessionId: string,
+    commandName: string,
+    argumentText: string,
+    source: string
+  ): Promise<void> => {
+    const cliArgs = buildClaudeRecallArgs(commandName, argumentText);
+    const commandLine = buildShellCommand(MANAGER, cliArgs);
+
+    try {
+      await client.session.shell({
+        path: { id: sessionId },
+        body: {
+          agent: "claude-recall",
+          command: commandLine,
+        },
+      });
+      log('info', 'command.cli_executed', { name: commandName, args: cliArgs, source });
+    } catch (e) {
+      log(isCriticalError(e) ? 'warn' : 'debug', 'command.cli_failed', {
+        error: String(e),
+        name: commandName,
+        args: cliArgs,
+        source,
+      });
+      try {
+        await client.session.prompt({
+          path: { id: sessionId },
+          body: {
+            noReply: true,
+            parts: [{
+              type: "text",
+              text: `claude-recall command failed: ${String(e)}`,
+            }],
+          },
+        });
+      } catch (err) {
+        log('debug', 'command.error_prompt_failed', { error: String(err), source });
+      }
+    }
+  };
+
   return {
     // Inject lessons and handoffs at session start
     "session.created": async (input) => {
@@ -322,6 +494,7 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
       sessionCheckpoints.delete(input.session.id);
       sessionState.delete(input.session.id);
       processingCitations.delete(input.session.id);
+      processedCommandMessages.delete(input.session.id);
       log('debug', 'session.cleanup', { session_id: input.session.id });
     },
 
@@ -365,19 +538,120 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
       }
     },
 
+    // Execute claude-recall slash commands directly
+    "command.executed": (input) => {
+      void (async () => {
+        if (!CONFIG.enabled) return;
+
+        if (CONFIG.debugLevel >= 2) {
+          log('info', 'command.event', { payload: input });
+        }
+
+        const rawNameValue = input.command?.name ?? input.name ?? input.command ?? "";
+        const rawName = typeof rawNameValue === "string" ? rawNameValue : String(rawNameValue ?? "");
+        let commandName = normalizeCommandName(rawName);
+        let argumentText = input.command?.arguments ?? input.arguments ?? input.args ?? "";
+        if (typeof argumentText !== "string") {
+          argumentText = String(argumentText ?? "");
+        }
+        const sessionId = input.session?.id ?? input.sessionID ?? input.sessionId;
+        const messageId = input.message?.id ?? input.messageID ?? input.messageId;
+
+        if (!sessionId) return;
+
+        if (messageId && isCommandMessageProcessed(sessionId, messageId)) {
+          log('debug', 'command.duplicate_skipped', { session_id: sessionId, message_id: messageId });
+          return;
+        }
+
+        let messageRole: string | undefined;
+        let messageText = "";
+
+        if (messageId && (!commandName || !argumentText)) {
+          try {
+            const message = await client.session.message({
+              path: { id: sessionId, messageID: messageId },
+            });
+            messageRole = message.info?.role;
+            messageText = extractTextFromParts(message.parts);
+          } catch (e) {
+            log('debug', 'command.message_fetch_failed', { error: String(e) });
+          }
+        }
+
+        if ((!commandName || !CLAUDE_RECALL_COMMANDS.has(commandName)) && messageText) {
+          const parsed = parseCommandText(messageText);
+          if (parsed) {
+            commandName = parsed.name;
+            if (!argumentText) argumentText = parsed.args;
+          }
+        }
+
+        if (!CLAUDE_RECALL_COMMANDS.has(commandName)) return;
+
+        if (messageId) {
+          markCommandMessageProcessed(sessionId, messageId);
+        }
+
+        if (messageId) {
+          try {
+            await client.session.revert({
+              path: { id: sessionId },
+              body: { messageID: messageId },
+            });
+            log('debug', 'command.reverted', { session_id: sessionId, message_id: messageId });
+          } catch (e) {
+            log('debug', 'command.revert_failed', { error: String(e), message_id: messageId });
+          }
+        }
+
+        await runClaudeRecallCommand(sessionId, commandName, argumentText, 'command.executed');
+      })();
+    },
+
     // Smart injection on first prompt, periodic reminders
     "message.created": async (input) => {
       if (input.message.role !== "user") return;
 
-      const state = sessionState.get(input.session.id);
+      const sessionId = input.session.id;
+      const messageId = input.message.id;
+      const messageText = extractTextFromParts(input.message.parts);
+
+      if (messageId && messageText) {
+        const parsed = parseCommandText(messageText);
+        if (parsed && CLAUDE_RECALL_COMMANDS.has(parsed.name)) {
+          if (isCommandMessageProcessed(sessionId, messageId)) return;
+          markCommandMessageProcessed(sessionId, messageId);
+
+          if (CONFIG.debugLevel >= 2) {
+            log('info', 'command.message_created', {
+              session_id: sessionId,
+              message_id: messageId,
+              name: parsed.name,
+              args: parsed.args,
+            });
+          }
+
+          try {
+            await client.session.revert({
+              path: { id: sessionId },
+              body: { messageID: messageId },
+            });
+            log('debug', 'command.reverted', { session_id: sessionId, message_id: messageId });
+          } catch (e) {
+            log('debug', 'command.revert_failed', { error: String(e), message_id: messageId });
+          }
+
+          await runClaudeRecallCommand(sessionId, parsed.name, parsed.args, 'message.created');
+          return;
+        }
+      }
+
+      const state = sessionState.get(sessionId);
       if (!state) return;
 
       // Extract user query for relevance scoring
-      const userQuery = input.message.parts
-        .filter((p: any) => p.type === "text")
-        .map((p: { type: string; text: string }) => p.text)
-        .join(" ")
-        .trim();
+      const userQuery = messageText.trim();
 
       if (!userQuery) return;
 
@@ -854,8 +1128,11 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
                   log('info', 'handoff.phase_updated', { handoff_id: handoffId, phase: newPhase });
                 } catch (e) {
                   log('debug', 'handoff.phase_update_failed', { handoff_id: handoffId, error: String(e) });
-                }
-              }
+  }
+}
+
+export default LessonsPlugin;
+
             }
           }
         } else {
