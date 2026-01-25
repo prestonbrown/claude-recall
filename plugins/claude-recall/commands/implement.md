@@ -81,4 +81,4 @@ Most handoff tracking is **automatic** via TodoWrite. Use these only when needed
 | `HANDOFF UPDATE LAST: next steps here` | Update next steps |
 | `HANDOFF COMPLETE LAST` | Mark done + trigger lesson review |
 
-`LAST` = most recent handoff in session. Can also use explicit `hf-XXXXXXX`.
+`LAST` = most recently updated active (non-completed) handoff. Can also use explicit `hf-XXXXXXX`.

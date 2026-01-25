@@ -75,3 +75,33 @@ Stop hook parses these from agent output:
 - `HANDOFF: title` → start tracking work
 - `HANDOFF UPDATE H001: tried success|fail|partial - desc` → record attempt
 - `HANDOFF COMPLETE H001` → finish and extract lessons
+
+## OpenCode Adapter
+
+Claude Recall is also available as an OpenCode plugin. Installation and configuration differ slightly:
+
+- **Installation**: `./install.sh --opencode`
+- **Configuration**: `~/.config/claude-recall/config.json`
+- **Plugin source**: `adapters/opencode/plugin.ts` → installed to `~/.config/opencode/plugins/lessons.ts`
+- **CLI**: `claude-recall`
+- **Commands**: `/lessons`, `/handoffs`
+
+**Development workflow:**
+```bash
+# Edit the source
+vim adapters/opencode/plugin.ts
+
+# Install to OpenCode's plugin directory (no separate build step - OpenCode loads .ts directly)
+./install.sh --opencode
+
+# Test by running opencode in any project
+opencode
+```
+
+The install copies `adapters/opencode/plugin.ts` → `~/.config/opencode/plugins/lessons.ts`. There's no TypeScript compilation step - OpenCode loads `.ts` files directly via its plugin system.
+
+**Gotchas:**
+- **Never block plugin initialization** - OpenCode plugins are async functions that must return quickly. Blocking calls (like `await client.provider.list()`) during init will hang the entire UI. Use fire-and-forget patterns (`.then()`) for slow operations.
+- **Session state types** - Ensure all properties in session state type are initialized (e.g., `compactionOccurred: false`)
+
+See docs/DEPLOYMENT.md for detailed instructions.

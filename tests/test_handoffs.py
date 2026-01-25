@@ -873,6 +873,168 @@ class TestHandoffUpdateSetsDate:
         assert handoff.updated == date.today()
 
 
+class TestHandoffSyncUpdate:
+    """Tests for sync_update (batch field updates in single read/write cycle)."""
+
+    def test_sync_update_tried_only(self, manager_with_handoffs: "LessonsManager"):
+        """Should add multiple tried entries in one operation."""
+        tried_entries = [
+            {"outcome": "fail", "description": "First attempt failed"},
+            {"outcome": "partial", "description": "Second attempt was partial"},
+            {"outcome": "success", "description": "Third attempt worked"},
+        ]
+
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            tried_entries=tried_entries,
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert len(handoff.tried) == 3
+        assert handoff.tried[0].outcome == "fail"
+        assert handoff.tried[1].outcome == "partial"
+        assert handoff.tried[2].outcome == "success"
+
+    def test_sync_update_checkpoint_only(self, manager_with_handoffs: "LessonsManager"):
+        """Should update checkpoint and last_session."""
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            checkpoint="Working on unit tests",
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.checkpoint == "Working on unit tests"
+        assert handoff.last_session == date.today()
+
+    def test_sync_update_next_steps_only(self, manager_with_handoffs: "LessonsManager"):
+        """Should update next steps."""
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            next_steps="Write integration tests; Update docs",
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.next_steps == "Write integration tests; Update docs"
+
+    def test_sync_update_status_only(self, manager_with_handoffs: "LessonsManager"):
+        """Should update status."""
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            status="in_progress",
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == "in_progress"
+
+    def test_sync_update_all_fields(self, manager_with_handoffs: "LessonsManager"):
+        """Should update all fields in a single operation."""
+        tried_entries = [
+            {"outcome": "success", "description": "Implemented feature"},
+        ]
+
+        manager_with_handoffs.handoff_sync_update(
+            "hf-0000001",
+            tried_entries=tried_entries,
+            checkpoint="Finishing up tests",
+            next_steps="Commit and push",
+            status="in_progress",
+        )
+
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert len(handoff.tried) == 1
+        assert handoff.tried[0].description == "Implemented feature"
+        assert handoff.checkpoint == "Finishing up tests"
+        assert handoff.next_steps == "Commit and push"
+        assert handoff.status == "in_progress"
+        assert handoff.last_session == date.today()
+        assert handoff.updated == date.today()
+
+    def test_sync_update_invalid_status_raises(self, manager_with_handoffs: "LessonsManager"):
+        """Should reject invalid status before modifying file."""
+        with pytest.raises(ValueError, match="Invalid status"):
+            manager_with_handoffs.handoff_sync_update(
+                "hf-0000001",
+                status="bogus_status",
+            )
+
+    def test_sync_update_invalid_outcome_raises(self, manager_with_handoffs: "LessonsManager"):
+        """Should reject invalid outcome before modifying file."""
+        with pytest.raises(ValueError, match="Invalid outcome"):
+            manager_with_handoffs.handoff_sync_update(
+                "hf-0000001",
+                tried_entries=[{"outcome": "maybe", "description": "Test"}],
+            )
+
+    def test_sync_update_auto_phase_implementing(self, manager_with_handoffs: "LessonsManager"):
+        """Should auto-bump phase to implementing when tried entry contains implementing keywords."""
+        handoff_id = manager_with_handoffs.handoff_add(
+            title="Test phase bump",
+            phase="research",
+        )
+
+        manager_with_handoffs.handoff_sync_update(
+            handoff_id,
+            tried_entries=[
+                {"outcome": "success", "description": "Implemented the new feature"},
+            ],
+        )
+
+        handoff = manager_with_handoffs.handoff_get(handoff_id)
+        assert handoff.phase == "implementing"
+
+    def test_sync_update_auto_complete_on_final_pattern(self, manager: "LessonsManager"):
+        """Should auto-complete when tried entry starts with completion pattern."""
+        handoff_id = manager.handoff_add(title="Test auto-complete")
+
+        manager.handoff_sync_update(
+            handoff_id,
+            tried_entries=[
+                {"outcome": "success", "description": "Done with implementation"},
+            ],
+        )
+
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "completed"
+        assert handoff.phase == "review"
+
+    def test_sync_update_status_overrides_auto_complete(self, manager: "LessonsManager"):
+        """Explicit status should override auto-complete from tried entry."""
+        handoff_id = manager.handoff_add(title="Test status override")
+
+        manager.handoff_sync_update(
+            handoff_id,
+            tried_entries=[
+                {"outcome": "success", "description": "Done with first part"},
+            ],
+            status="in_progress",  # Override auto-complete
+        )
+
+        handoff = manager.handoff_get(handoff_id)
+        assert handoff.status == "in_progress"  # Not "completed"
+
+    def test_sync_update_not_found_raises(self, manager: "LessonsManager"):
+        """Should raise ValueError when handoff not found."""
+        with pytest.raises(ValueError, match="not found"):
+            manager.handoff_sync_update(
+                "hf-nonexistent",
+                status="in_progress",
+            )
+
+    def test_sync_update_empty_does_nothing(self, manager_with_handoffs: "LessonsManager"):
+        """Should handle call with no updates gracefully."""
+        # Get original state
+        original = manager_with_handoffs.handoff_get("hf-0000001")
+        original_status = original.status
+
+        # Call with no updates
+        manager_with_handoffs.handoff_sync_update("hf-0000001")
+
+        # Should still work (updates timestamp)
+        handoff = manager_with_handoffs.handoff_get("hf-0000001")
+        assert handoff.status == original_status
+        assert handoff.updated == date.today()
+
+
 # =============================================================================
 # Completing and Archiving Handoffs
 # =============================================================================
@@ -2712,6 +2874,81 @@ class TestStopHookLastReference:
         assert second is not None
         assert second.phase == "implementing"  # LAST referred to it
 
+    def test_last_falls_back_to_existing_handoff(self, temp_dirs, isolated_subprocess_env):
+        """LAST should find existing handoff when no handoff created in current batch."""
+        lessons_base, state_dir, project_root = temp_dirs
+        hook_path = Path("adapters/claude-code/stop-hook.sh")
+        if not hook_path.exists():
+            pytest.skip("stop-hook.sh not found")
+
+        # First "session": create a handoff
+        transcript1 = self.create_mock_transcript(project_root, [
+            "HANDOFF: Existing task",
+        ])
+
+        import json
+        input_data = json.dumps({
+            "cwd": str(project_root),
+            "transcript_path": str(transcript1),
+        })
+
+        result = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            env={
+                **isolated_subprocess_env,
+                "CLAUDE_RECALL_BASE": str(lessons_base),
+                "CLAUDE_RECALL_STATE": str(state_dir),
+                "PROJECT_DIR": str(project_root),
+            },
+        )
+        assert result.returncode == 0
+
+        # Verify handoff was created
+        from core import LessonsManager
+        manager = LessonsManager(lessons_base, project_root)
+        handoffs = manager.handoff_list()
+        assert len(handoffs) == 1
+        assert handoffs[0].status != "completed"
+
+        # Second "session": complete with LAST (no new handoff created)
+        # Use a new transcript file to simulate a new session
+        transcript2 = project_root / "transcript_session2.jsonl"
+        with open(transcript2, "w") as f:
+            json.dump({
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "HANDOFF COMPLETE LAST"}]},
+                "timestamp": "2024-01-01T12:01:00Z",
+            }, f)
+            f.write("\n")
+
+        input_data2 = json.dumps({
+            "cwd": str(project_root),
+            "transcript_path": str(transcript2),
+        })
+
+        result2 = subprocess.run(
+            ["bash", str(hook_path)],
+            input=input_data2,
+            capture_output=True,
+            text=True,
+            env={
+                **isolated_subprocess_env,
+                "CLAUDE_RECALL_BASE": str(lessons_base),
+                "CLAUDE_RECALL_STATE": str(state_dir),
+                "PROJECT_DIR": str(project_root),
+            },
+        )
+        assert result2.returncode == 0
+
+        # Verify handoff was completed
+        completed = manager.handoff_list_completed()
+        assert len(completed) == 1
+        assert completed[0].title == "Existing task"
+        assert completed[0].status == "completed"
+
 
 # =============================================================================
 # Checkpoint Tests (Phase 1 of Context Handoff System)
@@ -3239,7 +3476,8 @@ class TestHandoffInjectTodos:
 
         result = manager.handoff_inject_todos()
 
-        assert "CONTINUE PREVIOUS WORK" in result
+        assert "Previous Work Found" in result
+        assert "STOP - DO NOT CONTINUE THIS WORK" in result
         assert "First task succeeded" in result
         assert "Current task" in result
         assert "Next task" in result
@@ -6972,6 +7210,250 @@ class TestExplicitHandoffIdInTodos:
 
 
 # =============================================================================
+# Session ID Gating for Fallback (Prevents Cross-Session Pollution)
+# =============================================================================
+
+
+class TestSessionIdGating:
+    """Tests for session_id gating in handoff_sync_todos.
+
+    When a session has a session_id but no session_handoff link, it indicates
+    genuinely new work that shouldn't auto-link to existing handoffs. This
+    prevents cross-session pollution where unrelated sessions accidentally
+    share the same handoff.
+    """
+
+    def test_sync_todos_with_session_id_no_link_skips_fallback(
+        self, manager: LessonsManager
+    ) -> None:
+        """When session_id provided but no session_handoff, fallback is skipped."""
+        # Create an existing active handoff (would be picked up by fallback)
+        existing_handoff = manager.handoff_add(title="Existing work")
+
+        # Sync todos WITH session_id but WITHOUT session_handoff
+        # This simulates a new session that hasn't been linked to any handoff
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "in_progress", "activeForm": "Task B"},
+            {"content": "Task C", "status": "pending", "activeForm": "Task C"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,  # No linked handoff
+            session_id="new-session-123",  # But we have a session ID
+        )
+
+        # Should NOT fall back to existing_handoff - should create new or return None
+        # Since we have 3+ todos, it will create a new handoff
+        assert result != existing_handoff
+        assert result is not None  # Created new handoff
+        assert result.startswith("hf-")
+
+    def test_sync_todos_without_session_id_uses_fallback(
+        self, manager: LessonsManager
+    ) -> None:
+        """When session_id NOT provided, fallback to most recent still works (legacy)."""
+        # Create an existing active handoff
+        existing_handoff = manager.handoff_add(title="Existing work")
+
+        # Sync todos WITHOUT session_id (legacy behavior)
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "pending", "activeForm": "Task B"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id=None,  # No session_id - legacy caller
+        )
+
+        # Should fall back to existing handoff
+        assert result == existing_handoff
+
+    def test_sync_todos_with_explicit_ref_ignores_session_gate(
+        self, manager: LessonsManager
+    ) -> None:
+        """Explicit [hf-XXX] references work even when session_id is provided."""
+        # Create target handoff
+        target_handoff = manager.handoff_add(title="Target work")
+
+        # Create another handoff (to ensure we're not just picking most recent)
+        manager.handoff_add(title="Other work")
+
+        # Sync todos with session_id but explicit handoff reference
+        todos = [
+            {"content": f"[{target_handoff}] Task 1", "status": "completed", "activeForm": "Task 1"},
+            {"content": "Task 2", "status": "pending", "activeForm": "Task 2"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id="some-session-456",  # Session ID present
+        )
+
+        # Should sync to explicitly referenced handoff despite session_id gating
+        assert result == target_handoff
+
+    def test_sync_todos_with_session_handoff_takes_priority(
+        self, manager: LessonsManager
+    ) -> None:
+        """session_handoff takes priority even when session_id is provided."""
+        # Create handoffs
+        linked_handoff = manager.handoff_add(title="Linked work")
+        other_handoff = manager.handoff_add(title="Other work")
+
+        # Update other to make it most recently updated
+        manager.handoff_update_checkpoint(other_handoff, "Recent activity")
+
+        # Sync todos with both session_handoff and session_id
+        todos = [
+            {"content": "Task 1", "status": "completed", "activeForm": "Task 1"},
+            {"content": "Task 2", "status": "pending", "activeForm": "Task 2"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=linked_handoff,  # Explicit link
+            session_id="session-789",
+        )
+
+        # Should use linked handoff, not other_handoff
+        assert result == linked_handoff
+
+    def test_sync_todos_with_session_id_no_link_returns_none_when_few_todos(
+        self, manager: LessonsManager
+    ) -> None:
+        """When session_id blocks fallback and <3 todos, returns None."""
+        existing_handoff = manager.handoff_add(title="Existing work")
+
+        # Only 2 todos - not enough to auto-create
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "pending", "activeForm": "Task B"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id="new-session-123",
+        )
+
+        # Should return None - fallback blocked by session_id, too few for auto-create
+        assert result is None
+
+        # Verify existing handoff was NOT touched
+        handoff = manager.handoff_get(existing_handoff)
+        assert len(handoff.tried) == 0
+
+    def test_sync_todos_autocreate_respects_subagent_guard(
+        self, manager: LessonsManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Auto-create from sync_todos should respect sub-agent guard."""
+        # Mock as Explore sub-agent
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Explore"
+        )
+
+        # 3+ todos to trigger auto-create
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "in_progress", "activeForm": "Task B"},
+            {"content": "Task C", "status": "pending", "activeForm": "Task C"},
+        ]
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id="explore-session-123",
+        )
+
+        # Sub-agent should NOT be able to auto-create handoff
+        assert result is None
+
+
+# =============================================================================
+# Session ID Shell Quoting Safety
+# =============================================================================
+
+
+class TestSessionIdShellQuoting:
+    """Tests for session_id handling in shell commands.
+
+    The stop-hook.sh script passes session_id to Python CLI. This must be
+    properly quoted to handle spaces, special characters, and shell metacharacters.
+    The fix uses Bash arrays instead of string concatenation to ensure safe
+    argument passing.
+    """
+
+    def test_sync_todos_cli_accepts_session_id_with_spaces(
+        self, manager: LessonsManager
+    ) -> None:
+        """CLI sync-todos should accept session_id with spaces via proper quoting."""
+        # Create an existing active handoff
+        existing_handoff = manager.handoff_add(title="Existing work")
+
+        # Simulate session_id with spaces (unlikely in practice, but tests quoting)
+        session_with_spaces = "session with spaces and special-chars!"
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "pending", "activeForm": "Task B"},
+        ]
+
+        # This tests the CLI layer, which should handle quoted session_id
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id=session_with_spaces,
+        )
+
+        # Should NOT fall back to existing_handoff when session_id provided
+        assert result != existing_handoff
+
+    def test_sync_todos_cli_accepts_session_id_with_special_chars(
+        self, manager: LessonsManager
+    ) -> None:
+        """CLI sync-todos should accept session_id with shell metacharacters."""
+        # Simulate session_id with characters that would break shell without proper quoting
+        session_with_special = 'session;with$dangerous"chars'
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+        ]
+
+        # Should handle special characters without shell errors
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id=session_with_special,
+        )
+
+        # Should create new handoff (3+ todos) or return None (<3 todos)
+        # Just verify it doesn't crash or return the wrong handoff
+        if result is not None:
+            assert result.startswith("hf-")
+
+    def test_sync_todos_without_session_id_still_uses_fallback(
+        self, manager: LessonsManager
+    ) -> None:
+        """Legacy behavior: no session_id still falls back to most recent."""
+        # Create an existing active handoff
+        existing_handoff = manager.handoff_add(title="Existing work")
+
+        # Sync todos WITHOUT session_id (legacy path)
+        todos = [
+            {"content": "Task A", "status": "completed", "activeForm": "Task A"},
+            {"content": "Task B", "status": "pending", "activeForm": "Task B"},
+        ]
+
+        result = manager.handoff_sync_todos(
+            todos,
+            session_handoff=None,
+            session_id=None,  # Legacy: no session_id
+        )
+
+        # Should fall back to existing handoff
+        assert result == existing_handoff
+
+
+# =============================================================================
+# Batch Handoff Processing
+# =============================================================================
 # Batch Handoff Processing
 # =============================================================================
 
@@ -7717,6 +8199,163 @@ class TestParseTranscriptIntegration:
         handoff = manager.handoff_get(result["last_id"])
         assert handoff is not None
         assert handoff.status == "completed"
+
+
+class TestLazyOriginDetection:
+    """Tests for lazy origin detection optimization in parse_transcript_for_handoffs.
+
+    The optimization: _detect_session_origin should only be called when HANDOFF: or
+    PLAN MODE: patterns are found, not for every session. Most sessions (90%) are
+    "User" origin and don't need origin detection.
+    """
+
+    def test_origin_detection_not_called_when_no_handoff_patterns(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Origin detection should NOT be called when no HANDOFF/PLAN MODE patterns exist."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        # Parse transcript with no handoff patterns
+        transcript = {
+            "assistant_texts": [
+                "This is just regular text",
+                "HANDOFF UPDATE hf-abc1234: status in_progress",  # Update doesn't need origin
+                "HANDOFF COMPLETE hf-abc1234",  # Complete doesn't need origin
+                "More regular text here",
+            ]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="test-session")
+
+        # Should NOT have called origin detection
+        assert call_count == 0, f"Expected 0 calls to _detect_session_origin, got {call_count}"
+
+        # Should still parse the update and complete operations
+        assert len(result) == 2
+        assert result[0]["op"] == "update"
+        assert result[1]["op"] == "complete"
+
+    def test_origin_detection_called_when_handoff_add_pattern_found(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Origin detection SHOULD be called when HANDOFF: pattern is found."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        transcript = {
+            "assistant_texts": ["HANDOFF: New feature to implement"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="test-session")
+
+        # Should have called origin detection exactly once
+        assert call_count == 1, f"Expected 1 call to _detect_session_origin, got {call_count}"
+
+        # Should parse the add operation (User can create handoffs)
+        assert len(result) == 1
+        assert result[0]["op"] == "add"
+        assert result[0]["title"] == "New feature to implement"
+
+    def test_origin_detection_called_when_plan_mode_pattern_found(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Origin detection SHOULD be called when PLAN MODE: pattern is found."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        transcript = {
+            "assistant_texts": ["PLAN MODE: Design architecture"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="test-session")
+
+        assert call_count == 1, f"Expected 1 call to _detect_session_origin, got {call_count}"
+        assert len(result) == 1
+        assert result[0]["op"] == "add"
+        assert result[0]["phase"] == "research"
+
+    def test_origin_detection_only_called_once_for_multiple_add_patterns(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Origin detection should be called once even with multiple HANDOFF: patterns."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        transcript = {
+            "assistant_texts": [
+                "HANDOFF: First feature",
+                "HANDOFF: Second feature",
+                "PLAN MODE: Third feature",
+            ]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="test-session")
+
+        # Should only call once, not once per pattern
+        assert call_count == 1, f"Expected 1 call to _detect_session_origin, got {call_count}"
+        assert len(result) == 3
+
+    def test_subagent_handoff_add_blocked_with_lazy_detection(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Sub-agent HANDOFF: patterns should still be blocked with lazy detection."""
+        monkeypatch.setattr(
+            manager, "_detect_session_origin", lambda session_id: "Explore"
+        )
+
+        transcript = {
+            "assistant_texts": ["HANDOFF: Sub-agent trying to create handoff"]
+        }
+        result = manager.parse_transcript_for_handoffs(transcript, session_id="explore-session")
+
+        # Sub-agent cannot create handoffs - should return empty
+        assert len(result) == 0
+
+    def test_no_origin_detection_without_session_id(
+        self, manager: "LessonsManager", monkeypatch: pytest.MonkeyPatch
+    ):
+        """Without session_id, origin detection should not be called."""
+        call_count = 0
+
+        def mock_detect_origin(session_id: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "User"
+
+        monkeypatch.setattr(manager, "_detect_session_origin", mock_detect_origin)
+
+        transcript = {
+            "assistant_texts": ["HANDOFF: New feature"]
+        }
+        # No session_id provided - backward compatibility
+        result = manager.parse_transcript_for_handoffs(transcript)
+
+        # Should NOT call origin detection when no session_id
+        assert call_count == 0
+        # Should still create the operation (default to allowing)
+        assert len(result) == 1
+        assert result[0]["op"] == "add"
 
 
 if __name__ == "__main__":

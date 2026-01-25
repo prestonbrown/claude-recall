@@ -97,7 +97,7 @@ class TestAlertSettings:
     def test_get_alert_settings_defaults(self, tmp_path, monkeypatch):
         """Should return default settings when no config exists."""
         settings_path = tmp_path / "settings.json"
-        monkeypatch.setenv("CLAUDE_CODE_SETTINGS", str(settings_path))
+        monkeypatch.setenv("CLAUDE_RECALL_CONFIG", str(settings_path))
 
         settings = get_alert_settings()
 
@@ -123,7 +123,7 @@ class TestAlertSettings:
                 }
             }
         }))
-        monkeypatch.setenv("CLAUDE_CODE_SETTINGS", str(settings_path))
+        monkeypatch.setenv("CLAUDE_RECALL_CONFIG", str(settings_path))
 
         settings = get_alert_settings()
 
@@ -461,7 +461,7 @@ class TestAlertsManager:
                 }
             }
         }))
-        monkeypatch.setenv("CLAUDE_CODE_SETTINGS", str(settings_path))
+        monkeypatch.setenv("CLAUDE_RECALL_CONFIG", str(settings_path))
 
         # Create stale handoff to trigger alert
         project_dir = tmp_path / "project"
@@ -501,7 +501,7 @@ class TestAlertsManager:
                 }
             }
         }))
-        monkeypatch.setenv("CLAUDE_CODE_SETTINGS", str(settings_path))
+        monkeypatch.setenv("CLAUDE_RECALL_CONFIG", str(settings_path))
 
         # Create log with error to trigger alert
         log_file = temp_state_dir / "debug.log"

@@ -1,0 +1,1 @@
+../../../../adapters/claude-code/smart-inject-hook.sh

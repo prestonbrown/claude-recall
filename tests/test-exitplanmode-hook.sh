@@ -32,8 +32,9 @@ setup() {
     mkdir -p "$TEST_DIR/.claude"
     mkdir -p "$TEST_DIR/.claude/plans"
 
-    # Create settings.json with recall enabled
-    echo '{"claudeRecall":{"enabled":true}}' > "$TEST_DIR/.claude/settings.json"
+    # Create shared config.json with recall enabled
+    mkdir -p "$TEST_DIR/.config/claude-recall"
+    echo '{"enabled":true}' > "$TEST_DIR/.config/claude-recall/config.json"
 
     # Symlink CLI to where hook expects it
     ln -sf "$SCRIPT_DIR/../core/cli.py" "$CLAUDE_RECALL_BASE/cli.py"
@@ -254,7 +255,7 @@ test_handoff_has_implementing_phase() {
 
 test_disabled_does_nothing() {
     # Disable claude recall
-    echo '{"claudeRecall":{"enabled":false}}' > "$TEST_DIR/.claude/settings.json"
+    echo '{"enabled":false}' > "$TEST_DIR/.config/claude-recall/config.json"
 
     create_plan "Should Not Create"
 

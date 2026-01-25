@@ -9,8 +9,8 @@
 ## Active Lessons
 
 
-### [L001] [**---|-----] Delimiter conflicts
-- **Uses**: 4 | **Velocity**: 0.01 | **Learned**: 2025-12-27 | **Last**: 2026-01-05 | **Category**: pattern | **Type**: informational
+### [L001] [***--|-----] Delimiter conflicts
+- **Uses**: 7 | **Velocity**: 0.01 | **Learned**: 2025-12-27 | **Last**: 2026-01-18 | **Category**: pattern | **Type**: informational
 > When adding special characters to display formats (like | in star ratings), check if they conflict with internal delimiters used for parsing. We had to switch from | to ~ as the internal field separator.
 
 
@@ -39,8 +39,8 @@
 > In Textual TUI, use OptionList widget instead of Static for modal popup menus. OptionList provides built-in arrow key navigation and Enter selection. Static widgets don't handle keyboard navigation.
 
 
-### [L007] [*----|+----] Double-action popup trigger
-- **Uses**: 2 | **Velocity**: 1.0 | **Learned**: 2026-01-09 | **Last**: 2026-01-11 | **Category**: pattern | **Type**: informational
+### [L007] [*----|-----] Double-action popup trigger
+- **Uses**: 2 | **Velocity**: 0.01 | **Learned**: 2026-01-09 | **Last**: 2026-01-11 | **Category**: pattern | **Type**: informational
 > Track confirmed selection separately from current selection (e.g., _current_handoff_id vs _user_selected_handoff_id). First action confirms selection, second action on same item opens popup. Prevents accidental popup triggers.
 
 

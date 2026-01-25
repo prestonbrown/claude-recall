@@ -130,6 +130,19 @@ RichLog {
     border: solid $primary-darken-2;
 }
 
+/* Session loading state */
+#session-loading {
+    display: none;
+}
+
+#session-loading.loading {
+    display: block;
+}
+
+#session-list.loading {
+    display: none;
+}
+
 #session-events {
     height: 50%;
     border: solid $primary-darken-2;
@@ -341,11 +354,13 @@ StatusSelectScreen, PhaseSelectScreen, AgentSelectScreen {
 /* Filter row */
 .filter-row {
     width: 100%;
-    height: auto;
+    height: 3;
+    align: left middle;
 }
 
 .filter-label {
     width: auto;
+    content-align: center middle;
 }
 
 #handoff-filter {

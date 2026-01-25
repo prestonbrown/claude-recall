@@ -41,7 +41,7 @@ extract_handoff_context_python() {
     # - Validating the result (rejects garbage summaries)
     local result
     result=$(PROJECT_DIR="$PROJECT_DIR" LESSONS_BASE="$LESSONS_BASE" LESSONS_SCORING_ACTIVE=1 \
-        timeout "$CONTEXT_TIMEOUT" python3 "$PYTHON_MANAGER" extract-context "$transcript_path" --git-ref "$git_ref" 2>/dev/null) || return 1
+        timeout "$CONTEXT_TIMEOUT" "$PYTHON_BIN" "$PYTHON_MANAGER" extract-context "$transcript_path" --git-ref "$git_ref" 2>/dev/null) || return 1
 
     # Check if we got valid JSON (not empty object)
     if [[ -z "$result" ]] || [[ "$result" == "{}" ]]; then
@@ -62,7 +62,7 @@ get_most_recent_handoff() {
         # Get first non-completed handoff (most recent by file order)
         # Matches both legacy A### format and new hf-XXXXXXX format
         PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-            python3 "$PYTHON_MANAGER" handoff list 2>/dev/null | \
+            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff list 2>/dev/null | \
             head -1 | grep -oE '\[(A[0-9]{3}|hf-[0-9a-f]+)\]' | tr -d '[]' || true
     fi
 }
@@ -124,7 +124,7 @@ auto_create_handoff() {
     # Create the handoff with implementing phase (we're mid-work)
     local result
     result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-        python3 "$PYTHON_MANAGER" handoff add --phase implementing -- "$title" 2>&1)
+        "$PYTHON_BIN" "$PYTHON_MANAGER" handoff add --phase implementing -- "$title" 2>&1)
 
     # Extract the ID
     echo "$result" | grep -oE 'hf-[0-9a-f]{7}' | head -1
@@ -215,7 +215,7 @@ main() {
         if [[ -f "$PYTHON_MANAGER" ]]; then
             local result
             result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                python3 "$PYTHON_MANAGER" handoff set-context "$handoff_id" --json "$context_json" 2>&1)
+                "$PYTHON_BIN" "$PYTHON_MANAGER" handoff set-context "$handoff_id" --json "$context_json" 2>&1)
 
             if [[ $? -eq 0 ]]; then
                 local summary_preview

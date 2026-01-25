@@ -107,6 +107,18 @@ class TestCommandRegistration:
         assert "list" in COMMAND_REGISTRY
         assert COMMAND_REGISTRY["list"] is ListCommand
 
+    def test_search_command_is_registered(self):
+        """SearchCommand should be registered for 'search'."""
+        from core.commands import COMMAND_REGISTRY, SearchCommand
+        assert "search" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["search"] is SearchCommand
+
+    def test_show_command_is_registered(self):
+        """ShowCommand should be registered for 'show'."""
+        from core.commands import COMMAND_REGISTRY, ShowCommand
+        assert "show" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["show"] is ShowCommand
+
     def test_decay_command_is_registered(self):
         """DecayCommand should be registered for 'decay'."""
         from core.commands import COMMAND_REGISTRY, DecayCommand
@@ -320,6 +332,102 @@ class TestCommandExecution:
         assert result == 0
         captured = capsys.readouterr()
         assert "Listed" in captured.out or "L001" in captured.out
+
+    def test_search_command_executes_successfully(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """SearchCommand.execute should search lessons by keyword."""
+        from core.commands import SearchCommand
+
+        # Add some lessons with searchable content
+        manager.add_lesson(
+            level="project", category="pattern", title="Git workflow", content="Use git add -p"
+        )
+        manager.add_lesson(
+            level="project", category="pattern", title="Testing tips", content="Write tests first"
+        )
+
+        args = Namespace(
+            command="search",
+            term="git",
+        )
+
+        cmd = SearchCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Git workflow" in captured.out
+        assert "Testing tips" not in captured.out
+        assert "Found: 1 lesson(s)" in captured.out
+
+    def test_search_command_no_results(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """SearchCommand.execute should handle no matches gracefully."""
+        from core.commands import SearchCommand
+
+        manager.add_lesson(
+            level="project", category="pattern", title="Testing tips", content="Write tests first"
+        )
+
+        args = Namespace(
+            command="search",
+            term="nonexistent",
+        )
+
+        cmd = SearchCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "No lessons found matching 'nonexistent'" in captured.out
+
+    def test_show_command_executes_successfully(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """ShowCommand.execute should show lesson details."""
+        from core.commands import ShowCommand
+
+        manager.add_lesson(
+            level="project",
+            category="correction",
+            title="Important lesson",
+            content="This is the detailed content of the lesson",
+        )
+
+        args = Namespace(
+            command="show",
+            lesson_id="L001",
+        )
+
+        cmd = ShowCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Important lesson" in captured.out
+        assert "correction" in captured.out
+        assert "This is the detailed content" in captured.out
+        assert "Level: Project" in captured.out
+
+    def test_show_command_nonexistent_lesson(
+        self, manager, temp_lessons_base, temp_project_root, capsys
+    ):
+        """ShowCommand.execute should handle nonexistent lessons."""
+        from core.commands import ShowCommand
+
+        args = Namespace(
+            command="show",
+            lesson_id="L999",
+        )
+
+        cmd = ShowCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "Lesson not found: L999" in captured.out
 
     def test_delete_command_executes_successfully(
         self, manager, temp_lessons_base, temp_project_root, capsys
@@ -539,3 +647,229 @@ class TestCommandPatternIntegration:
                 assert cmd is not None
             except TypeError as e:
                 pytest.fail(f"'{name}' command failed to instantiate: {e}")
+
+
+# =============================================================================
+# Migrate Triggers Command Tests
+# =============================================================================
+
+
+class TestMigrateTriggersCommand:
+    """Tests for the migrate-triggers command.
+
+    This command auto-generates triggers for existing lessons using Claude Haiku.
+    It finds lessons with empty triggers, batches them into a prompt for Haiku,
+    parses the response, and updates the lessons file.
+    """
+
+    @pytest.fixture
+    def temp_lessons_base(self, tmp_path: Path) -> Path:
+        """Create a temporary lessons base directory."""
+        lessons_base = tmp_path / ".config" / "claude-recall"
+        lessons_base.mkdir(parents=True)
+        return lessons_base
+
+    @pytest.fixture
+    def temp_project_root(self, tmp_path: Path) -> Path:
+        """Create a temporary project directory with .git folder."""
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".git").mkdir()
+        (project / ".claude-recall").mkdir()
+        return project
+
+    @pytest.fixture
+    def manager(self, temp_lessons_base: Path, temp_project_root: Path):
+        """Create a LessonsManager instance with temporary paths."""
+        from core.manager import LessonsManager
+        return LessonsManager(
+            lessons_base=temp_lessons_base,
+            project_root=temp_project_root,
+        )
+
+    def test_migrate_triggers_command_exists(self):
+        """MigrateTriggersCommand should exist and be registered."""
+        from core.commands import COMMAND_REGISTRY, MigrateTriggersCommand
+
+        assert "migrate-triggers" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["migrate-triggers"] is MigrateTriggersCommand
+
+    def test_migrate_triggers_finds_lessons_without_triggers(self, manager, capsys):
+        """Command should identify lessons with empty triggers list."""
+        from core.commands import MigrateTriggersCommand
+
+        # Add lessons - some with triggers, some without
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Mutex cleanup",
+            content="Always release mutex in destructor",
+        )
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="XML binding order",
+            content="Create subjects before XML widgets",
+        )
+
+        cmd = MigrateTriggersCommand()
+
+        # Command should have a method to find lessons needing triggers
+        lessons_without_triggers = cmd.find_lessons_without_triggers(manager)
+
+        assert len(lessons_without_triggers) == 2
+        assert all(len(lesson.triggers) == 0 for lesson in lessons_without_triggers)
+
+    def test_migrate_triggers_generates_prompt_for_haiku(self, manager):
+        """Command should format lessons into a batch prompt for Haiku."""
+        from core.commands import MigrateTriggersCommand
+
+        # Add a lesson
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="RAII widgets",
+            content="Use lvgl_make_unique for widget memory management",
+        )
+
+        cmd = MigrateTriggersCommand()
+        lessons = cmd.find_lessons_without_triggers(manager)
+
+        prompt = cmd.generate_haiku_prompt(lessons)
+
+        # Prompt should include lesson ID, title, content, category
+        assert "L001" in prompt
+        assert "RAII widgets" in prompt
+        assert "lvgl_make_unique" in prompt
+        assert "pattern" in prompt
+
+        # Prompt should specify output format
+        assert "L001:" in prompt or "format" in prompt.lower()
+
+    def test_migrate_triggers_parses_haiku_response(self, manager):
+        """Command should parse Haiku response and extract triggers."""
+        from core.commands import MigrateTriggersCommand
+
+        # Add lessons to match the IDs in the mock response
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Mutex cleanup",
+            content="Always release mutex in destructor",
+        )
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="XML binding order",
+            content="Create subjects before XML widgets",
+        )
+        manager.add_lesson(
+            level="project",
+            category="preference",
+            title="Dropdown styling",
+            content="Use bind_options for dropdown population",
+        )
+
+        cmd = MigrateTriggersCommand()
+
+        # Mock Haiku response format
+        haiku_response = """L001: destructor, mutex, shutdown
+L002: XML, subjects, create order
+L003: dropdown, bind_options"""
+
+        parsed = cmd.parse_haiku_response(haiku_response)
+
+        assert parsed["L001"] == ["destructor", "mutex", "shutdown"]
+        assert parsed["L002"] == ["XML", "subjects", "create order"]
+        assert parsed["L003"] == ["dropdown", "bind_options"]
+
+    def test_migrate_triggers_writes_back_to_file(self, manager, capsys):
+        """After parsing Haiku response, lessons file should be updated."""
+        from core.commands import MigrateTriggersCommand
+        from unittest.mock import patch, MagicMock
+
+        # Add a lesson without auto-generating triggers
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Mutex cleanup",
+            content="Always release mutex in destructor",
+            auto_triggers=False,  # Skip auto-generation during add
+        )
+
+        cmd = MigrateTriggersCommand()
+
+        # Mock the Haiku API call - must patch on class, not instance for static method
+        mock_response = "L001: destructor, mutex, shutdown"
+        with patch.object(MigrateTriggersCommand, "call_haiku_api", return_value=mock_response):
+            args = Namespace(command="migrate-triggers", dry_run=False)
+            result = cmd.execute(args, manager)
+
+        assert result == 0
+
+        # Verify the lesson now has triggers
+        lesson = manager.get_lesson("L001")
+        assert lesson.triggers == ["destructor", "mutex", "shutdown"]
+
+    def test_migrate_triggers_skips_lessons_with_triggers(self, manager):
+        """Lessons that already have triggers should NOT be in migration batch."""
+        from core.commands import MigrateTriggersCommand
+
+        # Add a lesson, then manually set triggers on it
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Already has triggers",
+            content="This lesson has triggers set",
+        )
+        # Update the lesson to have triggers
+        lesson = manager.get_lesson(lesson_id)
+        lesson.triggers = ["existing", "triggers"]
+        manager._save_lessons()
+
+        # Add another lesson without triggers
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="Needs triggers",
+            content="This lesson needs triggers generated",
+        )
+
+        cmd = MigrateTriggersCommand()
+        lessons_without_triggers = cmd.find_lessons_without_triggers(manager)
+
+        # Should only find the lesson without triggers
+        assert len(lessons_without_triggers) == 1
+        assert lessons_without_triggers[0].title == "Needs triggers"
+
+    def test_migrate_triggers_dry_run_mode(self, manager, capsys):
+        """With --dry-run flag, command should show changes but NOT write."""
+        from core.commands import MigrateTriggersCommand
+        from unittest.mock import patch
+
+        # Add a lesson
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Dry run test",
+            content="Test content for dry run",
+        )
+
+        cmd = MigrateTriggersCommand()
+
+        # Mock the Haiku API call
+        mock_response = "L001: dry, run, test"
+        with patch.object(cmd, "call_haiku_api", return_value=mock_response):
+            args = Namespace(command="migrate-triggers", dry_run=True)
+            result = cmd.execute(args, manager)
+
+        assert result == 0
+
+        # Check output shows what would be generated
+        captured = capsys.readouterr()
+        assert "dry run" in captured.out.lower() or "would" in captured.out.lower()
+        assert "L001" in captured.out
+
+        # Verify the lesson was NOT updated
+        lesson = manager.get_lesson("L001")
+        assert lesson.triggers == []  # Still empty

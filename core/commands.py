@@ -15,7 +15,7 @@ Commands are registered in COMMAND_REGISTRY and dispatched via dispatch_command(
 import sys
 from abc import ABC, abstractmethod
 from argparse import Namespace
-from typing import Any, Dict, Type
+from typing import Any, Dict, List, Type
 
 # Handle both module import and direct script execution
 try:
@@ -57,6 +57,15 @@ class AddCommand(Command):
         level = "system" if getattr(args, "system", False) else "project"
         promotable = not getattr(args, "no_promote", False)
         lesson_type = getattr(args, "type", "")
+
+        # Handle --triggers flag
+        triggers = None
+        auto_triggers = True
+        triggers_str = getattr(args, "triggers", None)
+        if triggers_str:
+            triggers = [t.strip() for t in triggers_str.split(",") if t.strip()]
+            auto_triggers = False
+
         lesson_id = manager.add_lesson(
             level=level,
             category=args.category,
@@ -65,6 +74,8 @@ class AddCommand(Command):
             force=getattr(args, "force", False),
             promotable=promotable,
             lesson_type=lesson_type,
+            triggers=triggers,
+            auto_triggers=auto_triggers,
         )
         promo_note = " (no-promote)" if not promotable else ""
         print(f"Added {level} lesson {lesson_id}: {args.title}{promo_note}")
@@ -131,6 +142,43 @@ class InjectCommand(Command):
         return 0
 
 
+class InjectCombinedCommand(Command):
+    """Output lessons, handoffs, and todos in JSON for single-call injection.
+
+    Combines three separate calls into one to reduce subprocess overhead:
+    - inject (lessons)
+    - handoff inject (active handoffs)
+    - handoff inject-todos (todo continuation prompt)
+    """
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        import json
+
+        # Get lessons
+        lessons_result = manager.inject_context(args.top_n)
+        lessons_formatted = lessons_result.format()
+
+        # Get handoffs
+        handoffs_formatted = manager.handoff_inject(max_active=5)
+        # Normalize empty handoffs to empty string
+        if handoffs_formatted == "(no active handoffs)":
+            handoffs_formatted = ""
+
+        # Get todos for continuation (only if there are active handoffs)
+        todos_prompt = ""
+        active_handoffs = manager.handoff_list(include_completed=False)
+        if active_handoffs:
+            todos_prompt = manager.handoff_inject_todos()
+
+        output = {
+            "lessons": lessons_formatted,
+            "handoffs": handoffs_formatted,
+            "todos": todos_prompt,
+        }
+        print(json.dumps(output))
+        return 0
+
+
 class ListCommand(Command):
     """List lessons with optional filtering."""
 
@@ -158,6 +206,52 @@ class ListCommand(Command):
                 print(f"[{lesson.id}] {rating} {prefix}{lesson.title}{stale}")
                 print(f"    -> {lesson.content}")
             print(f"\nTotal: {len(lessons)} lesson(s)")
+        return 0
+
+
+class SearchCommand(Command):
+    """Search lessons by keyword."""
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        term = args.term
+        lessons = manager.list_lessons(scope="all", search=term)
+
+        if not lessons:
+            print(f"No lessons found matching '{term}'")
+            return 0
+
+        for lesson in lessons:
+            rating = LessonRating.calculate(lesson.uses, lesson.velocity)
+            prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
+            stale = " [STALE]" if lesson.is_stale() else ""
+            print(f"[{lesson.id}] {rating} {prefix}{lesson.title}{stale}")
+            print(f"    -> {lesson.content}")
+        print(f"\nFound: {len(lessons)} lesson(s)")
+        return 0
+
+
+class ShowCommand(Command):
+    """Show a single lesson by ID."""
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        lesson_id = args.lesson_id
+        lesson = manager.get_lesson(lesson_id)
+
+        if not lesson:
+            print(f"Lesson not found: {lesson_id}")
+            return 1
+
+        rating = LessonRating.calculate(lesson.uses, lesson.velocity)
+        prefix = f"{ROBOT_EMOJI} " if lesson.source == "ai" else ""
+        stale = " [STALE]" if lesson.is_stale() else ""
+        level = "System" if lesson.id.startswith("S") else "Project"
+
+        print(f"[{lesson.id}] {rating} {prefix}{lesson.title}{stale}")
+        print(f"Level: {level}")
+        print(f"Category: {lesson.category}")
+        print(f"Uses: {lesson.uses}")
+        print(f"Velocity: {lesson.velocity}")
+        print(f"\nContent:\n{lesson.content}")
         return 0
 
 
@@ -232,6 +326,325 @@ class PrescoreCacheCommand(Command):
         return 0
 
 
+class StopHookBatchCommand(Command):
+    """Process multiple stop-hook operations in a single Python invocation.
+
+    This command combines the following operations to reduce Python startup overhead:
+    1. Process handoffs from transcript (handoff process-transcript)
+    2. Sync todos to handoffs (handoff sync-todos)
+    3. Cite all provided lessons (cite)
+    4. Add transcript to linked handoff (handoff add-transcript)
+
+    Expected savings: ~200-300ms (3 fewer Python startups at 70-150ms each)
+    """
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        import json
+        from pathlib import Path
+
+        transcript_path = getattr(args, "transcript", "")
+        citations_str = getattr(args, "citations", "")
+        session_id = getattr(args, "session_id", "") or ""
+
+        results = {
+            "handoffs_processed": 0,
+            "todos_synced": False,
+            "citations_count": 0,
+            "transcript_added": False,
+            "git_commit_detected": False,
+            "auto_completed": False,
+            "errors": [],
+        }
+
+        # Track if git commit was detected in transcript
+        git_commit_detected = False
+
+        # 1. Process handoffs from transcript
+        if transcript_path and Path(transcript_path).exists():
+            try:
+                # Read and parse transcript for the cached format expected by process-transcript
+                with open(transcript_path, "r") as f:
+                    lines = f.readlines()
+                    entries = []
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            try:
+                                entries.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+
+                    # Build transcript_data in the format expected by parse_transcript_for_handoffs
+                    assistant_texts = []
+                    last_todowrite = None
+                    for entry in entries:
+                        if entry.get("type") == "assistant":
+                            content = entry.get("message", {}).get("content", [])
+                            for item in content:
+                                if item.get("type") == "text":
+                                    assistant_texts.append(item.get("text", ""))
+                                elif item.get("type") == "tool_use" and item.get("name") == "TodoWrite":
+                                    last_todowrite = item.get("input", {}).get("todos")
+                                # Detect git commit in Bash tool calls
+                                elif item.get("type") == "tool_use" and item.get("name") == "Bash":
+                                    cmd = item.get("input", {}).get("command", "")
+                                    if "git commit" in cmd:
+                                        git_commit_detected = True
+
+                    transcript_data = {
+                        "assistant_texts": assistant_texts,
+                        "last_todowrite": last_todowrite,
+                    }
+
+                    # Process handoffs
+                    operations = manager.parse_transcript_for_handoffs(
+                        transcript_data, session_id=session_id
+                    )
+                    if operations:
+                        result = manager.handoff_batch_process(operations)
+                        results["handoffs_processed"] = len(
+                            [r for r in result.get("results", []) if r.get("ok")]
+                        )
+
+                    # 2. Sync todos if found
+                    if last_todowrite and isinstance(last_todowrite, list):
+                        # Get session handoff for priority targeting
+                        session_handoff = None
+                        if session_id:
+                            session_handoff = manager.handoff_get_by_session(session_id)
+                        sync_result = manager.handoff_sync_todos(
+                            last_todowrite,
+                            session_handoff=session_handoff,
+                            session_id=session_id,  # Prevents cross-session pollution
+                        )
+                        results["todos_synced"] = sync_result is not None
+
+            except Exception as e:
+                results["errors"].append(f"transcript_processing: {str(e)}")
+
+        # 3. Cite all provided lessons
+        if citations_str:
+            # Parse comma-separated citation IDs (L001,L002,S001)
+            citation_ids = [c.strip() for c in citations_str.split(",") if c.strip()]
+            for lesson_id in citation_ids:
+                try:
+                    manager.cite_lesson(lesson_id)
+                    results["citations_count"] += 1
+                except ValueError as e:
+                    results["errors"].append(f"cite_{lesson_id}: {str(e)}")
+
+        # 4. Add transcript to linked handoff
+        if session_id and transcript_path:
+            try:
+                add_result = manager.handoff_add_transcript(session_id, transcript_path)
+                results["transcript_added"] = add_result is not None
+            except Exception as e:
+                results["errors"].append(f"add_transcript: {str(e)}")
+
+        # 5. Auto-complete ready_for_review handoffs when git commit detected
+        results["git_commit_detected"] = git_commit_detected
+        if git_commit_detected:
+            try:
+                # Find handoff to complete - prefer session-linked, else any ready_for_review
+                handoff_to_complete = None
+                if session_id:
+                    handoff_to_complete = manager.handoff_get_by_session(session_id)
+
+                if handoff_to_complete and handoff_to_complete.status == "ready_for_review":
+                    manager.handoff_complete(handoff_to_complete.id)
+                    results["auto_completed"] = True
+                elif not handoff_to_complete:
+                    # No session-linked handoff - check for any ready_for_review
+                    handoffs = manager.handoff_list()
+                    for hf in handoffs:
+                        if hf.status == "ready_for_review":
+                            manager.handoff_complete(hf.id)
+                            results["auto_completed"] = True
+                            break
+            except Exception as e:
+                results["errors"].append(f"auto_complete: {str(e)}")
+
+        # Output results as JSON for parsing by stop-hook.sh
+        print(json.dumps(results))
+        return 0
+
+
+class MigrateTriggersCommand(Command):
+    """Migrate existing lessons by auto-generating triggers using Claude Haiku."""
+
+    @staticmethod
+    def find_lessons_without_triggers(manager) -> List:
+        """Find all lessons that don't have triggers yet.
+
+        Args:
+            manager: LessonsManager instance
+
+        Returns:
+            List of Lesson objects without triggers
+        """
+        all_lessons = (
+            manager.list_lessons("project").lessons
+            if hasattr(manager.list_lessons("project"), "lessons")
+            else manager.list_lessons("project")
+        ) + (
+            manager.list_lessons("system").lessons
+            if hasattr(manager.list_lessons("system"), "lessons")
+            else manager.list_lessons("system")
+        )
+        return [l for l in all_lessons if not l.triggers]
+
+    @staticmethod
+    def generate_haiku_prompt(lessons: List) -> str:
+        """Generate a batch prompt for Haiku to generate triggers.
+
+        Args:
+            lessons: List of Lesson objects needing triggers
+
+        Returns:
+            Prompt string for Haiku API
+        """
+        if not lessons:
+            return ""
+
+        lesson_texts = []
+        for lesson in lessons:
+            lesson_texts.append(
+                f"[{lesson.id}] Category: {lesson.category}\n"
+                f"Title: {lesson.title}\n"
+                f"Content: {lesson.content}"
+            )
+
+        prompt = """Generate 3-5 keyword triggers for each lesson below. These keywords should indicate when the lesson applies - what terms or concepts would appear in a query where this lesson is relevant.
+
+Output format (one line per lesson):
+L001: keyword1, keyword2, keyword3
+
+Lessons:
+"""
+        prompt += "\n\n".join(lesson_texts)
+        prompt += "\n\nOutput ONLY the ID: keywords lines, nothing else."
+
+        return prompt
+
+    @staticmethod
+    def parse_haiku_response(response: str) -> Dict[str, List[str]]:
+        """Parse Haiku response into lesson_id -> triggers mapping.
+
+        Args:
+            response: Raw response text from Haiku
+
+        Returns:
+            Dictionary mapping lesson IDs to lists of trigger keywords
+        """
+        import re
+        result = {}
+        for line in response.strip().splitlines():
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            # Parse lines like "L001: destructor, mutex, shutdown"
+            parts = line.split(":", 1)
+            if len(parts) != 2:
+                continue
+            lesson_id = parts[0].strip()
+            # Validate lesson ID format (L### or S###)
+            if not re.match(r'^[LS]\d{3}$', lesson_id):
+                continue  # Skip malformed IDs
+            triggers_str = parts[1].strip()
+            # Split by comma and clean up each trigger
+            triggers = [t.strip() for t in triggers_str.split(",") if t.strip()]
+            if triggers:
+                result[lesson_id] = triggers
+        return result
+
+    @staticmethod
+    def call_haiku_api(prompt: str) -> str:
+        """Call the Haiku API to generate triggers.
+
+        Args:
+            prompt: The prompt to send to Haiku
+
+        Returns:
+            Response text from Haiku
+
+        Raises:
+            RuntimeError: If the API call fails
+        """
+        import anthropic
+
+        client = anthropic.Anthropic()
+        try:
+            message = client.messages.create(
+                model="claude-3-5-haiku-latest",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            if not message.content:
+                raise ValueError("Empty response from API")
+            return message.content[0].text
+        except anthropic.APIError as e:
+            raise RuntimeError(f"Haiku API error: {e}") from e
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        """Execute the migrate-triggers command.
+
+        Args:
+            args: Parsed command-line arguments (includes dry_run flag)
+            manager: LessonsManager instance
+
+        Returns:
+            Exit code (0 for success)
+        """
+        dry_run = getattr(args, "dry_run", False)
+
+        # 1. Find lessons without triggers
+        lessons = self.find_lessons_without_triggers(manager)
+
+        if not lessons:
+            print("No lessons found without triggers.")
+            return 0
+
+        print(f"Found {len(lessons)} lesson(s) without triggers.")
+
+        # 2. Generate Haiku prompt
+        prompt = self.generate_haiku_prompt(lessons)
+
+        # 3. If dry_run, show prompt and what would happen
+        if dry_run:
+            print("\n[Dry run] Would call Haiku API with prompt:")
+            print("-" * 40)
+            print(prompt[:500] + "..." if len(prompt) > 500 else prompt)
+            print("-" * 40)
+            for lesson in lessons:
+                print(f"  - {lesson.id}: {lesson.title}")
+            return 0
+
+        # 4. Call Haiku API
+        print("Calling Haiku API...")
+        response = MigrateTriggersCommand.call_haiku_api(prompt)
+
+        # 5. Parse response
+        triggers_map = self.parse_haiku_response(response)
+
+        if not triggers_map:
+            print("Error: Could not parse triggers from Haiku response")
+            return 1
+
+        # 6. Update each lesson's triggers
+        updated_count = 0
+        for lesson_id, triggers in triggers_map.items():
+            try:
+                manager.update_lesson_triggers(lesson_id, triggers)
+                print(f"  Updated {lesson_id}: {', '.join(triggers)}")
+                updated_count += 1
+            except (ValueError, KeyError) as e:
+                print(f"  Warning: Could not update {lesson_id}: {e}", file=sys.stderr)
+
+        # 7. Print summary
+        print(f"\nUpdated triggers for {updated_count} lesson(s).")
+        return 0
+
+
 # =============================================================================
 # Command Registry
 # =============================================================================
@@ -243,13 +656,18 @@ COMMAND_REGISTRY: Dict[str, Type[Command]] = {
     "add-system": AddSystemCommand,
     "cite": CiteCommand,
     "inject": InjectCommand,
+    "inject-combined": InjectCombinedCommand,
     "list": ListCommand,
+    "search": SearchCommand,
+    "show": ShowCommand,
     "decay": DecayCommand,
     "edit": EditCommand,
     "delete": DeleteCommand,
     "promote": PromoteCommand,
     "score-relevance": ScoreRelevanceCommand,
     "prescore-cache": PrescoreCacheCommand,
+    "stop-hook-batch": StopHookBatchCommand,
+    "migrate-triggers": MigrateTriggersCommand,
 }
 
 

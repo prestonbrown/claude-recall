@@ -1,0 +1,1 @@
+../../../../adapters/claude-code/post-exitplanmode-hook.sh

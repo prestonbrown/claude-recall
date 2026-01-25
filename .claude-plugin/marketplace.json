@@ -1,0 +1,15 @@
+{
+  "name": "claude-recall",
+  "description": "Claude Recall - AI memory for Claude Code",
+  "owner": {
+    "name": "Claude Recall Contributors"
+  },
+  "plugins": [
+    {
+      "name": "claude-recall",
+      "description": "AI memory for Claude Code - captures lessons across sessions and tracks multi-step work via handoffs",
+      "version": "0.9.5",
+      "source": "./plugins/claude-recall"
+    }
+  ]
+}

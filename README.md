@@ -38,6 +38,42 @@ cd claude-recall
 ./install.sh --opencode  # OpenCode only
 ```
 
+## OpenCode Adapter
+
+The OpenCode adapter provides the same learning capabilities as the Claude Code adapter, with ~95% feature parity.
+
+### Installation
+
+```bash
+./install.sh --opencode
+```
+
+### Features
+
+- [x] Lessons system (injection, capture, decay, reminders)
+- [x] Handoffs system (tracking, TodoWrite sync)
+- [x] Compaction support
+- [x] Debug logging
+
+### Configuration
+
+Create or edit `~/.config/claude-recall/config.json`:
+
+```json
+{
+  "enabled": true,
+  "topLessonsToShow": 5,
+  "relevanceTopN": 5,
+  "remindEvery": 12,
+  "decayIntervalDays": 7,
+  "debugLevel": 1
+}
+```
+
+### Usage
+
+See `/lessons` and `/handoffs` commands in OpenCode for more details.
+
 ## Migrating from coding-agent-lessons
 
 Run the installer to automatically migrate:
@@ -230,6 +266,7 @@ LESSON: category: title - content    # Add with category
 
 ```bash
 CLAUDE_RECALL_BASE=~/.config/claude-recall    # System lessons location (preferred)
+CLAUDE_RECALL_CONFIG=~/.config/claude-recall/config.json  # Shared config override
 RECALL_BASE=~/.config/claude-recall           # Legacy alias
 LESSONS_BASE=~/.config/claude-recall          # Legacy alias
 PROJECT_DIR=/path/to/project                  # Project root
@@ -248,21 +285,27 @@ export CLAUDE_RECALL_DEBUG=1   # 0=off, 1=info, 2=debug, 3=trace
 
 Logs written to `~/.local/state/claude-recall/debug.log` (XDG state directory).
 
-### Claude Code Settings
+### Claude Recall Settings
+
+In `~/.config/claude-recall/config.json`:
+```json
+{
+  "enabled": true,
+  "debugLevel": 0,
+  "remindEvery": 12,
+  "topLessonsToShow": 5,
+  "relevanceTopN": 5,
+  "promotionThreshold": 50,
+  "decayIntervalDays": 7,
+  "maxLessons": 30
+}
+```
+
+### Claude Code Hooks
 
 In `~/.claude/settings.json`:
 ```json
 {
-  "claudeRecall": {
-    "enabled": true,
-    "debugLevel": 0,
-    "remindEvery": 12,
-    "topLessonsToShow": 5,
-    "relevanceTopN": 5,
-    "promotionThreshold": 50,
-    "decayIntervalDays": 7,
-    "maxLessons": 30
-  },
   "hooks": {
     "SessionStart": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-hook.sh"}]}],
     "UserPromptSubmit": [{"hooks": [

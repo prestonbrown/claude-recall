@@ -13,12 +13,12 @@ FORMATTER_PATH = Path(__file__).parent.parent / "adapters" / "claude-code" / "fo
 
 
 class TestFormatSettings:
-    """Tests for the settings.json formatter."""
+    """Tests for the config.json formatter."""
 
     def test_valid_json_without_hooks(self, tmp_path: Path) -> None:
         """Formatter should produce valid JSON when there are no hooks."""
         settings = {"foo": "bar", "baz": 123}
-        input_file = tmp_path / "settings.json"
+        input_file = tmp_path / "config.json"
         input_file.write_text(json.dumps(settings))
 
         result = subprocess.run(
@@ -35,12 +35,12 @@ class TestFormatSettings:
     def test_valid_json_with_hooks(self, tmp_path: Path) -> None:
         """Formatter should produce valid JSON when hooks are present."""
         settings = {
-            "claudeRecall": {"enabled": True},
+            "enabled": True,
             "hooks": {
                 "Stop": [{"hooks": [{"type": "command", "command": "echo test", "timeout": 1000}]}]
             },
         }
-        input_file = tmp_path / "settings.json"
+        input_file = tmp_path / "config.json"
         input_file.write_text(json.dumps(settings))
 
         result = subprocess.run(
@@ -60,7 +60,7 @@ class TestFormatSettings:
                 "Stop": [{"hooks": [{"type": "command", "command": "echo test", "timeout": 1000}]}]
             },
         }
-        input_file = tmp_path / "settings.json"
+        input_file = tmp_path / "config.json"
         input_file.write_text(json.dumps(settings))
 
         result = subprocess.run(
@@ -84,7 +84,7 @@ class TestFormatSettings:
                 "Stop": [{"hooks": []}],
             },
         }
-        input_file = tmp_path / "settings.json"
+        input_file = tmp_path / "config.json"
         input_file.write_text(json.dumps(settings))
 
         result = subprocess.run(
@@ -109,7 +109,7 @@ class TestFormatSettings:
                 ]
             },
         }
-        input_file = tmp_path / "settings.json"
+        input_file = tmp_path / "config.json"
         input_file.write_text(json.dumps(settings))
 
         result = subprocess.run(

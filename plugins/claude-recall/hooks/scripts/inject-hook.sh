@@ -1,0 +1,1 @@
+../../../../adapters/claude-code/inject-hook.sh

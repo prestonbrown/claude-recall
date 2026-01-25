@@ -43,7 +43,7 @@ extract_handoff_context_python() {
     # - Validating the result (rejects garbage summaries)
     local result
     result=$(PROJECT_DIR="$PROJECT_DIR" LESSONS_BASE="$LESSONS_BASE" LESSONS_SCORING_ACTIVE=1 \
-        timeout "$CONTEXT_TIMEOUT" python3 "$PYTHON_MANAGER" extract-context "$transcript_path" --git-ref "$git_ref" 2>/dev/null) || return 1
+        timeout "$CONTEXT_TIMEOUT" "$PYTHON_BIN" "$PYTHON_MANAGER" extract-context "$transcript_path" --git-ref "$git_ref" 2>/dev/null) || return 1
 
     # Check if we got valid JSON (not empty object)
     if [[ -z "$result" ]] || [[ "$result" == "{}" ]]; then
@@ -64,7 +64,7 @@ get_most_recent_handoff() {
         # Get first non-completed handoff (most recent by file order)
         # Matches both legacy A### format and new hf-XXXXXXX format
         PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-            python3 "$PYTHON_MANAGER" handoff list 2>/dev/null | \
+            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff list 2>/dev/null | \
             head -1 | grep -oE '\[(A[0-9]{3}|hf-[0-9a-f]+)\]' | tr -d '[]' || true
     fi
 }
@@ -88,6 +88,39 @@ is_clean_exit() {
             return 0
             ;;
     esac
+}
+
+# Background worker function - runs the slow Haiku API call asynchronously
+# This is spawned via nohup so it doesn't block the user
+do_extract_and_set_context() {
+    local transcript_path="$1"
+    local git_ref="$2"
+    local handoff_id="$3"
+    local project_root="$4"
+
+    # Extract structured handoff context using Python CLI
+    # This handles tool_use/thinking blocks properly (not just text blocks)
+    local context_json
+    context_json=$(extract_handoff_context_python "$transcript_path" "$git_ref")
+
+    if [[ -n "$context_json" ]] && echo "$context_json" | jq -e . >/dev/null 2>&1; then
+        # Use structured set-context command
+        if [[ -f "$PYTHON_MANAGER" ]]; then
+            local result
+            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+                "$PYTHON_BIN" "$PYTHON_MANAGER" handoff set-context "$handoff_id" --json "$context_json" 2>&1)
+
+            if [[ $? -eq 0 ]]; then
+                local summary_preview
+                summary_preview=$(echo "$context_json" | jq -r '.summary // ""' | head -c 50)
+                echo "[session-end] Set context for $handoff_id (git: ${git_ref:-none}): ${summary_preview}..."
+            else
+                echo "[session-end] Failed to set context: $result"
+            fi
+        fi
+    else
+        echo "[session-end] Failed to extract handoff context"
+    fi
 }
 
 main() {
@@ -136,29 +169,21 @@ main() {
     local git_ref
     git_ref=$(get_git_ref "$project_root")
 
-    # Extract structured handoff context using Python CLI
-    # This handles tool_use/thinking blocks properly (not just text blocks)
-    local context_json
-    context_json=$(extract_handoff_context_python "$transcript_path" "$git_ref")
+    # Run the slow Haiku API call in background so we don't block the user
+    # This saves ~1.5-3 seconds of perceived latency
+    # Output goes to background.log for debugging
+    nohup bash -c "$(declare -f extract_handoff_context_python do_extract_and_set_context); \
+        PYTHON_MANAGER='$PYTHON_MANAGER' \
+        PROJECT_DIR='$project_root' \
+        LESSONS_BASE='$LESSONS_BASE' \
+        LESSONS_DEBUG='${LESSONS_DEBUG:-}' \
+        LESSONS_SCORING_ACTIVE=1 \
+        CONTEXT_TIMEOUT='$CONTEXT_TIMEOUT' \
+        do_extract_and_set_context '$transcript_path' '$git_ref' '$handoff_id' '$project_root'" \
+        >> "$CLAUDE_RECALL_STATE/background.log" 2>&1 &
 
-    if [[ -n "$context_json" ]] && echo "$context_json" | jq -e . >/dev/null 2>&1; then
-        # Use structured set-context command
-        if [[ -f "$PYTHON_MANAGER" ]]; then
-            local result
-            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                python3 "$PYTHON_MANAGER" handoff set-context "$handoff_id" --json "$context_json" 2>&1)
-
-            if [[ $? -eq 0 ]]; then
-                local summary_preview
-                summary_preview=$(echo "$context_json" | jq -r '.summary // ""' | head -c 50)
-                echo "[session-end] Set context for $handoff_id (git: ${git_ref:-none}): ${summary_preview}..." >&2
-            else
-                echo "[session-end] Failed to set context: $result" >&2
-            fi
-        fi
-    else
-        echo "[session-end] Failed to extract handoff context" >&2
-    fi
+    # Disown the background process so it's not tied to this shell
+    disown 2>/dev/null || true
 
     exit 0
 }

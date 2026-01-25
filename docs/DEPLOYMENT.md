@@ -72,31 +72,80 @@ Add to `~/.claude/settings.json`:
         "command": "~/.claude/hooks/stop-hook.sh"
       }
     ]
-  },
-  "claudeRecall": {
-    "enabled": true
   }
 }
 ```
 
+4. **Configure Claude Recall:**
+
+Edit `~/.config/claude-recall/config.json` (shared across Claude Code and OpenCode).
+
 ### OpenCode
 
-1. **Navigate to plugins directory:**
+**Recommended installation:**
+
 ```bash
-cd ~/.opencode/plugins
+./install.sh --opencode
 ```
 
-2. **Link or copy adapter:**
-```bash
-# Symlink (recommended for development)
-ln -s /path/to/claude-recall/adapters/opencode lessons-plugin
+This installs:
+- `~/.config/opencode/plugins/lessons.ts` - Plugin file
+- `~/.config/opencode/command/lessons.md` - /lessons command
+- `~/.config/opencode/command/handoffs.md` - /handoffs command
+- `~/.config/opencode/AGENTS.md` - Global instructions
+- `~/.local/bin/claude-recall` - CLI wrapper (ensure it is on your PATH)
 
-# Or copy files
-mkdir -p lessons-plugin
-cp -r /path/to/claude-recall/adapters/opencode/* lessons-plugin/
+**Configuration:**
+
+Edit `~/.config/claude-recall/config.json`:
+
+```json
+{
+  "enabled": true,
+  "topLessonsToShow": 5,
+  "relevanceTopN": 5,
+  "remindEvery": 12,
+  "decayIntervalDays": 7,
+  "debugLevel": 1,
+  "small_model": "claude-3-5-haiku-latest"
+}
 ```
 
-3. **Register plugin** (method depends on OpenCode version)
+You can also override `debugLevel` via `CLAUDE_RECALL_DEBUG`, `RECALL_DEBUG`, or `LESSONS_DEBUG`.
+
+**Slash command handling:**
+
+- The plugin intercepts `/lessons` and `/handoffs` command executions, runs the CLI directly, and injects only the CLI output so the prompt text is not echoed.
+
+**Troubleshooting:**
+
+- **Plugin not loading:**
+  - Check plugin file exists: `ls ~/.config/opencode/plugins/lessons.ts`
+  - Check TypeScript compilation: View OpenCode logs for errors
+
+- **Lessons not injecting:**
+  - Verify enabled: Check `~/.config/claude-recall/config.json` has `enabled: true`
+  - Check debug logs: View `~/.local/state/claude-recall/debug.log`
+  - Increase `debugLevel` or set `CLAUDE_RECALL_DEBUG=2` for detailed logging
+
+- **Handoffs not syncing:**
+  - Verify active handoff exists: Run `/handoffs list --active-only`
+  - Check TodoWrite sync: Enable debugLevel 2 and look for "todowrite.sync" events
+
+**Manual installation (for development):**
+
+1. **Navigate to config directory:**
+```bash
+mkdir -p ~/.config/opencode/plugins
+mkdir -p ~/.config/opencode/command
+```
+
+2. **Copy adapter files:**
+```bash
+cp adapters/opencode/plugin/lessons.ts ~/.config/opencode/plugins/
+cp adapters/opencode/command/lessons.md ~/.config/opencode/command/
+cp adapters/opencode/command/handoffs.md ~/.config/opencode/command/
+```
 
 ## File Locations
 
@@ -105,6 +154,7 @@ cp -r /path/to/claude-recall/adapters/opencode/* lessons-plugin/
 | Location | Purpose |
 |----------|---------|
 | `~/.config/claude-recall/` | System lessons base directory |
+| `~/.config/claude-recall/config.json` | Shared Claude Recall configuration |
 | `~/.config/claude-recall/LESSONS.md` | System-wide lessons |
 | `~/.config/claude-recall/.decay-last-run` | Decay timestamp |
 | `~/.config/claude-recall/.citation-state/` | Citation checkpoints |
@@ -184,20 +234,19 @@ cp -r core/*.py ~/.config/claude-recall/
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLAUDE_RECALL_BASE` | `~/.config/claude-recall` | System lessons location (preferred) |
+| `CLAUDE_RECALL_CONFIG` | `~/.config/claude-recall/config.json` | Shared Claude Recall config override |
 | `RECALL_BASE` | - | Legacy alias for system lessons location |
 | `LESSONS_BASE` | - | Legacy alias for system lessons location |
 | `PROJECT_DIR` | Current directory | Project root |
 | `LESSON_REMIND_EVERY` | `12` | Reminder frequency (prompts) |
 
-### Claude Code Settings
+### Claude Recall Settings
 
-In `~/.claude/settings.json`:
+In `~/.config/claude-recall/config.json`:
 
 ```json
 {
-  "claudeRecall": {
-    "enabled": true
-  }
+  "enabled": true
 }
 ```
 
@@ -214,7 +263,7 @@ ls -la ~/.config/claude-recall/
 
 # Check permissions
 file ~/.claude/hooks/*.sh
-file ~/.config/claude-recall/cli.py
+file ~/.local/bin/claude-recall
 ```
 
 ### Test Hooks
@@ -224,8 +273,8 @@ file ~/.config/claude-recall/cli.py
 echo '{"cwd":"/tmp"}' | ~/.claude/hooks/inject-hook.sh
 
 # Test manager directly
-python3 ~/.config/claude-recall/cli.py list
-python3 ~/.config/claude-recall/cli.py handoff list
+claude-recall list
+claude-recall handoff list
 ```
 
 ### Verify in Session
@@ -264,7 +313,7 @@ Start a new Claude Code session. You should see:
 
 2. **Test manager directly:**
    ```bash
-   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/cli.py inject 5
+   PROJECT_DIR=$PWD claude-recall inject 5
    ```
 
 ### Citations Not Tracked
@@ -292,7 +341,7 @@ Start a new Claude Code session. You should see:
 
 2. **Test handoffs injection:**
    ```bash
-   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/cli.py handoff inject
+   PROJECT_DIR=$PWD claude-recall handoff inject
    ```
 
 ### Decay Not Running
@@ -304,7 +353,7 @@ Start a new Claude Code session. You should see:
 
 2. **Force decay manually:**
    ```bash
-   PROJECT_DIR=$PWD python3 ~/.config/claude-recall/cli.py decay 30
+   PROJECT_DIR=$PWD claude-recall decay 30
    ```
 
 ## Backup and Migration
@@ -344,12 +393,10 @@ cp $OLD_PROJECT/.claude-recall/LESSONS.md $NEW_PROJECT/.claude-recall/
 
 ### Temporarily Disable
 
-In `~/.claude/settings.json`:
+In `~/.config/claude-recall/config.json`:
 ```json
 {
-  "claudeRecall": {
-    "enabled": false
-  }
+  "enabled": false
 }
 ```
 
@@ -364,8 +411,6 @@ rm ~/.claude/hooks/stop-hook.sh
 
 # Remove system files
 rm -rf ~/.config/claude-recall/
-
-# Remove from settings.json (manually edit)
 ```
 
 ## Version Compatibility
@@ -393,7 +438,7 @@ rm -rf ~/.config/claude-recall/
 ```bash
 # Recommended permissions
 chmod 755 ~/.claude/hooks/*.sh
-chmod 644 ~/.config/claude-recall/cli.py
+chmod 755 ~/.local/bin/claude-recall
 chmod 644 ~/.config/claude-recall/LESSONS.md
 chmod 700 ~/.config/claude-recall/.citation-state/
 ```

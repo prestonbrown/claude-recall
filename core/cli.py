@@ -56,6 +56,12 @@ def main():
         default="",
         help="Lesson type for framing (auto-classified if not specified)",
     )
+    add_parser.add_argument(
+        "--triggers",
+        type=str,
+        default=None,
+        help="Comma-separated trigger keywords (skip auto-generation)",
+    )
 
     # add-ai command
     add_ai_parser = subparsers.add_parser("add-ai", help="Add an AI-generated lesson")
@@ -92,6 +98,14 @@ def main():
     inject_parser = subparsers.add_parser("inject", help="Output top lessons for injection")
     inject_parser.add_argument("top_n", type=int, nargs="?", default=5, help="Number of top lessons")
 
+    # inject-combined command (single-call injection with lessons, handoffs, todos)
+    inject_combined_parser = subparsers.add_parser(
+        "inject-combined", help="Output lessons, handoffs, and todos in JSON"
+    )
+    inject_combined_parser.add_argument(
+        "top_n", type=int, nargs="?", default=5, help="Number of top lessons"
+    )
+
     # list command
     list_parser = subparsers.add_parser("list", help="List lessons")
     list_parser.add_argument("--project", action="store_true", help="Project lessons only")
@@ -99,6 +113,14 @@ def main():
     list_parser.add_argument("--search", "-s", help="Search term")
     list_parser.add_argument("--category", "-c", help="Filter by category")
     list_parser.add_argument("--stale", action="store_true", help="Show stale lessons only")
+
+    # search command (simpler interface for searching)
+    search_parser = subparsers.add_parser("search", help="Search lessons by keyword")
+    search_parser.add_argument("term", help="Search term")
+
+    # show command
+    show_parser = subparsers.add_parser("show", help="Show a single lesson by ID")
+    show_parser.add_argument("lesson_id", help="Lesson ID (e.g., L001 or S001)")
 
     # decay command
     decay_parser = subparsers.add_parser("decay", help="Decay lesson metrics")
@@ -211,6 +233,7 @@ def main():
     )
     sync_todos_parser.add_argument("todos_json", help="JSON array of todos from TodoWrite")
     sync_todos_parser.add_argument("--session-handoff", help="Handoff ID from session lookup (highest priority)")
+    sync_todos_parser.add_argument("--session-id", help="Session ID - if provided without session-handoff, prevents fallback to most recent handoff")
 
     # handoff inject-todos (format handoffs as todo suggestions)
     handoff_subparsers.add_parser(
@@ -367,7 +390,7 @@ def main():
 
     # config command - read settings for shell scripts
     config_parser = subparsers.add_parser("config", help="Get configuration value")
-    config_parser.add_argument("key", help="Config key (dot notation, e.g., claudeRecall.debugLevel)")
+    config_parser.add_argument("key", help="Config key (dot notation, e.g., debugLevel)")
     config_parser.add_argument("--default", "-d", default="", help="Default value if key not found")
     config_parser.add_argument(
         "--type", "-t",
@@ -392,6 +415,35 @@ def main():
     # alerts send - send alerts to webhook (for testing)
     alerts_send_parser = alerts_subparsers.add_parser("send", help="Send alerts to webhook")
     alerts_send_parser.add_argument("--bell", action="store_true", help="Also ring terminal bell")
+
+    # migrate-triggers command - auto-generate triggers for lessons
+    migrate_triggers_parser = subparsers.add_parser(
+        "migrate-triggers",
+        help="Auto-generate triggers for lessons using Claude Haiku"
+    )
+    migrate_triggers_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show prompt without calling API"
+    )
+
+    # stop-hook-batch command - batch processing for stop-hook.sh
+    stop_hook_batch_parser = subparsers.add_parser(
+        "stop-hook-batch",
+        help="Process multiple stop-hook operations in one call (reduces Python startup overhead)"
+    )
+    stop_hook_batch_parser.add_argument(
+        "--transcript", "-t",
+        help="Path to transcript JSONL file"
+    )
+    stop_hook_batch_parser.add_argument(
+        "--citations", "-c",
+        help="Comma-separated list of lesson citations (e.g., L001,L002,S001)"
+    )
+    stop_hook_batch_parser.add_argument(
+        "--session-id", "-s",
+        help="Claude session ID for linking handoffs and transcripts"
+    )
 
     args = parser.parse_args()
 
@@ -608,7 +660,8 @@ def main():
                         print("Error: todos_json must be a JSON array", file=sys.stderr)
                         sys.exit(1)
                     session_handoff = getattr(args, 'session_handoff', None)
-                    result = manager.handoff_sync_todos(todos, session_handoff=session_handoff)
+                    session_id = getattr(args, 'session_id', None)
+                    result = manager.handoff_sync_todos(todos, session_handoff=session_handoff, session_id=session_id)
                     if result:
                         print(f"Synced {len(todos)} todo(s) to handoff {result}")
                 except json_module.JSONDecodeError as e:

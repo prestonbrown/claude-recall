@@ -27,15 +27,71 @@ STATE_DIR="$CLAUDE_RECALL_STATE/.citation-state"
 # Global transcript cache (set by parse_transcript_once)
 TRANSCRIPT_CACHE=""
 
+# Byte-offset tracking for incremental transcript parsing
+OFFSET_FILE="$CLAUDE_RECALL_STATE/transcript_offsets.json"
+
+get_transcript_offset() {
+    local session_id="$1"
+    [[ -f "$OFFSET_FILE" ]] || echo '{}' > "$OFFSET_FILE"
+    local result
+    result=$(jq -r --arg id "$session_id" '.[$id] // "0"' "$OFFSET_FILE" 2>/dev/null)
+    if [[ $? -ne 0 || -z "$result" ]]; then
+        # Corrupted offset file, reset it
+        echo '{}' > "$OFFSET_FILE"
+        echo "0"
+    else
+        echo "$result"
+    fi
+}
+
+set_transcript_offset() {
+    local session_id="$1" offset="$2"
+    local tmp=$(mktemp "${OFFSET_FILE}.XXXXXX")
+    if ! jq --arg id "$session_id" --arg off "$offset" \
+            '.[$id] = ($off | tonumber)' "$OFFSET_FILE" > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+    mv "$tmp" "$OFFSET_FILE"
+}
+
 # Parse transcript once and cache all needed data
 # This replaces 12+ separate jq invocations with a single parse
+# Uses byte-offset tracking to only parse new content since last run
 parse_transcript_once() {
     local transcript_path="$1"
     local last_timestamp="$2"
+    local session_id="$3"
+
+    # Get byte offset for this session (0 = first run, parse everything)
+    local offset=0
+    [[ -n "$session_id" ]] && offset=$(get_transcript_offset "$session_id")
+
+    # Get current file size (macOS: stat -f%z, Linux: stat -c%s)
+    local current_size
+    current_size=$(stat -f%z "$transcript_path" 2>/dev/null || stat -c%s "$transcript_path" 2>/dev/null || echo "0")
+
+    # Handle edge cases
+    if [[ "$offset" -ge "$current_size" ]]; then
+        # No new content - return empty cache
+        TRANSCRIPT_CACHE='{"assistant_texts":[],"assistant_texts_new":[],"last_todowrite":null,"last_todowrite_new":null,"edit_count":0,"todowrite_count":0,"latest_timestamp":"","citations":[],"citations_new":[]}'
+        return 0
+    fi
+
+    # Parse content: either full file (offset=0) or tail from offset
+    # When using tail, skip partial first line with tail -n +2
+    local jq_input
+    if [[ "$offset" -eq 0 ]]; then
+        # First run or reset: parse entire file
+        jq_input=$(cat "$transcript_path")
+    else
+        # Incremental: parse only new content, skip partial first line
+        jq_input=$(tail -c +$((offset + 1)) "$transcript_path" | tail -n +2)
+    fi
 
     # Single jq call extracts everything we need
     # Output is a JSON object we can query cheaply with simple jq calls
-    TRANSCRIPT_CACHE=$(jq -s --arg ts "$last_timestamp" '{
+    TRANSCRIPT_CACHE=$(echo "$jq_input" | jq -s --arg ts "$last_timestamp" '{
         # All assistant text content (joined for grep)
         assistant_texts: [.[] | select(.type == "assistant") |
             .message.content[]? | select(.type == "text") | .text],
@@ -70,8 +126,29 @@ parse_transcript_once() {
             select(.type == "tool_use" and .name == "TodoWrite")] | length),
 
         # Latest timestamp for checkpoint
-        latest_timestamp: ([.[] | .timestamp // empty] | last // "")
-    }' "$transcript_path" 2>/dev/null || echo "{}")
+        latest_timestamp: ([.[] | .timestamp // empty] | last // ""),
+
+        # Extract filtered citations (all assistant texts)
+        # Finds [L###] or [S###] NOT followed by " [*" (star rating = listing, not citation)
+        # Uses scan with capture group to check context after each citation
+        citations: ([.[] | select(.type == "assistant") |
+            .message.content[]? | select(.type == "text") | .text] | join("\n") |
+            [scan("(\\[[LS][0-9]{3}\\])(.{0,3})")] |
+            map(select(.[1] | test("^ \\[\\*") | not)) |
+            map(.[0]) | unique | sort),
+
+        # Extract filtered citations (new messages only, for incremental processing)
+        citations_new: (if $ts == "" then [] else
+            ([.[] | select(.type == "assistant" and .timestamp > $ts) |
+                .message.content[]? | select(.type == "text") | .text] | join("\n") |
+                [scan("(\\[[LS][0-9]{3}\\])(.{0,3})")] |
+                map(select(.[1] | test("^ \\[\\*") | not)) |
+                map(.[0]) | unique | sort)
+        end)
+    }' 2>/dev/null || echo "{}")
+
+    # Update byte offset for next run (save current file size)
+    [[ -n "$session_id" ]] && set_transcript_offset "$session_id" "$current_size"
 }
 
 # Clean up orphaned checkpoint files (transcripts deleted but checkpoints remain)
@@ -88,8 +165,9 @@ cleanup_orphaned_checkpoints() {
     (( RANDOM % 10 != 0 )) && return 0
 
     # Build a list of existing sessions ONCE (much faster than per-file find)
+    # PERF: Use sed to extract basename instead of xargs -n1 which spawns one process per file
     local existing_sessions
-    existing_sessions=$(find ~/.claude/projects -name "*.jsonl" -type f 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.jsonl$//' | sort -u)
+    existing_sessions=$(find ~/.claude/projects -name "*.jsonl" -type f 2>/dev/null | sed 's|.*/||; s/\.jsonl$//' | sort -u)
 
     for state_file in "$STATE_DIR"/*; do
         [[ -f "$state_file" ]] || continue
@@ -213,7 +291,7 @@ process_ai_lessons() {
         [[ -n "$explicit_type" ]] && type_args="--type $explicit_type"
         if [[ -f "$PYTHON_MANAGER" ]]; then
             result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                python3 "$PYTHON_MANAGER" add-ai $type_args -- "$category" "$title" "$content" 2>&1 || true)
+                "$PYTHON_BIN" "$PYTHON_MANAGER" add-ai $type_args -- "$category" "$title" "$content" 2>&1 || true)
         fi
 
         # Fall back to bash manager if Python fails
@@ -281,7 +359,7 @@ process_handoffs() {
     # Single Python call parses patterns, handles sub-agent blocking, and processes all operations
     local result
     result=$(echo "$TRANSCRIPT_CACHE" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-        python3 "$PYTHON_MANAGER" handoff process-transcript $session_arg 2>&1 || true)
+        "$PYTHON_BIN" "$PYTHON_MANAGER" handoff process-transcript $session_arg 2>&1 || true)
 
     [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && t2=$(get_elapsed_ms)
 
@@ -342,7 +420,7 @@ capture_todowrite() {
     if [[ -f "$PYTHON_MANAGER" ]]; then
         local result
         result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" approach sync-todos "$todo_json" 2>&1 || true)
+            "$PYTHON_BIN" "$PYTHON_MANAGER" approach sync-todos "$todo_json" 2>&1 || true)
 
         if [[ -n "$result" && "$result" != Error:* ]]; then
             echo "[handoffs] Synced TodoWrite to handoff" >&2
@@ -359,7 +437,7 @@ detect_and_warn_missing_handoff() {
     local handoff_exists=""
     if [[ -f "$PYTHON_MANAGER" ]]; then
         handoff_exists=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-            python3 "$PYTHON_MANAGER" handoff list 2>/dev/null | grep -E '\[hf-' | head -1 || true)
+            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff list 2>/dev/null | grep -E '\[hf-' | head -1 || true)
     fi
     [[ -n "$handoff_exists" ]] && return 0
 
@@ -379,6 +457,9 @@ detect_and_warn_missing_handoff() {
 
 main() {
     is_enabled || exit 0
+
+    # Time the startup phase (stdin parsing, cleanup, etc.)
+    local phase_start=$(get_elapsed_ms)
 
     # Read input first (stdin must be consumed before other operations)
     local input=$(cat)
@@ -407,10 +488,12 @@ main() {
     local state_file="$STATE_DIR/$session_id"
     local last_timestamp=""
     [[ -f "$state_file" ]] && last_timestamp=$(cat "$state_file")
+    log_phase "startup" "$phase_start" "stop"
 
     # Parse transcript ONCE and cache all data (replaces 12+ jq calls)
-    local phase_start=$(get_elapsed_ms)
-    parse_transcript_once "$transcript_path" "$last_timestamp"
+    # Uses byte-offset tracking to only parse new content since last run
+    phase_start=$(get_elapsed_ms)
+    parse_transcript_once "$transcript_path" "$last_timestamp" "$session_id"
     log_phase "parse_transcript" "$phase_start" "stop"
 
     # Process AI LESSON: patterns (adds new AI-generated lessons)
@@ -418,92 +501,77 @@ main() {
     process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
     log_phase "process_lessons" "$phase_start" "stop"
 
-    # Process HANDOFF/APPROACH: patterns (handoff tracking and plan mode)
-    # Pass session_id so we can detect sub-agents and block handoff creation
+    # Extract citations from cache for batch processing
     phase_start=$(get_elapsed_ms)
-    process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
-    log_phase "process_handoffs" "$phase_start" "stop"
 
-    # Capture TodoWrite tool calls and sync to handoffs
-    phase_start=$(get_elapsed_ms)
-    capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
-    log_phase "sync_todos" "$phase_start" "stop"
-
-    # Warn if major work detected without handoff
-    detect_and_warn_missing_handoff "$transcript_path" "$project_root"
-
-    # Extract citations from cached assistant texts
-    local texts_field="assistant_texts"
-    [[ -n "$last_timestamp" ]] && texts_field="assistant_texts_new"
+    # Get filtered citations from cache (already excludes listings with star ratings)
+    local citations_field="citations"
+    [[ -n "$last_timestamp" ]] && citations_field="citations_new"
     local citations=""
-    citations=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$texts_field" '.[$f][]' 2>/dev/null | \
-        grep -oE '\[[LS][0-9]{3}\]' | sort -u || true)
+    citations=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$citations_field" '.[$f][]' 2>/dev/null || true)
 
     # Get latest timestamp from cache
     local latest_ts=$(echo "$TRANSCRIPT_CACHE" | jq -r '.latest_timestamp // ""' 2>/dev/null)
 
-    # Update checkpoint even if no citations (to advance the checkpoint)
-    if [[ -z "$citations" ]]; then
-        [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
-        exit 0
+    log_phase "extract_citations" "$phase_start" "stop"
+
+    # Convert citations to comma-separated IDs for batch command: [L001]\n[L002] -> L001,L002
+    local citation_ids=""
+    if [[ -n "$citations" ]]; then
+        citation_ids=$(echo "$citations" | tr -d '[]' | tr '\n' ',' | sed 's/,$//')
     fi
 
-    # Filter out lesson listings (ID followed by star rating bracket)
-    # Real citations: "[L010]:" or "[L010]," (no star bracket)
-    # Listings: "[L010] [*****" (ID followed by star rating)
-    # Use cached text (all assistant texts joined with newlines)
-    local all_text=$(echo "$TRANSCRIPT_CACHE" | jq -r '.assistant_texts[]' 2>/dev/null || true)
-    local filtered_citations=""
-    while IFS= read -r cite; do
-        [[ -z "$cite" ]] && continue
-        # Check if this citation appears with a star bracket immediately after
-        # Escape regex metacharacters in citation ID
-        local escaped_cite=$(printf '%s' "$cite" | sed 's/[][\\.*^$()+?{|]/\\&/g')
-        if ! echo "$all_text" | grep -qE "${escaped_cite} \\[\\*"; then
-            filtered_citations+="$cite"$'\n'
-        fi
-    done <<< "$citations"
-    citations=$(echo "$filtered_citations" | sort -u | grep -v '^$' || true)
-
-    [[ -z "$citations" ]] && {
-        [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
-        log_hook_end "stop"
-        exit 0
-    }
-
-    # Cite all lessons in a single batch call (much faster than per-lesson)
+    # BATCH PROCESSING: Single Python call for handoffs, todos, citations, and transcript
+    # This saves ~200-300ms by eliminating 3 Python startups (70-150ms each)
     phase_start=$(get_elapsed_ms)
-    local cited_count=0
 
-    # Convert citations to space-separated IDs: [L001]\n[L002] -> L001 L002
-    local lesson_ids=$(echo "$citations" | tr -d '[]' | tr '\n' ' ' | xargs)
+    if [[ -f "$PYTHON_MANAGER" ]]; then
+        local batch_args=""
+        batch_args="--transcript $transcript_path"
+        [[ -n "$citation_ids" ]] && batch_args="$batch_args --citations $citation_ids"
+        [[ -n "$claude_session_id" ]] && batch_args="$batch_args --session-id $claude_session_id"
 
-    if [[ -n "$lesson_ids" && -f "$PYTHON_MANAGER" ]]; then
-        # Single Python call with all IDs
-        local result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" cite $lesson_ids 2>&1 || true)
-        # Count successful citations (each outputs OK: on its own line)
-        cited_count=$(echo "$result" | grep -c "^OK:" || true)
-    elif [[ -n "$lesson_ids" && -x "$BASH_MANAGER" ]]; then
-        # Fall back to bash manager (still loops internally but less common)
-        for lesson_id in $lesson_ids; do
-            local result=$(PROJECT_DIR="$project_root" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
-            [[ "$result" == OK:* ]] && ((cited_count++)) || true
-        done
+        local batch_result
+        batch_result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+            "$PYTHON_BIN" "$PYTHON_MANAGER" stop-hook-batch $batch_args 2>&1 || echo '{}')
+
+        # Parse batch results for logging
+        local handoffs_processed=$(echo "$batch_result" | jq -r '.handoffs_processed // 0' 2>/dev/null || echo "0")
+        local todos_synced=$(echo "$batch_result" | jq -r '.todos_synced // false' 2>/dev/null || echo "false")
+        local cited_count=$(echo "$batch_result" | jq -r '.citations_count // 0' 2>/dev/null || echo "0")
+        local transcript_added=$(echo "$batch_result" | jq -r '.transcript_added // false' 2>/dev/null || echo "false")
+
+        # Log results
+        (( handoffs_processed > 0 )) && echo "[handoffs] $handoffs_processed handoff command(s) processed" >&2
+        [[ "$todos_synced" == "true" ]] && echo "[handoffs] Synced TodoWrite to handoff" >&2
+        (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
+    else
+        # Fallback to individual calls if Python manager not available
+        # Process handoffs
+        process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
+
+        # Capture TodoWrite
+        capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
+
+        # Cite lessons individually (bash fallback)
+        if [[ -n "$citation_ids" && -x "$BASH_MANAGER" ]]; then
+            local lesson_ids=$(echo "$citation_ids" | tr ',' ' ')
+            local cited_count=0
+            for lesson_id in $lesson_ids; do
+                local result=$(PROJECT_DIR="$project_root" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
+                [[ "$result" == OK:* ]] && ((cited_count++)) || true
+            done
+            (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
+        fi
     fi
-    log_phase "cite_lessons" "$phase_start" "stop"
+
+    log_phase "batch_process" "$phase_start" "stop"
+
+    # Warn if major work detected without handoff
+    detect_and_warn_missing_handoff "$transcript_path" "$project_root"
 
     # Update checkpoint
     [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"
-
-    (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
-
-    # Add transcript to linked handoff if session has one
-    local session_id=$(echo "$input" | jq -r '.session_id // empty')
-    if [[ -n "$session_id" && -n "$transcript_path" ]]; then
-        PROJECT_DIR="$project_root" python3 "$PYTHON_MANAGER" \
-            handoff add-transcript "$session_id" "$transcript_path" 2>/dev/null || true
-    fi
 
     # Log timing summary
     log_hook_end "stop"
@@ -513,7 +581,7 @@ main() {
     if (( RANDOM % 5 == 0 )) && [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
         # Run in background with nohup so it doesn't block session end
         # Redirect to background.log for debugging
-        nohup python3 "$PYTHON_MANAGER" prescore-cache \
+        nohup "$PYTHON_BIN" "$PYTHON_MANAGER" prescore-cache \
             --transcript "$transcript_path" \
             >> "$CLAUDE_RECALL_STATE/background.log" 2>&1 &
     fi

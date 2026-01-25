@@ -89,7 +89,7 @@ main() {
             [[ "$promotable" == "no" ]] && { args+=("--no-promote"); promo_note=" (no-promote)"; }
 
             result=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                python3 "$PYTHON_MANAGER" add ${args[@]+"${args[@]}"} -- "$category" "$title" "$content" 2>&1)
+                "$PYTHON_BIN" "$PYTHON_MANAGER" add ${args[@]+"${args[@]}"} -- "$category" "$title" "$content" 2>&1)
         elif [[ -x "$BASH_MANAGER" ]]; then
             local cmd="add"
             [[ "$level" == "system" ]] && cmd="add-system"

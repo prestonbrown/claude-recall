@@ -57,9 +57,9 @@ def integration_env(tmp_path: Path) -> Dict[str, Path]:
     hooks_dir = claude_dir / "hooks"
     hooks_dir.mkdir()
 
-    # Create settings.json
-    settings = {"claudeRecall": {"enabled": True}}
-    (claude_dir / "settings.json").write_text(json.dumps(settings))
+    # Create shared config.json
+    settings = {"enabled": True}
+    (claude_recall_base / "config.json").write_text(json.dumps(settings))
 
     # Copy actual hooks from adapters/claude-code
     repo_root = Path(__file__).parent.parent

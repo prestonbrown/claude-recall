@@ -58,6 +58,7 @@ try:
         extract_event_details,
     )
     from core.tui.app_state import AppState
+    from core.tui.tag_renderer import render_tags, strip_tags
 except ImportError:
     from .analytics import BLOCKED_ALERT_THRESHOLD_DAYS
     from .log_reader import LogReader, format_event_line
@@ -72,6 +73,7 @@ except ImportError:
         extract_event_details,
     )
     from .app_state import AppState
+    from .tag_renderer import render_tags, strip_tags
 
 # Backward compatibility alias for EVENT_COLORS
 EVENT_COLORS = EVENT_TYPE_COLORS
@@ -916,6 +918,7 @@ class RecallMonitorApp(App):
             with TabPane("Session", id="session"):
                 yield Vertical(
                     Static("Sessions", classes="section-title"),
+                    LoadingIndicator(id="session-loading"),
                     DataTable(id="session-list"),
                     Static("Session Events", classes="section-title"),
                     RichLog(id="session-events", highlight=True, markup=True, wrap=True, auto_scroll=False),
@@ -939,6 +942,16 @@ class RecallMonitorApp(App):
                 yield Vertical(
                     Static("Loading charts...", id="sparklines-panel"),
                     Horizontal(
+                        OptionList(
+                            Option("24h", id="24"),
+                            Option("7d", id="168"),
+                            Option("30d", id="720"),
+                            id="chart-period-selector",
+                        ),
+                        id="chart-period-row",
+                        classes="filter-row",
+                    ),
+                    Horizontal(
                         PlotextPlot(id="activity-chart") if PlotextPlot else Static("[dim]plotext not available[/dim]"),
                         PlotextPlot(id="timing-chart") if PlotextPlot else Static("[dim]plotext not available[/dim]"),
                         id="charts-row",
@@ -955,12 +968,16 @@ class RecallMonitorApp(App):
 
     @work(exclusive=True)
     async def _load_all_async(self) -> None:
-        """Load all data, updating loading status.
+        """Load initial data for the live tab only (lazy loading for other tabs).
 
         Note: We avoid asyncio.to_thread() here because the loading methods
         perform Textual widget operations (e.g., event_log.write()) which must
         run on the main thread. Instead, we call methods directly and yield
         control to the event loop between steps using asyncio.sleep(0).
+
+        Lazy loading optimization: Only the "live" tab (initial tab) is loaded at
+        startup. Other tabs are loaded on first activation via
+        on_tabbed_content_tab_activated().
         """
         # Wait for the LoadingScreen to be fully composed
         # The screen may not be mounted yet when the worker starts
@@ -972,12 +989,9 @@ class RecallMonitorApp(App):
         loading = self.screen
         if not isinstance(loading, LoadingScreen):
             # Screen was dismissed or replaced, skip loading UI updates
+            # Only load events for the initial "live" tab
             self._load_events()
-            self._update_health()
-            self._update_state()
-            self._setup_session_list()
-            self._setup_handoff_list()
-            self._update_charts()
+            self.state.tabs_loaded["live"] = True
             self._update_subtitle()
             self._refresh_timer = self.set_interval(5.0, self._on_refresh_timer)
             return
@@ -990,40 +1004,8 @@ class RecallMonitorApp(App):
             except Exception as e:
                 self.notify(f"Error loading events: {e}", severity="error")
 
-            loading.update_status("Computing health stats...")
-            await asyncio.sleep(0)
-            try:
-                self._update_health()
-            except Exception as e:
-                self.notify(f"Error updating health: {e}", severity="error")
-
-            loading.update_status("Loading state...")
-            await asyncio.sleep(0)
-            try:
-                self._update_state()
-            except Exception as e:
-                self.notify(f"Error updating state: {e}", severity="error")
-
-            loading.update_status("Scanning sessions...")
-            await asyncio.sleep(0)
-            try:
-                self._setup_session_list()
-            except Exception as e:
-                self.notify(f"Error setting up sessions: {e}", severity="error")
-
-            loading.update_status("Loading handoffs...")
-            await asyncio.sleep(0)
-            try:
-                self._setup_handoff_list()
-            except Exception as e:
-                self.notify(f"Error setting up handoffs: {e}", severity="error")
-
-            loading.update_status("Generating charts...")
-            await asyncio.sleep(0)
-            try:
-                self._update_charts()
-            except Exception as e:
-                self.notify(f"Error updating charts: {e}", severity="error")
+            # Mark "live" tab as loaded (other tabs will be lazy-loaded)
+            self.state.tabs_loaded["live"] = True
 
         finally:
             self._update_subtitle()
@@ -1049,19 +1031,24 @@ class RecallMonitorApp(App):
         self.state.last_event_count = self.log_reader.buffer_size
 
     def _on_refresh_timer(self) -> None:
-        """Sync timer callback - updates subtitle and triggers async refresh."""
+        """Sync timer callback - updates subtitle and triggers async refresh.
+
+        Only refreshes tabs that have been loaded (lazy loading awareness).
+        """
         self._update_subtitle()
         if not self.state.paused:
-            self._refresh_events()
-            # Only refresh the currently visible tab for performance
+            # Only refresh events if "live" tab has been loaded
+            if self.state.tabs_loaded.get("live", False):
+                self._refresh_events()
+            # Only refresh the currently visible tab if it's loaded
             try:
                 tabs = self.query_one(TabbedContent)
                 active = tabs.active
-                if active == "session":
+                if active == "session" and self.state.tabs_loaded.get("session", False):
                     self._refresh_session_list_async()
-                elif active == "handoffs":
+                elif active == "handoffs" and self.state.tabs_loaded.get("handoffs", False):
                     self._refresh_handoff_list_async()
-                # For live/health/state/charts tabs, only refresh events (already done above)
+                # For health/state/charts tabs, they only need refresh on manual request
             except Exception:
                 pass
 
@@ -1425,8 +1412,8 @@ class RecallMonitorApp(App):
             # If we can't find or update the title, silently ignore
             pass
 
-    def _setup_session_list(self) -> None:
-        """Initialize the session list DataTable with sortable columns."""
+    def _setup_session_columns(self) -> None:
+        """Set up DataTable columns for session list (UI only, instant)."""
         session_table = self.query_one("#session-list", DataTable)
 
         # Enable row cursor for RowHighlighted events on arrow key navigation
@@ -1445,17 +1432,31 @@ class RecallMonitorApp(App):
         session_table.add_column("Tokens", key="tokens")
         session_table.add_column("Msgs", key="messages")
 
-        # Clear any existing session data
-        self.state.session.data.clear()
+    def _load_session_data(self) -> List[TranscriptSummary]:
+        """Load session data from transcript files (pure I/O, thread-safe).
 
-        # Get sessions from TranscriptReader
+        Returns:
+            List of TranscriptSummary objects.
+        """
         # _show_all toggles: all projects + all sessions (including empty) vs current project + non-empty
         if self._show_all:
-            sessions = self.transcript_reader.list_all_sessions(limit=50, include_empty=True)
+            return self.transcript_reader.list_all_sessions_fast(limit=50, max_age_hours=168, include_empty=True)  # 7 days
         else:
-            sessions = self.transcript_reader.list_sessions(
+            return self.transcript_reader.list_sessions(
                 self._current_project, limit=50, include_empty=False
             )
+
+    def _populate_session_data(self, sessions: List[TranscriptSummary]) -> None:
+        """Populate the session DataTable with loaded data (UI only).
+
+        Args:
+            sessions: List of TranscriptSummary objects to display.
+        """
+        session_table = self.query_one("#session-list", DataTable)
+
+        # Clear any existing session data
+        self.state.session.data.clear()
+        session_table.clear()
 
         # Update the section title with counts
         self._update_session_title(sessions)
@@ -1470,6 +1471,16 @@ class RecallMonitorApp(App):
 
             self._populate_session_row(session_table, session_id, summary)
 
+    def _setup_session_list(self) -> None:
+        """Initialize the session list DataTable synchronously.
+
+        Used for direct navigation when async loading isn't appropriate.
+        For normal tab activation, use _setup_session_list_async instead.
+        """
+        self._setup_session_columns()
+        sessions = self._load_session_data()
+        self._populate_session_data(sessions)
+
     def _populate_session_row(
         self, session_table: DataTable, session_id: str, summary: TranscriptSummary
     ) -> None:
@@ -1480,8 +1491,9 @@ class RecallMonitorApp(App):
             session_id: The session identifier (used as row key)
             summary: TranscriptSummary containing session data
         """
-        # Format display values
-        topic = summary.first_prompt[:40] + "..." if len(summary.first_prompt) > 40 else summary.first_prompt
+        # Format display values - strip XML tags for clean display
+        topic = strip_tags(summary.first_prompt)
+        topic = topic[:40] + "..." if len(topic) > 40 else topic
         topic = topic.replace("\n", " ")  # Remove newlines for display
         total_tools = sum(summary.tool_breakdown.values())
 
@@ -1500,6 +1512,32 @@ class RecallMonitorApp(App):
         ])
 
         session_table.add_row(*row_data, key=session_id)
+
+    @work(exclusive=True, group="session_setup")
+    async def _setup_session_list_async(self) -> None:
+        """Load session list asynchronously to avoid UI freeze."""
+        loading = self.query_one("#session-loading", LoadingIndicator)
+        session_table = self.query_one("#session-list", DataTable)
+
+        try:
+            loading.add_class("loading")
+            session_table.add_class("loading")
+
+            # Yield to event loop so loading indicator renders before blocking I/O
+            await asyncio.sleep(0)
+
+            self._setup_session_columns()  # Instant UI chrome
+
+            # Yield again after column setup to keep UI responsive
+            await asyncio.sleep(0)
+
+            sessions = await asyncio.to_thread(self._load_session_data)  # Background I/O
+            self._populate_session_data(sessions)  # Populate UI
+        except Exception as e:
+            self.notify(f"Error loading sessions: {e}", severity="error")
+        finally:
+            loading.remove_class("loading")
+            session_table.remove_class("loading")
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Handle row highlight (arrow key navigation) in data tables."""
@@ -1595,8 +1633,42 @@ class RecallMonitorApp(App):
                 pass
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        """Handle tab activation to reset scroll state for live activity tab."""
-        if event.pane.id == "live":
+        """Handle tab activation - load data on first visit (lazy loading)."""
+        tab_id = event.pane.id
+
+        # Check if tab needs initial loading (lazy loading)
+        # Mark as loaded AFTER success to allow retry on failure
+        if not self.state.tabs_loaded.get(tab_id, False):
+            if tab_id == "health":
+                try:
+                    self._update_health()
+                    self.state.tabs_loaded[tab_id] = True
+                except Exception as e:
+                    self.notify(f"Error loading health: {e}", severity="error")
+            elif tab_id == "state":
+                try:
+                    self._update_state()
+                    self.state.tabs_loaded[tab_id] = True
+                except Exception as e:
+                    self.notify(f"Error loading state: {e}", severity="error")
+            elif tab_id == "session":
+                self.state.tabs_loaded[tab_id] = True  # Prevent re-trigger
+                self._setup_session_list_async()
+            elif tab_id == "handoffs":
+                try:
+                    self._setup_handoff_list()
+                    self.state.tabs_loaded[tab_id] = True
+                except Exception as e:
+                    self.notify(f"Error loading handoffs: {e}", severity="error")
+            elif tab_id == "charts":
+                try:
+                    self._update_charts()
+                    self.state.tabs_loaded[tab_id] = True
+                except Exception as e:
+                    self.notify(f"Error loading charts: {e}", severity="error")
+
+        # Existing "live" tab handling - reset scroll state
+        if tab_id == "live":
             # Reset auto-scroll when switching to live tab
             self.state.live_activity_user_scrolled = False
             try:
@@ -1662,6 +1734,13 @@ class RecallMonitorApp(App):
 
         self._sort_session_table(column_key, self.state.session.sort.reverse)
 
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Handle chart time period selection."""
+        if event.option_list.id == "chart-period-selector":
+            period_hours = int(event.option.id)
+            self.state.chart_period_hours = period_hours
+            self._update_charts()
+
     def _sort_session_table(self, column_key: str, reverse: bool) -> None:
         """Sort the session table by the given column."""
         session_table = self.query_one("#session-list", DataTable)
@@ -1714,6 +1793,10 @@ class RecallMonitorApp(App):
         # Check if we're viewing the same session (to avoid scroll reset)
         is_same_session = self.state.session.current_id == session_id
 
+        # Save scroll position before clearing (only for same session refresh)
+        saved_scroll_x = session_log.scroll_x if is_same_session else None
+        saved_scroll_y = session_log.scroll_y if is_same_session else None
+
         session_log.clear()
 
         # Update tracking
@@ -1734,6 +1817,7 @@ class RecallMonitorApp(App):
         # Header: Topic (full first prompt)
         topic = summary.first_prompt.replace("\n", " ")
         session_log.write(f"[bold]Topic:[/bold] {topic}")
+        session_log.write(f"[bold]Session:[/bold] {session_id}")
         session_log.write("")
 
         # Handoff correlation - find handoffs active during this session
@@ -1773,9 +1857,10 @@ class RecallMonitorApp(App):
             time_str = local_dt.strftime(time_fmt)
 
             if msg.type == "user":
-                # USER: [HH:MM:SS] USER    "First 80 chars of content..."
-                content = msg.content[:80].replace("\n", " ")
-                if len(msg.content) > 80:
+                # USER: [HH:MM:SS] USER    "First 200 chars of content..."
+                content = render_tags(msg.content[:200])
+                content = content.replace("\n", " ")
+                if len(msg.content) > 200:
                     content += "..."
                 session_log.write(f"[cyan][{time_str}] USER    \"{content}\"[/cyan]")
 
@@ -1785,15 +1870,23 @@ class RecallMonitorApp(App):
                     tools_str = ", ".join(msg.tools_used)
                     session_log.write(f"[yellow][{time_str}] TOOL    {tools_str}[/yellow]")
                 else:
-                    # ASSISTANT text only: [HH:MM:SS] CLAUDE  "First 80 chars of response..."
-                    content = msg.content[:80].replace("\n", " ")
-                    if len(msg.content) > 80:
+                    # ASSISTANT text only: [HH:MM:SS] CLAUDE  "First 200 chars of response..."
+                    content = render_tags(msg.content[:200])
+                    content = content.replace("\n", " ")
+                    if len(msg.content) > 200:
                         content += "..."
                     session_log.write(f"[green][{time_str}] CLAUDE  \"{content}\"[/green]")
 
-        # Only scroll to top when viewing a different session (not on refresh of same session)
-        if not is_same_session:
-            # Defer scroll to after refresh so content is fully rendered
+        # Handle scroll position: restore for same session, scroll to top for new session
+        if is_same_session and saved_scroll_x is not None and saved_scroll_y is not None:
+            # Restore scroll position on refresh of same session
+            def restore_scroll() -> None:
+                session_log.scroll_x = min(saved_scroll_x, session_log.max_scroll_x)
+                session_log.scroll_y = min(saved_scroll_y, session_log.max_scroll_y)
+
+            self.call_after_refresh(restore_scroll)
+        else:
+            # Scroll to top when viewing a different session
             self.call_after_refresh(session_log.scroll_home)
 
     # -------------------------------------------------------------------------
@@ -2076,6 +2169,7 @@ class RecallMonitorApp(App):
 
         # Check if viewing same handoff (refresh) vs new selection
         is_same_handoff = self.state.handoff.displayed_id == handoff_id
+        saved_scroll_x = details_log.scroll_x if is_same_handoff else None
         saved_scroll_y = details_log.scroll_y if is_same_handoff else None
 
         details_log.clear()
@@ -2333,9 +2427,10 @@ class RecallMonitorApp(App):
 
         # Track displayed handoff and handle scroll position
         self.state.handoff.displayed_id = handoff_id
-        if is_same_handoff and saved_scroll_y is not None and saved_scroll_y > 0:
+        if is_same_handoff and saved_scroll_x is not None and saved_scroll_y is not None:
             # Restore scroll position on refresh
             def restore_scroll() -> None:
+                details_log.scroll_x = min(saved_scroll_x, details_log.max_scroll_x)
                 details_log.scroll_y = min(saved_scroll_y, details_log.max_scroll_y)
 
             self.call_after_refresh(restore_scroll)
@@ -2350,6 +2445,11 @@ class RecallMonitorApp(App):
             handoff_id: The handoff ID to navigate to (e.g., 'hf-abc1234')
         """
         try:
+            # Ensure handoffs tab data is loaded (lazy loading support)
+            if not self.state.tabs_loaded.get("handoffs", False):
+                self._setup_handoff_list()
+                self.state.tabs_loaded["handoffs"] = True
+
             # Switch to handoffs tab
             tabs = self.query_one(TabbedContent)
             tabs.active = "handoffs"
@@ -2371,6 +2471,11 @@ class RecallMonitorApp(App):
             session_id: The session ID to navigate to
         """
         try:
+            # Ensure session tab data is loaded (lazy loading support)
+            if not self.state.tabs_loaded.get("session", False):
+                self._setup_session_list()
+                self.state.tabs_loaded["session"] = True
+
             # Switch to session tab
             tabs = self.query_one(TabbedContent)
             tabs.active = "session"
@@ -2621,6 +2726,7 @@ class RecallMonitorApp(App):
         handoff_table = self.query_one("#handoff-list", DataTable)
 
         # Save scroll position and cursor row before clearing
+        saved_scroll_x = handoff_table.scroll_x
         saved_scroll_y = handoff_table.scroll_y
         saved_cursor_row = handoff_table.cursor_row
 
@@ -2661,6 +2767,7 @@ class RecallMonitorApp(App):
 
         # Restore scroll position FIRST (before cursor movement)
         # This prevents the selected item from jumping to the bottom of visible area
+        handoff_table.scroll_x = min(saved_scroll_x, handoff_table.max_scroll_x)
         handoff_table.scroll_y = min(saved_scroll_y, handoff_table.max_scroll_y)
 
         # Restore cursor position AFTER scroll (row is already visible, no auto-scroll triggered)
@@ -2671,7 +2778,7 @@ class RecallMonitorApp(App):
                 row_keys = list(handoff_table.rows.keys())
                 for idx, row_key in enumerate(row_keys):
                     if row_key.value == self.state.handoff.user_selected_id:
-                        handoff_table.move_cursor(row=idx)
+                        handoff_table.move_cursor(row=idx, scroll=False)
                         break
             else:
                 # Handoff was removed/archived, clear the details panel
@@ -2684,7 +2791,7 @@ class RecallMonitorApp(App):
         else:
             # No explicit selection - restore cursor row if valid
             if saved_cursor_row is not None and saved_cursor_row < handoff_table.row_count:
-                handoff_table.move_cursor(row=saved_cursor_row)
+                handoff_table.move_cursor(row=saved_cursor_row, scroll=False)
 
         # Clear confirmed selection if the handoff was removed
         if self.state.handoff.current_id is not None:
@@ -2863,21 +2970,36 @@ class RecallMonitorApp(App):
             self._update_activity_chart(events)
             self._update_timing_chart(timing_summary)
 
-    def _compute_hourly_activity(self, events: List[DebugEvent]) -> List[float]:
+    def _compute_hourly_activity(self, events: List[DebugEvent], hours: int = 24) -> List[float]:
         """
-        Compute event counts by hour for the last 24 hours.
+        Compute activity counts aggregated by time bucket.
+
+        For 24h: 24 hourly buckets
+        For 7d (168h): 7 daily buckets
+        For 30d (720h): 30 daily buckets
 
         Args:
             events: List of debug events
+            hours: Time period in hours (24, 168, or 720)
 
         Returns:
-            List of 24 floats representing event counts per hour (oldest to newest)
+            List of floats representing event counts per bucket (oldest to newest)
         """
         now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(hours=24)
+        cutoff = now - timedelta(hours=hours)
 
-        # Initialize 24 hour buckets
-        hourly: defaultdict[int, int] = defaultdict(int)
+        # Determine bucket configuration
+        if hours <= 24:
+            # Hourly buckets
+            num_buckets = hours
+            bucket_hours = 1
+        else:
+            # Daily buckets for 7d and 30d
+            num_buckets = hours // 24
+            bucket_hours = 24
+
+        # Initialize buckets
+        buckets: defaultdict[int, int] = defaultdict(int)
 
         for event in events:
             ts = event.timestamp_dt
@@ -2886,14 +3008,17 @@ class RecallMonitorApp(App):
             if ts < cutoff:
                 continue
 
-            # Calculate hour offset (0 = 24h ago, 23 = current hour)
-            hours_ago = int((now - ts).total_seconds() / 3600)
-            if 0 <= hours_ago < 24:
-                hour_idx = 23 - hours_ago
-                hourly[hour_idx] += 1
+            # Calculate bucket index
+            hours_ago = (now - ts).total_seconds() / 3600
+            bucket_idx = int(hours_ago / bucket_hours)
 
-        # Convert to list (ensure all 24 hours represented)
-        return [float(hourly.get(i, 0)) for i in range(24)]
+            if 0 <= bucket_idx < num_buckets:
+                # Reverse index so oldest is first
+                final_idx = num_buckets - 1 - bucket_idx
+                buckets[final_idx] += 1
+
+        # Convert to list (ensure all buckets represented)
+        return [float(buckets.get(i, 0)) for i in range(num_buckets)]
 
     def _update_activity_chart(self, events: List[DebugEvent]) -> None:
         """Update the activity timeline bar chart."""
@@ -2902,19 +3027,42 @@ class RecallMonitorApp(App):
         except Exception:
             return
 
-        hourly = self._compute_hourly_activity(events)
+        period_hours = self.state.chart_period_hours
+        data = self._compute_hourly_activity(events, hours=period_hours)
 
         # Clear and redraw
         chart.plt.clear_figure()
-        chart.plt.title("Activity Timeline (24h)")
-        chart.plt.xlabel("Hours Ago")
 
-        # Create hour labels (24h ago to now)
-        hours = list(range(24))
-        hour_labels = [f"{23-h}h" if h % 4 == 0 else "" for h in hours]
+        # Generate labels and title based on period
+        if period_hours <= 24:
+            title = f"Activity Timeline ({period_hours}h)"
+            xlabel = "Hours Ago"
+            num_buckets = period_hours
+            positions = list(range(num_buckets))
+            labels = [f"{num_buckets - 1 - h}h" if h % 4 == 0 else "" for h in positions]
+            tick_positions = positions[::4]
+            tick_labels = labels[::4]
+        elif period_hours <= 168:  # 7 days
+            title = "Activity Timeline (7d)"
+            xlabel = "Days Ago"
+            num_buckets = period_hours // 24
+            positions = list(range(num_buckets))
+            labels = [f"{num_buckets - 1 - d}d" for d in positions]
+            tick_positions = positions
+            tick_labels = labels
+        else:  # 30 days
+            title = "Activity Timeline (30d)"
+            xlabel = "Days Ago"
+            num_buckets = period_hours // 24
+            positions = list(range(num_buckets))
+            labels = [f"{num_buckets - 1 - d}" if d % 5 == 0 else "" for d in positions]
+            tick_positions = positions[::5]
+            tick_labels = [l for l in labels if l]
 
-        chart.plt.bar(hours, hourly, width=0.8)
-        chart.plt.xticks(hours[::4], hour_labels[::4])
+        chart.plt.title(title)
+        chart.plt.xlabel(xlabel)
+        chart.plt.bar(positions, data, width=0.8)
+        chart.plt.xticks(tick_positions, tick_labels)
         chart.refresh()
 
     def _update_timing_chart(self, timing_summary: dict) -> None:
@@ -2961,13 +3109,24 @@ class RecallMonitorApp(App):
         self.notify(f"Auto-refresh: {status}")
 
     def action_refresh(self) -> None:
-        """Manual refresh of all views."""
-        self._load_events()
-        self._update_health()
-        self._update_state()
-        self._refresh_session_list()
-        self._refresh_handoff_list()
-        self._update_charts()
+        """Manual refresh of all views.
+
+        Only refreshes tabs that have been loaded (lazy loading awareness).
+        """
+        # Always refresh events (live tab is always loaded at startup)
+        if self.state.tabs_loaded.get("live", False):
+            self._load_events()
+        # Only refresh tabs that have been loaded
+        if self.state.tabs_loaded.get("health", False):
+            self._update_health()
+        if self.state.tabs_loaded.get("state", False):
+            self._update_state()
+        if self.state.tabs_loaded.get("session", False):
+            self._refresh_session_list()
+        if self.state.tabs_loaded.get("handoffs", False):
+            self._refresh_handoff_list()
+        if self.state.tabs_loaded.get("charts", False):
+            self._update_charts()
         self.notify("Refreshed")
 
     def action_toggle_all(self) -> None:
@@ -3134,7 +3293,8 @@ class RecallMonitorApp(App):
         session_table = self.query_one("#session-list", DataTable)
 
         # Save scroll position before clearing
-        scroll_y = session_table.scroll_y
+        saved_scroll_x = session_table.scroll_x
+        saved_scroll_y = session_table.scroll_y
 
         # Check if we need to rebuild columns (Project column visibility changed)
         column_labels = [str(col.label) for col in session_table.columns.values()]
@@ -3165,7 +3325,7 @@ class RecallMonitorApp(App):
         # Get sessions from TranscriptReader
         # _show_all toggles: all projects + all sessions (including empty) vs current project + non-empty
         if self._show_all:
-            sessions = self.transcript_reader.list_all_sessions(limit=50, include_empty=True)
+            sessions = self.transcript_reader.list_all_sessions_fast(limit=50, max_age_hours=168, include_empty=True)  # 7 days
         else:
             sessions = self.transcript_reader.list_sessions(
                 self._current_project, limit=50, include_empty=False
@@ -3185,7 +3345,8 @@ class RecallMonitorApp(App):
             self._populate_session_row(session_table, session_id, summary)
 
         # Restore scroll position
-        session_table.scroll_y = scroll_y
+        session_table.scroll_x = min(saved_scroll_x, session_table.max_scroll_x)
+        session_table.scroll_y = min(saved_scroll_y, session_table.max_scroll_y)
 
         # Preserve user's selection if it still exists in the new data
         if self.state.session.user_selected_id is not None:
@@ -3194,7 +3355,7 @@ class RecallMonitorApp(App):
                 row_keys = list(session_table.rows.keys())
                 for idx, row_key in enumerate(row_keys):
                     if row_key.value == self.state.session.user_selected_id:
-                        session_table.move_cursor(row=idx)
+                        session_table.move_cursor(row=idx, scroll=False)
                         break
 
     @work(exclusive=True, group="session_refresh")

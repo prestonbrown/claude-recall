@@ -128,6 +128,7 @@ class Lesson:
     level: str = "project"  # 'project' or 'system'
     promotable: bool = True  # False = never promote to system level
     lesson_type: str = ""  # constraint|informational|preference (empty = auto-classify)
+    triggers: List[str] = field(default_factory=list)  # Keywords for matching relevance
 
     @property
     def tokens(self) -> int:
@@ -273,17 +274,55 @@ class InjectionResult(FormattableResult):
             content_preview = framed_content[:80] + "..." if len(framed_content) > 80 else framed_content
             lines.append(f"  [{lesson.id}] {rating} {prefix}{lesson.title} - {content_preview}")
 
-        # Remaining lessons - show titles for context (helps decide which to read)
+        # Remaining lessons - grouped by category with triggers
         remaining = [l for l in self.all_lessons if l not in self.top_lessons]
         if remaining:
-            # Show [ID] title for each, capped to keep compact
+            lines.append("")  # Blank line before section
+            lines.append("  --- More (read if relevant) ---")
+
+            # Group by category
+            from collections import defaultdict
+            by_category = defaultdict(list)
+            for lesson in remaining:
+                by_category[lesson.category].append(lesson)
+
+            # Output each category (sorted for consistency)
             cap = INJECTION_REMAINING_CAP
-            trunc = INJECTION_TITLE_TRUNCATE
-            items = [f"[{l.id}] {l.title[:trunc]}{'...' if len(l.title) > trunc else ''}" for l in remaining[:cap]]
-            lines.append("  " + " | ".join(items))
-            if len(remaining) > cap:
-                lines.append(f"  (+{len(remaining) - cap} more)")
-            lines.append("  ⚡ READ any lesson that looks relevant: `python3 $CLAUDE_RECALL_BASE/core/cli.py show ID`")
+            displayed = 0
+            for category in sorted(by_category.keys()):
+                if displayed >= cap:
+                    break
+                lessons_in_cat = by_category[category]
+                # First lesson in category: "category: [ID] Title -> kw1|kw2|kw3"
+                # Subsequent: "        | [ID] Title2 -> kw4|kw5"
+                first = True
+                for lesson in lessons_in_cat:
+                    if displayed >= cap:
+                        break
+
+                    # Format title (truncated)
+                    title = lesson.title[:INJECTION_TITLE_TRUNCATE]
+                    if len(lesson.title) > INJECTION_TITLE_TRUNCATE:
+                        title += "..."
+
+                    # Format triggers (max 3)
+                    triggers_str = ""
+                    if lesson.triggers:
+                        triggers_to_show = lesson.triggers[:3]
+                        triggers_str = f" -> {"|".join(triggers_to_show)}"
+
+                    if first:
+                        lines.append(f"  {category}: [{lesson.id}] {title}{triggers_str}")
+                        first = False
+                    else:
+                        lines.append(f"        | [{lesson.id}] {title}{triggers_str}")
+
+                    displayed += 1
+
+            undisplayed = len(remaining) - displayed
+            if undisplayed > 0:
+                lines.append(f"  (+{undisplayed} more)")
+            lines.append("  ⚡ `show L###` when relevant")
 
         # Simplified footer - explicit about output pattern (no shell commands!)
         lines.append("Cite [ID] when applying. LESSON: [category:] title - content to add (output only, no shell commands).")

@@ -1822,11 +1822,12 @@ class TestReminderHook:
         home = Path(isolated_subprocess_env["HOME"])
 
         # Create config with custom remindEvery
-        config_dir = home / ".claude"
-        config_dir.mkdir()
-        config_file = config_dir / "settings.json"
+        config_dir = home / ".config" / "claude-recall"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_file = config_dir / "config.json"
         config_file.write_text(json.dumps({
-            "claudeRecall": {"enabled": True, "remindEvery": 3}
+            "enabled": True,
+            "remindEvery": 3
         }))
 
         # Create state file at count 2 (next will be 3, triggering reminder)
@@ -1862,10 +1863,10 @@ class TestReminderHook:
         home = Path(isolated_subprocess_env["HOME"])
 
         # Config says remind every 100
-        config_dir = home / ".claude"
-        config_dir.mkdir()
-        (config_dir / "settings.json").write_text(json.dumps({
-            "claudeRecall": {"remindEvery": 100}
+        config_dir = home / ".config" / "claude-recall"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.json").write_text(json.dumps({
+            "remindEvery": 100
         }))
 
         # State at count 4, env says remind every 5
@@ -2953,8 +2954,8 @@ class TestInjectionFraming:
         result = manager.inject(3)  # top 3 by uses
         output = result.format()
 
-        # Should show the emphatic READ instruction
-        assert "READ any lesson that looks relevant" in output
+        # Should show the show command instruction
+        assert "`show L###` when relevant" in output
 
 
 class TestSessionStartLogging:
@@ -3753,6 +3754,1114 @@ class TestPrescoreCache:
         # Should have processed the valid entry
         assert len(haiku_calls) == 1
         assert len(result) == 1
+
+
+# =============================================================================
+# Triggers Field Tests (TDD - tests written before implementation)
+# =============================================================================
+
+
+class TestTriggersField:
+    """Tests for the new triggers field in the Lesson system.
+
+    The triggers field allows lessons to specify keywords that help match
+    relevant lessons to the current context. For example, a lesson about
+    mutex usage in destructors might have triggers=["destructor", "mutex", "shutdown"].
+    """
+
+    def test_lesson_dataclass_accepts_triggers(self, manager: "LessonsManager"):
+        """Lesson dataclass should accept a triggers field with a list of keywords.
+
+        The triggers field stores keywords that help identify when this lesson
+        is relevant to the current context or query.
+        """
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="No mutex in destructors",
+            content="Avoid mutex locks in destructors to prevent deadlocks during shutdown.",
+            triggers=["destructor", "mutex", "shutdown"],
+        )
+
+        lesson = manager.get_lesson(lesson_id)
+        assert lesson is not None
+        assert hasattr(lesson, "triggers"), "Lesson should have a triggers field"
+        assert lesson.triggers == ["destructor", "mutex", "shutdown"]
+
+    def test_parse_lesson_extracts_triggers_from_metadata(
+        self, manager: "LessonsManager"
+    ):
+        """parse_lesson() should extract triggers from the metadata line.
+
+        The triggers are stored in the format:
+        | **Triggers**: keyword1, keyword2, keyword3
+        """
+        # Write a lesson with triggers in the file
+        lesson_format = """# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L011] [****-|-----] No mutex in destructors
+- **Uses**: 13 | **Velocity**: 0.5 | **Learned**: 2025-01-01 | **Last**: 2025-01-15 | **Category**: gotcha | **Triggers**: destructor, mutex, shutdown
+> Avoid mutex locks in destructors to prevent deadlocks during shutdown.
+
+"""
+        manager.project_lessons_file.parent.mkdir(parents=True, exist_ok=True)
+        manager.project_lessons_file.write_text(lesson_format)
+
+        lesson = manager.get_lesson("L011")
+        assert lesson is not None
+        assert hasattr(lesson, "triggers"), "Lesson should have triggers field"
+        assert lesson.triggers == ["destructor", "mutex", "shutdown"], (
+            f"Expected ['destructor', 'mutex', 'shutdown'], got {lesson.triggers}"
+        )
+
+    def test_parse_lesson_handles_missing_triggers(self, manager: "LessonsManager"):
+        """parse_lesson() should default to empty list when triggers field is absent.
+
+        Backward compatibility: lessons created before triggers field existed
+        should parse correctly with an empty triggers list.
+        """
+        # Write a lesson WITHOUT triggers
+        old_format = """# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [*----|-----] Legacy lesson
+- **Uses**: 1 | **Velocity**: 0 | **Learned**: 2025-01-01 | **Last**: 2025-01-15 | **Category**: pattern
+> This is an old lesson without triggers field.
+
+"""
+        manager.project_lessons_file.parent.mkdir(parents=True, exist_ok=True)
+        manager.project_lessons_file.write_text(old_format)
+
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert hasattr(lesson, "triggers"), "Lesson should have triggers field"
+        assert lesson.triggers == [], f"Expected empty list, got {lesson.triggers}"
+
+    def test_format_lesson_writes_triggers_back(self, manager: "LessonsManager"):
+        """format_lesson() should include Triggers field when triggers are present.
+
+        When a lesson has triggers, the formatted output should include:
+        | **Triggers**: keyword1, keyword2
+        """
+        # Create a lesson with triggers
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Keyword matching pattern",
+            content="Use specific keywords for better matching.",
+            triggers=["matching", "keywords"],
+        )
+
+        # Read the raw file content
+        content = manager.project_lessons_file.read_text()
+
+        assert "**Triggers**:" in content, "Formatted lesson should contain Triggers field"
+        assert "matching" in content
+        assert "keywords" in content
+        # Check the format is comma-separated
+        assert "matching, keywords" in content or "keywords, matching" in content
+
+    def test_format_lesson_omits_empty_triggers(self, manager: "LessonsManager"):
+        """format_lesson() should NOT include Triggers field when triggers is empty.
+
+        This keeps the file clean and backward compatible - lessons without
+        triggers should not have a Triggers field in their metadata.
+        """
+        # Create a lesson WITHOUT triggers
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Simple lesson",
+            content="No triggers needed.",
+        )
+
+        # Read the raw file content
+        content = manager.project_lessons_file.read_text()
+
+        assert "**Triggers**:" not in content, (
+            "Lesson with no triggers should not have Triggers field in file"
+        )
+
+    def test_triggers_roundtrip_parse_format_parse(self, manager: "LessonsManager"):
+        """Round-trip test: parse -> format -> parse should preserve triggers.
+
+        This ensures that triggers survive a write/read cycle without data loss.
+        """
+        # Write a lesson with triggers manually
+        original_triggers = ["destructor", "mutex", "shutdown", "race_condition"]
+        original_format = """# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [***--|-----] Mutex gotcha
+- **Uses**: 8 | **Velocity**: 1.5 | **Learned**: 2025-01-01 | **Last**: 2025-01-10 | **Category**: gotcha | **Triggers**: destructor, mutex, shutdown, race_condition
+> Be careful with mutex usage in destructors.
+
+"""
+        manager.project_lessons_file.parent.mkdir(parents=True, exist_ok=True)
+        manager.project_lessons_file.write_text(original_format)
+
+        # Parse it
+        lesson1 = manager.get_lesson("L001")
+        assert lesson1 is not None
+        assert lesson1.triggers == original_triggers
+
+        # Cite the lesson (this triggers a write cycle)
+        manager.cite_lesson("L001")
+
+        # Parse it again
+        lesson2 = manager.get_lesson("L001")
+        assert lesson2 is not None
+        assert lesson2.triggers == original_triggers, (
+            f"Triggers changed after cite: expected {original_triggers}, got {lesson2.triggers}"
+        )
+
+    def test_add_lesson_with_empty_triggers_list(self, manager: "LessonsManager"):
+        """Adding a lesson with explicit empty triggers should work correctly."""
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="No triggers lesson",
+            content="Explicitly empty triggers.",
+            triggers=[],
+        )
+
+        lesson = manager.get_lesson(lesson_id)
+        assert lesson is not None
+        assert lesson.triggers == []
+
+        # Verify file doesn't contain Triggers field
+        content = manager.project_lessons_file.read_text()
+        assert "**Triggers**:" not in content
+
+    def test_triggers_field_preserves_order(self, manager: "LessonsManager"):
+        """Triggers should preserve their original order after round-trip."""
+        original_triggers = ["alpha", "beta", "gamma", "delta"]
+
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Ordered triggers",
+            content="Triggers should stay in order.",
+            triggers=original_triggers,
+        )
+
+        lesson = manager.get_lesson(lesson_id)
+        assert lesson is not None
+        assert lesson.triggers == original_triggers, (
+            f"Order changed: expected {original_triggers}, got {lesson.triggers}"
+        )
+
+    def test_triggers_with_special_characters_in_keywords(
+        self, manager: "LessonsManager"
+    ):
+        """Triggers containing hyphens or underscores should be handled correctly."""
+        triggers_with_special = ["multi-word", "under_score", "simple"]
+
+        lesson_id = manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Special char triggers",
+            content="Keywords can have hyphens and underscores.",
+            triggers=triggers_with_special,
+        )
+
+        lesson = manager.get_lesson(lesson_id)
+        assert lesson is not None
+        assert lesson.triggers == triggers_with_special
+
+
+# =============================================================================
+# InjectionResult.format() Grouped Output with Triggers (TDD)
+# =============================================================================
+
+
+class TestInjectionFormatWithTriggers:
+    """Tests for the new InjectionResult.format() grouped output with triggers.
+
+    The new format groups remaining lessons by category and shows triggers inline:
+
+        --- More (read if relevant) ---
+        gotcha: [L011] No mutex destruct -> destructor|shutdown|static
+              | [L014] Register XML -> component|silent fail
+        pattern: [L004] Subject init -> XML|subjects|create order
+               | [L008] Design tokens -> colors|spacing|hardcoded
+        correction: [L045] Dropdown -> dropdown|bind_options
+        (+3 more)
+        * `show L###` when relevant
+    """
+
+    def test_format_shows_category_groups(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Remaining lessons should be grouped by category with section header.
+
+        Create lessons with different categories (gotcha, pattern, correction).
+        After top lessons, remaining should be grouped by category with
+        section header '--- More (read if relevant) ---'.
+        """
+        from core import LessonsManager
+        from core.models import Lesson, InjectionResult
+        from datetime import date
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Create lessons with different categories
+        # High-uses lessons will be in top_lessons
+        manager.add_lesson(
+            level="project", category="pattern", title="Top Lesson 1",
+            content="This is a top lesson", triggers=["top1"]
+        )
+        manager.add_lesson(
+            level="project", category="gotcha", title="Top Lesson 2",
+            content="Another top lesson", triggers=["top2"]
+        )
+
+        # Lower-uses lessons will be in "remaining" - different categories
+        manager.add_lesson(
+            level="project", category="gotcha", title="Gotcha Lesson",
+            content="Watch out for this", triggers=["destructor", "shutdown"]
+        )
+        manager.add_lesson(
+            level="project", category="pattern", title="Pattern Lesson",
+            content="Use this pattern", triggers=["XML", "subjects"]
+        )
+        manager.add_lesson(
+            level="project", category="correction", title="Correction Lesson",
+            content="Fix this way", triggers=["dropdown"]
+        )
+
+        # Cite top lessons to ensure they rank higher
+        for _ in range(5):
+            manager.cite_lesson("L001")
+            manager.cite_lesson("L002")
+
+        result = manager.inject_context(top_n=2)
+        output = result.format()
+
+        # Should have section header for remaining lessons
+        assert "More (read if relevant)" in output, (
+            f"Expected section header '--- More (read if relevant) ---' in output:\n{output}"
+        )
+
+        # Should have category groups (lowercase)
+        assert "gotcha:" in output, f"Expected 'gotcha:' category group in output:\n{output}"
+        assert "pattern:" in output, f"Expected 'pattern:' category group in output:\n{output}"
+        assert "correction:" in output, f"Expected 'correction:' category group in output:\n{output}"
+
+    def test_format_triggers_appear_with_arrow_separator(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Triggers should appear with arrow separator: [ID] Title -> trigger1|trigger2|trigger3."""
+        from core import LessonsManager
+        from core.models import Lesson, InjectionResult
+        from datetime import date
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Top lesson with high uses
+        manager.add_lesson(
+            level="project", category="pattern", title="Top Lesson",
+            content="Top content", triggers=["top"]
+        )
+
+        # Remaining lesson with triggers
+        manager.add_lesson(
+            level="project", category="gotcha", title="No mutex destruct",
+            content="Watch out", triggers=["destructor", "shutdown", "static"]
+        )
+
+        # Cite top lesson
+        for _ in range(5):
+            manager.cite_lesson("L001")
+
+        result = manager.inject_context(top_n=1)
+        output = result.format()
+
+        # Should show triggers with arrow separator
+        # Format: [L002] No mutex destruct -> destructor|shutdown|static
+        assert "->" in output or "→" in output, (
+            f"Expected arrow separator '->' or '→' for triggers in output:\n{output}"
+        )
+        assert "destructor" in output, f"Expected trigger 'destructor' in output:\n{output}"
+        assert "shutdown" in output, f"Expected trigger 'shutdown' in output:\n{output}"
+        assert "static" in output, f"Expected trigger 'static' in output:\n{output}"
+
+        # Triggers should be pipe-separated
+        assert "destructor|shutdown|static" in output or "destructor|shutdown" in output, (
+            f"Expected pipe-separated triggers in output:\n{output}"
+        )
+
+    def test_format_triggers_capped_at_three(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Lesson with 5 triggers should only show first 3 in output."""
+        from core import LessonsManager
+        from core.models import Lesson, InjectionResult
+        from datetime import date
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Top lesson
+        manager.add_lesson(
+            level="project", category="pattern", title="Top Lesson",
+            content="Top content", triggers=[]
+        )
+
+        # Remaining lesson with 5 triggers
+        manager.add_lesson(
+            level="project", category="gotcha", title="Many triggers lesson",
+            content="Has many triggers",
+            triggers=["first", "second", "third", "fourth", "fifth"]
+        )
+
+        # Cite top lesson
+        for _ in range(5):
+            manager.cite_lesson("L001")
+
+        result = manager.inject_context(top_n=1)
+        output = result.format()
+
+        # Should show only first 3 triggers
+        assert "first" in output, f"Expected first trigger in output:\n{output}"
+        assert "second" in output, f"Expected second trigger in output:\n{output}"
+        assert "third" in output, f"Expected third trigger in output:\n{output}"
+
+        # Should NOT show fourth and fifth triggers
+        assert "fourth" not in output, f"Expected 'fourth' to be capped out of output:\n{output}"
+        assert "fifth" not in output, f"Expected 'fifth' to be capped out of output:\n{output}"
+
+    def test_format_empty_triggers_omitted(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Lesson with no triggers shows just [ID] Title without arrow.
+
+        The new format shows triggers inline. When a lesson has triggers,
+        it appears as: gotcha: [L002] Title -> kw1|kw2
+        When a lesson has NO triggers, it should omit the arrow and just show:
+        gotcha: [L002] Title
+        """
+        from core import LessonsManager
+        from core.models import Lesson, InjectionResult
+        from datetime import date
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Top lesson
+        manager.add_lesson(
+            level="project", category="pattern", title="Top Lesson",
+            content="Top content", triggers=[]
+        )
+
+        # Two remaining lessons: one WITH triggers, one WITHOUT
+        manager.add_lesson(
+            level="project", category="gotcha", title="Has triggers",
+            content="Content", triggers=["kw1", "kw2"]
+        )
+        manager.add_lesson(
+            level="project", category="gotcha", title="No triggers lesson",
+            content="Has no triggers",
+            triggers=[]  # Empty!
+        )
+
+        # Cite top lesson
+        for _ in range(5):
+            manager.cite_lesson("L001")
+
+        result = manager.inject_context(top_n=1)
+        output = result.format()
+
+        # The lesson WITH triggers should show arrow and triggers
+        assert "kw1" in output, f"Expected triggers 'kw1' for lesson with triggers:\n{output}"
+        assert "kw2" in output, f"Expected triggers 'kw2' for lesson with triggers:\n{output}"
+
+        # Find the line with L003 (no triggers lesson)
+        lines = output.split("\n")
+        l003_lines = [line for line in lines if "[L003]" in line]
+        assert len(l003_lines) > 0, f"Expected line with [L003] in output:\n{output}"
+
+        l003_line = l003_lines[0]
+
+        # L003 should show [L003] and title but NO arrow since no triggers
+        assert "[L003]" in l003_line
+        assert "No triggers" in l003_line
+        # Should NOT have arrow since no triggers
+        # But L002 (with triggers) should have arrow
+        assert "->" in output or "→" in output, (
+            f"Expected arrow for lesson WITH triggers in output:\n{output}"
+        )
+
+        # Specifically L003 line should NOT have arrow
+        # (need to check there's no arrow AFTER [L003] on that line)
+        l003_portion = l003_line[l003_line.index("[L003]"):]
+        assert "->" not in l003_portion and "→" not in l003_portion, (
+            f"Expected no arrow for empty triggers on L003, but found in: {l003_portion}"
+        )
+
+    def test_format_category_grouping_format(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Category name lowercase followed by lessons: gotcha: [L001] Title -> kw1|kw2."""
+        from core import LessonsManager
+        from core.models import Lesson, InjectionResult
+        from datetime import date
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Top lesson
+        manager.add_lesson(
+            level="project", category="pattern", title="Top Lesson",
+            content="Top content", triggers=[]
+        )
+
+        # Remaining lesson - gotcha category
+        manager.add_lesson(
+            level="project", category="gotcha", title="Gotcha Title",
+            content="Content", triggers=["kw1", "kw2"]
+        )
+
+        # Cite top lesson
+        for _ in range(5):
+            manager.cite_lesson("L001")
+
+        result = manager.inject_context(top_n=1)
+        output = result.format()
+
+        # Should have format: gotcha: [L002] Gotcha Title -> kw1|kw2
+        # Category name should be lowercase followed by colon
+        assert "gotcha:" in output, f"Expected 'gotcha:' with colon in output:\n{output}"
+
+        # Lesson should be on same line as category or following line
+        lines = output.split("\n")
+        found_gotcha_format = False
+        for line in lines:
+            if "gotcha:" in line and "[L002]" in line:
+                found_gotcha_format = True
+                break
+
+        assert found_gotcha_format, (
+            f"Expected category and lesson on same line 'gotcha: [L002] ...' in output:\n{output}"
+        )
+
+    def test_format_multiple_lessons_in_category_use_pipe_separator(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Second lesson in same category shows as | [L002] Title2 -> kw3|kw4."""
+        from core import LessonsManager
+        from core.models import Lesson, InjectionResult
+        from datetime import date
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Top lesson
+        manager.add_lesson(
+            level="project", category="pattern", title="Top Lesson",
+            content="Top content", triggers=[]
+        )
+
+        # Two remaining lessons in SAME category (gotcha)
+        manager.add_lesson(
+            level="project", category="gotcha", title="First Gotcha",
+            content="First gotcha content", triggers=["kw1", "kw2"]
+        )
+        manager.add_lesson(
+            level="project", category="gotcha", title="Second Gotcha",
+            content="Second gotcha content", triggers=["kw3", "kw4"]
+        )
+
+        # Cite top lesson
+        for _ in range(5):
+            manager.cite_lesson("L001")
+
+        result = manager.inject_context(top_n=1)
+        output = result.format()
+
+        # Should have pipe separator for second lesson in category
+        # Format: gotcha: [L002] First Gotcha -> kw1|kw2
+        #               | [L003] Second Gotcha -> kw3|kw4
+        # Or could be on same line with pipe separator
+
+        # Check that both L002 and L003 appear
+        assert "[L002]" in output, f"Expected [L002] in output:\n{output}"
+        assert "[L003]" in output, f"Expected [L003] in output:\n{output}"
+
+        # Find lines with gotcha content - look for pipe separator between lessons
+        # The second lesson in the category should have "| [" prefix (either L002 or L003)
+        lines = output.split("\n")
+        pipe_separator_found = False
+        for line in lines:
+            # Second lesson in category should start with pipe (after indent)
+            # Format: "        | [L002] Title" or "        | [L003] Title"
+            stripped = line.strip()
+            if stripped.startswith("| [L002]") or stripped.startswith("| [L003]"):
+                pipe_separator_found = True
+                break
+            # Also check for | followed by [ anywhere in line (more flexible)
+            if "| [L002]" in line or "| [L003]" in line:
+                pipe_separator_found = True
+                break
+
+        assert pipe_separator_found, (
+            f"Expected pipe '|' separator before second lesson in same category:\n{output}"
+        )
+
+    def test_format_remaining_count_excludes_displayed(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """(+N more) should reflect lessons NOT shown (after cap).
+
+        In the NEW format, remaining lessons are grouped by category.
+        The (+N more) count should reflect the total number of lessons
+        that are not displayed (beyond what's shown in category groups).
+        """
+        from core import LessonsManager
+        from core.models import Lesson, InjectionResult, INJECTION_REMAINING_CAP
+        from datetime import date
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Create one top lesson
+        manager.add_lesson(
+            level="project", category="pattern", title="Top Lesson",
+            content="Top content", triggers=[]
+        )
+
+        # Create 15 remaining lessons (more than INJECTION_REMAINING_CAP which is 10)
+        # Use different categories to test grouped display
+        alphabet = "ABCDEFGHIJKLMNOP"  # 16 letters
+        categories = ["gotcha", "pattern", "correction"]
+        for i in range(15):
+            manager.add_lesson(
+                level="project", category=categories[i % 3],
+                title=f"Remaining {alphabet[i]}",
+                content=f"Content {i}", triggers=[f"trigger{i}"]
+            )
+
+        # Cite top lesson
+        for _ in range(10):
+            manager.cite_lesson("L001")
+
+        result = manager.inject_context(top_n=1)
+        output = result.format()
+
+        # The new format should have the section header
+        assert "More (read if relevant)" in output, (
+            f"Expected section header for remaining lessons:\n{output}"
+        )
+
+        # With 15 remaining lessons and cap of 10, should show "+5 more"
+        # (15 - 10 = 5 not shown)
+        assert "+5 more" in output, (
+            f"Expected '(+5 more)' in output with 15 remaining and 10 cap:\n{output}"
+        )
+
+        # Should show some triggers in the remaining section
+        # At least some of the displayed 10 lessons should have triggers visible
+        trigger_count = sum(1 for i in range(10) if f"trigger{i}" in output)
+        assert trigger_count > 0, (
+            f"Expected at least some triggers to be shown for remaining lessons:\n{output}"
+        )
+
+
+# =============================================================================
+# Auto-Generating Triggers on Lesson Add (TDD)
+# =============================================================================
+
+
+class TestAutoTriggers:
+    """Tests for auto-generating triggers when adding new lessons.
+
+    When adding a lesson WITHOUT explicit triggers, the system should
+    automatically call the Haiku API to generate relevant trigger keywords.
+    When explicit triggers are provided, no API call should be made.
+    """
+
+    def test_add_lesson_auto_generates_triggers(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """When adding a lesson WITHOUT explicit triggers, triggers should be auto-generated via Haiku.
+
+        The system should:
+        1. Detect that no triggers were provided
+        2. Call the Haiku API to generate triggers based on title/content
+        3. Store the auto-generated triggers with the lesson
+        """
+        from unittest.mock import patch, MagicMock
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # First verify the method exists (this is the primary test)
+        assert hasattr(manager, "generate_single_lesson_triggers"), (
+            "LessonsManager should have generate_single_lesson_triggers method"
+        )
+
+        # Mock the Haiku API call to return generated triggers
+        with patch.object(manager, "generate_single_lesson_triggers") as mock_gen:
+            mock_gen.return_value = ["mutex", "destructor", "deadlock"]
+
+            # Add lesson WITHOUT triggers - should call API
+            lesson_id = manager.add_lesson(
+                level="project",
+                category="gotcha",
+                title="Avoid mutex in destructors",
+                content="Never acquire a mutex in a destructor as it can cause deadlocks.",
+            )
+
+            # Verify the API was called
+            mock_gen.assert_called_once()
+
+        # Verify triggers were stored
+        lesson = manager.get_lesson(lesson_id)
+        assert lesson is not None
+        assert lesson.triggers == ["mutex", "destructor", "deadlock"], (
+            f"Expected auto-generated triggers, got {lesson.triggers}"
+        )
+
+    def test_add_lesson_explicit_triggers_no_api_call(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """When adding a lesson WITH explicit triggers, NO API call should be made.
+
+        The explicit triggers should be used as-is without any API overhead.
+        """
+        from unittest.mock import patch, MagicMock
+        from core import LessonsManager
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # First verify the method exists (prerequisite for this test)
+        assert hasattr(manager, "generate_single_lesson_triggers"), (
+            "LessonsManager should have generate_single_lesson_triggers method"
+        )
+
+        with patch.object(manager, "generate_single_lesson_triggers") as mock_gen:
+            # Add lesson WITH explicit triggers - should NOT call API
+            lesson_id = manager.add_lesson(
+                level="project",
+                category="pattern",
+                title="Use spdlog for logging",
+                content="Always use spdlog instead of printf or cout.",
+                triggers=["spdlog", "logging", "printf"],
+            )
+
+            # Verify the API was NOT called
+            mock_gen.assert_not_called()
+
+        # Verify explicit triggers were stored
+        lesson = manager.get_lesson(lesson_id)
+        assert lesson is not None
+        assert lesson.triggers == ["spdlog", "logging", "printf"], (
+            f"Expected explicit triggers, got {lesson.triggers}"
+        )
+
+    def test_add_command_triggers_flag(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path
+    ):
+        """The `add` CLI command should accept --triggers "kw1,kw2,kw3" flag.
+
+        When --triggers is provided, those triggers should be used directly
+        without calling the API.
+        """
+        result = subprocess.run(
+            [
+                "python3", "core/cli.py",
+                "add",
+                "--triggers", "custom1,custom2,custom3",
+                "pattern", "CLI Trigger Test", "Test content with triggers"
+            ],
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "CLAUDE_RECALL_BASE": str(temp_lessons_base),
+                "CLAUDE_RECALL_STATE": str(temp_state_dir),
+                "PROJECT_DIR": str(temp_project_root),
+            },
+        )
+
+        assert result.returncode == 0, f"CLI failed: {result.stderr}"
+
+        # Verify the lesson was created with correct triggers
+        from core import LessonsManager
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert lesson.triggers == ["custom1", "custom2", "custom3"], (
+            f"Expected CLI-provided triggers, got {lesson.triggers}"
+        )
+
+    def test_add_command_no_triggers_flag_calls_api(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """When --triggers flag is NOT provided, triggers should be auto-generated."""
+        from argparse import Namespace
+        from core import LessonsManager
+        from core.commands import AddCommand, MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Mock the Haiku API call
+        def mock_call_haiku_api(prompt):
+            return "TRIGGERS: auto1, auto2, auto3"
+
+        monkeypatch.setattr(MigrateTriggersCommand, "call_haiku_api", staticmethod(mock_call_haiku_api))
+
+        # Create args as if from CLI (without --triggers)
+        args = Namespace(
+            category="pattern",
+            title="Auto-trigger test",
+            content="This lesson should auto-generate triggers",
+            triggers=None,  # No explicit triggers
+            source="human",
+            force=False,
+            promotable=True,
+            lesson_type="",
+        )
+
+        # Execute command
+        cmd = AddCommand()
+        exit_code = cmd.execute(args, manager)
+
+        assert exit_code == 0
+
+        # Verify triggers were auto-generated
+        lesson = manager.get_lesson("L001")
+        assert lesson is not None
+        assert len(lesson.triggers) > 0, "Triggers should have been auto-generated"
+        assert "auto1" in lesson.triggers
+
+    def test_generate_single_lesson_triggers(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """There should be a method generate_single_lesson_triggers(lesson) for single lessons.
+
+        This method should:
+        1. Accept a Lesson object
+        2. Call the Haiku API with appropriate prompt
+        3. Return a list of trigger keywords
+        """
+        from unittest.mock import patch
+        from core import LessonsManager
+        from core.models import Lesson
+        from datetime import date
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Create a lesson object to generate triggers for
+        lesson = Lesson(
+            id="L001",
+            title="Avoid global state",
+            content="Global variables make testing difficult and introduce hidden dependencies.",
+            category="pattern",
+            uses=1,
+            velocity=0,
+            learned=date.today(),
+            last_used=date.today(),
+            level="project",
+            triggers=[],
+        )
+
+        # Verify the method exists
+        assert hasattr(manager, "generate_single_lesson_triggers"), (
+            "LessonsManager should have generate_single_lesson_triggers method"
+        )
+
+        # Mock the underlying API call
+        with patch("core.commands.MigrateTriggersCommand.call_haiku_api") as mock_api:
+            mock_api.return_value = "L001: global, state, testing, dependencies"
+
+            triggers = manager.generate_single_lesson_triggers(lesson)
+
+            # Verify API was called
+            mock_api.assert_called_once()
+
+            # Verify triggers were parsed correctly
+            assert isinstance(triggers, list), f"Expected list, got {type(triggers)}"
+            assert len(triggers) > 0, "Expected at least one trigger"
+            assert "global" in triggers or "state" in triggers, (
+                f"Expected relevant triggers, got {triggers}"
+            )
+
+
+# =============================================================================
+# Auto-Migration of Triggers During Inject
+# =============================================================================
+
+
+class TestAutoMigrateTriggers:
+    """Tests for auto-migration of triggers during inject_context().
+
+    Feature behavior:
+    - During inject_context(), check if any lessons lack triggers
+    - If found, auto-generate triggers via Haiku and update the lessons file
+    - Cache migration status to avoid repeated API calls in same session
+    - Should be silent/transparent to user
+    """
+
+    def test_inject_auto_migrates_lessons_without_triggers(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Add lessons without triggers, call inject(), verify triggers were added to the lessons file."""
+        from unittest.mock import patch, MagicMock
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add lessons WITHOUT triggers (pass empty list explicitly)
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Use dependency injection",
+            content="Inject dependencies to improve testability.",
+            triggers=[],  # No triggers
+        )
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="Avoid circular imports",
+            content="Circular imports cause ImportError at runtime.",
+            triggers=[],  # No triggers
+        )
+
+        # Verify lessons have no triggers before inject
+        lesson1 = manager.get_lesson("L001")
+        lesson2 = manager.get_lesson("L002")
+        assert lesson1.triggers == [], "Lesson should start without triggers"
+        assert lesson2.triggers == [], "Lesson should start without triggers"
+
+        # Mock the Haiku API call to return triggers
+        mock_response = """L001: dependency, injection, testability, DI
+L002: circular, import, ImportError, module"""
+
+        with patch.object(MigrateTriggersCommand, "call_haiku_api", return_value=mock_response) as mock_api:
+            # Call inject_context - this should trigger auto-migration
+            result = manager.inject_context(top_n=5)
+
+            # Verify API was called (migration happened)
+            mock_api.assert_called_once()
+
+        # Re-read lessons from file to verify they were updated
+        manager2 = LessonsManager(temp_lessons_base, temp_project_root)
+        lesson1_after = manager2.get_lesson("L001")
+        lesson2_after = manager2.get_lesson("L002")
+
+        assert lesson1_after.triggers, "L001 should have triggers after migration"
+        assert lesson2_after.triggers, "L002 should have triggers after migration"
+        assert "dependency" in lesson1_after.triggers or "injection" in lesson1_after.triggers
+        assert "circular" in lesson2_after.triggers or "import" in lesson2_after.triggers
+
+    def test_inject_skips_lessons_with_triggers(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Add lessons WITH triggers, call inject(), verify NO API call was made."""
+        from unittest.mock import patch
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # First, verify the auto-migration feature exists on the manager
+        assert hasattr(manager, "_auto_migrate_triggers") or hasattr(manager, "_migration_done"), (
+            "LessonsManager should have auto-migration capability (_auto_migrate_triggers method or _migration_done flag)"
+        )
+
+        # Add lessons WITH triggers already set
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Use RAII for resource management",
+            content="RAII ensures resources are properly cleaned up.",
+            triggers=["RAII", "resource", "cleanup", "destructor"],
+        )
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="Check return values",
+            content="Always check return values for errors.",
+            triggers=["return", "error", "check", "validation"],
+        )
+
+        # Verify lessons have triggers
+        lesson1 = manager.get_lesson("L001")
+        lesson2 = manager.get_lesson("L002")
+        assert len(lesson1.triggers) > 0, "Lesson should have triggers"
+        assert len(lesson2.triggers) > 0, "Lesson should have triggers"
+
+        with patch.object(MigrateTriggersCommand, "call_haiku_api") as mock_api:
+            # Call inject_context
+            result = manager.inject_context(top_n=5)
+
+            # Verify API was NOT called (no migration needed)
+            mock_api.assert_not_called()
+
+    def test_inject_caches_migration_to_avoid_repeated_calls(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Call inject() twice, verify Haiku API only called once (not on second inject)."""
+        from unittest.mock import patch, call
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add a lesson without triggers
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Cache expensive operations",
+            content="Use caching to avoid repeated expensive computations.",
+            triggers=[],  # No triggers
+        )
+
+        mock_response = "L001: cache, expensive, computation, memoization"
+
+        with patch.object(MigrateTriggersCommand, "call_haiku_api", return_value=mock_response) as mock_api:
+            # First inject - should trigger migration
+            result1 = manager.inject_context(top_n=5)
+
+            # Second inject - should NOT call API again (cached)
+            result2 = manager.inject_context(top_n=5)
+
+            # API should only be called ONCE (first inject migrates, second uses cache)
+            assert mock_api.call_count == 1, (
+                f"API should only be called once, but was called {mock_api.call_count} times"
+            )
+
+    def test_inject_handles_api_failure_gracefully(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Mock API to fail, verify inject() still returns results (doesn't crash)."""
+        from unittest.mock import patch, MagicMock
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add a lesson without triggers
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Handle errors gracefully",
+            content="Always handle errors without crashing.",
+            triggers=[],  # No triggers - will need migration
+        )
+
+        # Track whether API was actually called (to verify migration was attempted)
+        api_was_called = False
+
+        def mock_api_that_fails(prompt):
+            nonlocal api_was_called
+            api_was_called = True
+            raise Exception("API unavailable")
+
+        # Mock API to raise an exception
+        with patch.object(MigrateTriggersCommand, "call_haiku_api", side_effect=mock_api_that_fails):
+            # inject_context should NOT crash, should return results
+            result = manager.inject_context(top_n=5)
+
+            # Verify migration was attempted (API was called)
+            assert api_was_called, (
+                "Auto-migration should have attempted to call the API for lesson without triggers"
+            )
+
+            # Verify we still get a valid result despite API failure
+            assert result is not None
+            assert result.total_count == 1
+            assert len(result.top_lessons) == 1
+            assert result.top_lessons[0].title == "Handle errors gracefully"
+
+        # Lesson should still have no triggers (migration failed gracefully)
+        lesson = manager.get_lesson("L001")
+        assert lesson.triggers == [], "Triggers should remain empty after failed migration"
+
+    def test_inject_migrates_mix_of_lessons(
+        self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch
+    ):
+        """Add some lessons with triggers, some without. Verify only lessons without triggers get migrated."""
+        from unittest.mock import patch
+        from core import LessonsManager
+        from core.commands import MigrateTriggersCommand
+
+        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
+        manager = LessonsManager(temp_lessons_base, temp_project_root)
+
+        # Add lesson WITH triggers
+        manager.add_lesson(
+            level="project",
+            category="pattern",
+            title="Has triggers already",
+            content="This lesson already has triggers.",
+            triggers=["existing", "trigger", "keywords"],
+        )
+
+        # Add lesson WITHOUT triggers
+        manager.add_lesson(
+            level="project",
+            category="gotcha",
+            title="Needs triggers",
+            content="This lesson needs triggers to be generated.",
+            triggers=[],  # No triggers
+        )
+
+        # Add another lesson WITH triggers
+        manager.add_lesson(
+            level="system",
+            category="preference",
+            title="Also has triggers",
+            content="Another lesson with existing triggers.",
+            triggers=["more", "keywords"],
+        )
+
+        # Mock API response - should only be called for L002 (the one without triggers)
+        mock_response = "L002: needs, triggers, generated, migration"
+
+        with patch.object(MigrateTriggersCommand, "call_haiku_api", return_value=mock_response) as mock_api:
+            result = manager.inject_context(top_n=5)
+
+            # API should be called
+            mock_api.assert_called_once()
+
+            # Verify the prompt only includes the lesson without triggers
+            call_args = mock_api.call_args[0][0]  # First positional arg (prompt)
+            assert "L002" in call_args, "Prompt should include L002 (needs migration)"
+            assert "Needs triggers" in call_args, "Prompt should include lesson title"
+            # L001 and S001 should NOT be in the prompt (they have triggers)
+            assert "Has triggers already" not in call_args, "Prompt should NOT include lessons with triggers"
+
+        # Verify L002 now has triggers
+        manager2 = LessonsManager(temp_lessons_base, temp_project_root)
+        lesson2 = manager2.get_lesson("L002")
+        assert lesson2.triggers, "L002 should have triggers after migration"
+
+        # Verify L001 and S001 still have their original triggers (unchanged)
+        lesson1 = manager2.get_lesson("L001")
+        lesson3 = manager2.get_lesson("S001")
+        assert lesson1.triggers == ["existing", "trigger", "keywords"], (
+            "L001 triggers should be unchanged"
+        )
+        assert lesson3.triggers == ["more", "keywords"], (
+            "S001 triggers should be unchanged"
+        )
 
 
 if __name__ == "__main__":

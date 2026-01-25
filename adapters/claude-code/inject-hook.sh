@@ -43,53 +43,96 @@ run_decay_if_due() {
         # Run decay in background so it doesn't slow down session start
         # Try Python first, fall back to bash
         if [[ -f "$PYTHON_MANAGER" ]]; then
-            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" decay 30 >/dev/null 2>&1 &
+            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$PYTHON_BIN" "$PYTHON_MANAGER" decay 30 >/dev/null 2>&1 &
         elif [[ -x "$BASH_MANAGER" ]]; then
             "$BASH_MANAGER" decay 30 >/dev/null 2>&1 &
         fi
     fi
 }
 
-# Generate lessons context using Python manager (with bash fallback)
+# Generate combined context (lessons + handoffs + todos) in single Python call
+# Returns: sets LESSONS_SUMMARY_RAW, HANDOFFS_SUMMARY, TODOS_PROMPT variables
 # Note: topLessonsToShow is configurable (default: 5), smart-inject-hook.sh adds query-relevant ones
-generate_context() {
+generate_combined_context() {
     local cwd="$1"
-    local summary=""
     local top_n
     top_n=$(get_top_lessons_count)
 
-    # Try Python manager first
+    # Reset output variables
+    LESSONS_SUMMARY_RAW=""
+    HANDOFFS_SUMMARY=""
+    TODOS_PROMPT=""
+
+    # Try combined inject (single Python call for all three)
     if [[ -f "$PYTHON_MANAGER" ]]; then
         local stderr_file
         stderr_file=$(mktemp 2>/dev/null || echo "/tmp/inject-hook-$$")
 
-        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+        local combined_output
+        combined_output=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
             CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
             CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-            python3 "$PYTHON_MANAGER" inject "$top_n" 2>"$stderr_file")
+            "$PYTHON_BIN" "$PYTHON_MANAGER" inject-combined "$top_n" 2>"$stderr_file")
 
         local exit_code=$?
-        if [[ $exit_code -ne 0 ]]; then
-            # Log error if debug enabled
-            if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-                local error_msg
-                error_msg=$(cat "$stderr_file" 2>/dev/null | head -c 500)
-                PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
-                    CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-                    python3 "$PYTHON_MANAGER" debug log-error \
-                    "inject_hook_failed" "exit=$exit_code: $error_msg" 2>/dev/null &
-            fi
-            summary=""  # Clear on failure
+        if [[ $exit_code -eq 0 && -n "$combined_output" ]]; then
+            # Parse JSON output using jq
+            LESSONS_SUMMARY_RAW=$(echo "$combined_output" | jq -r '.lessons // empty')
+            HANDOFFS_SUMMARY=$(echo "$combined_output" | jq -r '.handoffs // empty')
+            TODOS_PROMPT=$(echo "$combined_output" | jq -r '.todos // empty')
+            rm -f "$stderr_file" 2>/dev/null
+            return 0
+        fi
+
+        # Log error if debug enabled
+        if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]]; then
+            local error_msg
+            error_msg=$(cat "$stderr_file" 2>/dev/null | head -c 500)
+            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+                CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
+                "$PYTHON_BIN" "$PYTHON_MANAGER" debug log-error \
+                "inject_combined_failed" "exit=$exit_code: $error_msg" 2>/dev/null &
         fi
         rm -f "$stderr_file" 2>/dev/null
     fi
 
-    # Fall back to bash manager if Python fails or returns empty
-    if [[ -z "$summary" && -x "$BASH_MANAGER" ]]; then
-        summary=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" inject "$top_n" 2>/dev/null || true)
+    # Fallback: individual calls if combined fails
+    generate_context_fallback "$cwd" "$top_n"
+}
+
+# Fallback: individual Python/bash calls (used if inject-combined fails)
+generate_context_fallback() {
+    local cwd="$1"
+    local top_n="$2"
+
+    # Get lessons
+    if [[ -f "$PYTHON_MANAGER" ]]; then
+        LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+            CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
+            CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
+            "$PYTHON_BIN" "$PYTHON_MANAGER" inject "$top_n" 2>/dev/null || true)
+    fi
+    if [[ -z "$LESSONS_SUMMARY_RAW" && -x "$BASH_MANAGER" ]]; then
+        LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" inject "$top_n" 2>/dev/null || true)
     fi
 
-    echo "$summary"
+    # Get handoffs
+    if [[ -f "$PYTHON_MANAGER" ]]; then
+        HANDOFFS_SUMMARY=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+            CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
+            CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
+            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
+        if [[ "$HANDOFFS_SUMMARY" == "(no active handoffs)" ]]; then
+            HANDOFFS_SUMMARY=""
+        fi
+    fi
+
+    # Get todos if handoffs exist
+    if [[ -n "$HANDOFFS_SUMMARY" && -f "$PYTHON_MANAGER" ]]; then
+        TODOS_PROMPT=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+            CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
+            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff inject-todos 2>/dev/null || true)
+    fi
 }
 
 main() {
@@ -107,39 +150,25 @@ main() {
         export CLAUDE_RECALL_SESSION="$claude_session_id"
     fi
 
-    # Generate lessons context (with timing)
+    # Generate combined context (lessons + handoffs + todos) in single Python call
     local phase_start
     phase_start=$(get_elapsed_ms)
-    local summary
-    summary=$(generate_context "$cwd")
-    # Store raw lessons content for token budget tracking
-    local LESSONS_SUMMARY_RAW="$summary"
-    log_phase "load_lessons" "$phase_start" "inject"
+    generate_combined_context "$cwd"
+    log_phase "load_combined" "$phase_start" "inject"
 
-    # Also get active handoffs (project-level only)
-    local handoffs=""
-    local todo_continuation=""
-    if [[ -f "$PYTHON_MANAGER" ]]; then
-        phase_start=$(get_elapsed_ms)
-        handoffs=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" python3 "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
-        log_phase "load_handoffs" "$phase_start" "inject"
+    # Variables set by generate_combined_context:
+    # - LESSONS_SUMMARY_RAW: formatted lessons
+    # - HANDOFFS_SUMMARY: active handoffs
+    # - TODOS_PROMPT: todo continuation prompt
+    local handoffs="$HANDOFFS_SUMMARY"
+    local todo_continuation="$TODOS_PROMPT"
 
-        # Generate todo continuation prompt if there are active handoffs
-        if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
-            # Extract the most recent handoff for todo format
-            todo_continuation=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" python3 "$PYTHON_MANAGER" handoff inject-todos 2>/dev/null || true)
+    # NOTE: Session linking removed - now happens only when Claude explicitly
+    # works on a handoff (via TodoWrite sync after user confirms continuation)
 
-            # Link session to continuation handoff so updates go to the right place
-            if [[ -n "$todo_continuation" && -n "$claude_session_id" ]]; then
-                priority_handoff_id=$(echo "$todo_continuation" | grep -oE 'hf-[0-9a-f]+' | head -1)
-                if [[ -n "$priority_handoff_id" ]]; then
-                    PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-                        python3 "$PYTHON_MANAGER" handoff set-session "$priority_handoff_id" "$claude_session_id" >/dev/null 2>&1 || true
-                fi
-            fi
-        fi
-    fi
-    if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
+    # Build combined summary
+    local summary="$LESSONS_SUMMARY_RAW"
+    if [[ -n "$handoffs" ]]; then
         if [[ -n "$summary" ]]; then
             summary="$summary
 
@@ -172,7 +201,7 @@ Consider creating a handoff if continuing this work."
     fi
 
     local handoff_count=0
-    if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
+    if [[ -n "$handoffs" ]]; then
         handoff_count=$(echo "$handoffs" | grep -cE "^### \[(hf-[0-9a-f]+|A[0-9]{3})\]" || true)
     fi
 
@@ -239,7 +268,8 @@ HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
   MINOR = single-file fix, config, docs (no handoff needed)
   COMPLETION: When all todos done in this session:
     - If code changed, run /review
-    - Commit your changes (auto-completes the handoff)
+    - ASK: \"Any lessons from this work?\" (context is fresh now!)
+    - Commit your changes (git commit auto-completes the handoff)
     - Or manually: HANDOFF COMPLETE <id>"
 
         # Add todo continuation if available
@@ -277,7 +307,7 @@ $todo_continuation"
             PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
                 CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
                 CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-                python3 "$PYTHON_MANAGER" debug injection-budget \
+                "$PYTHON_BIN" "$PYTHON_MANAGER" debug injection-budget \
                 "$total_tokens" "$lessons_tokens" "$handoffs_tokens" "$duties_tokens" \
                 >/dev/null 2>&1 &
         fi
