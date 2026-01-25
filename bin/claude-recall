@@ -62,9 +62,36 @@ else
     PYTHON="python3"
 fi
 
-# Check for textual (required for TUI mode)
-if [[ "${1:-}" != "--summary" && "${1:-}" != "--tail" ]]; then
-    if ! "$PYTHON" -c "import textual" 2>/dev/null; then
+# Determine command: default to watch unless subcommand provided
+KNOWN_COMMANDS=(add add-ai cite inject list search show decay edit delete remove promote handoff approach session debug config watch)
+USE_WATCH=true
+
+if [[ $# -gt 0 ]]; then
+    for cmd in "${KNOWN_COMMANDS[@]}"; do
+        if [[ "$1" == "$cmd" ]]; then
+            USE_WATCH=false
+            break
+        fi
+    done
+fi
+
+if $USE_WATCH; then
+    CMD_ARGS=("watch" "$@")
+else
+    CMD_ARGS=("$@")
+fi
+
+# Check for textual (required for TUI watch mode)
+if [[ "${CMD_ARGS[0]:-}" == "watch" ]]; then
+    NEED_TEXTUAL=true
+    for arg in "${CMD_ARGS[@]}"; do
+        if [[ "$arg" == "--summary" || "$arg" == "--tail" ]]; then
+            NEED_TEXTUAL=false
+            break
+        fi
+    done
+
+    if $NEED_TEXTUAL && ! "$PYTHON" -c "import textual" 2>/dev/null; then
         echo "TUI mode requires textual. Install with:"
         echo "  pip install textual textual-plotext"
         echo ""
@@ -73,4 +100,4 @@ if [[ "${1:-}" != "--summary" && "${1:-}" != "--tail" ]]; then
     fi
 fi
 
-exec "$PYTHON" "$CLI_PATH" watch "$@"
+exec "$PYTHON" "$CLI_PATH" "${CMD_ARGS[@]}"
