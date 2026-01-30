@@ -344,7 +344,8 @@ sync_working_dir() {
 
     # Sync core Python code from working directory
     if [[ -d "$SCRIPT_DIR/core" ]]; then
-        cp -R "$SCRIPT_DIR/core/"* "$install_path/core/" 2>/dev/null || true
+        mkdir -p "$install_path/core"
+        cp -R "$SCRIPT_DIR/core/"* "$install_path/core/"
         log_success "Synced working directory to plugin cache"
     fi
 }
