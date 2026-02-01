@@ -7,7 +7,24 @@ allowed-tools: Task
 
 > **Mandatory** before every commit in MAJOR work.
 
-## Launch Review Agent
+## Step 1: Code Simplification (Pre-Review)
+
+Before reviewing, run the code-simplifier agent on changed files to clean up code:
+
+```
+Use `code-simplifier:code-simplifier` agent with prompt:
+"Simplify and refine the recently modified code for clarity, consistency, and maintainability. Focus on staged/modified files from git status. Preserve all functionality."
+```
+
+This catches:
+- Unnecessary complexity
+- Inconsistent patterns
+- Clarity improvements
+- Code that could be more idiomatic
+
+**After simplification:** Review the changes, then proceed to code review.
+
+## Step 2: Launch Review Agent
 
 Use `general-purpose` agent with this prompt template:
 
