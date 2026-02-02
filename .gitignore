@@ -26,5 +26,8 @@ htmlcov/
 # OS
 .DS_Store
 
+# Go build artifacts
+go/bin/
+
 # Local settings (not committed to git)
 .claude/settings.local.json
