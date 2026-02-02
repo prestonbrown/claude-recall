@@ -9,8 +9,8 @@
 ## Active Lessons
 
 
-### [L001] [***--|-----] Delimiter conflicts
-- **Uses**: 7 | **Velocity**: 0.01 | **Learned**: 2025-12-27 | **Last**: 2026-01-18 | **Category**: pattern | **Type**: informational
+### [L001] [***--|*----] Delimiter conflicts
+- **Uses**: 10 | **Velocity**: 1.67 | **Learned**: 2025-12-27 | **Last**: 2026-02-01 | **Category**: pattern | **Type**: informational
 > When adding special characters to display formats (like | in star ratings), check if they conflict with internal delimiters used for parsing. We had to switch from | to ~ as the internal field separator.
 
 
@@ -19,8 +19,8 @@
 > When modifying a file based on its contents, collect items to change first, then apply updates with fresh reads. Modifying while reading causes stale data bugs.
 
 
-### [L003] [**---|-----] Test HOME override
-- **Uses**: 3 | **Velocity**: 0.01 | **Learned**: 2025-12-27 | **Last**: 2025-12-29 | **Category**: gotcha | **Type**: constraint
+### [L003] [*----|-----] Test HOME override
+- **Uses**: 1 | **Velocity**: 0.01 | **Learned**: 2025-12-27 | **Last**: 2025-12-29 | **Category**: gotcha | **Type**: constraint
 > When tests override HOME, hooks still look for manager at hardcoded paths. Must symlink manager to test LESSONS_BASE or tests fail silently.
 
 
@@ -40,7 +40,7 @@
 
 
 ### [L007] [*----|-----] Double-action popup trigger
-- **Uses**: 2 | **Velocity**: 0.12 | **Learned**: 2026-01-09 | **Last**: 2026-01-11 | **Category**: pattern | **Type**: informational
+- **Uses**: 2 | **Velocity**: 0.01 | **Learned**: 2026-01-09 | **Last**: 2026-01-11 | **Category**: pattern | **Type**: informational
 > Track confirmed selection separately from current selection (e.g., _current_handoff_id vs _user_selected_handoff_id). First action confirms selection, second action on same item opens popup. Prevents accidental popup triggers.
 
 
