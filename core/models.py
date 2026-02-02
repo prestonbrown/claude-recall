@@ -309,7 +309,7 @@ class InjectionResult(FormattableResult):
                     triggers_str = ""
                     if lesson.triggers:
                         triggers_to_show = lesson.triggers[:3]
-                        triggers_str = f" -> {"|".join(triggers_to_show)}"
+                        triggers_str = f" -> {'|'.join(triggers_to_show)}"
 
                     if first:
                         lines.append(f"  {category}: [{lesson.id}] {title}{triggers_str}")
