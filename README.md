@@ -1,6 +1,14 @@
 # Claude Recall
 
-[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](https://github.com/prestonbrown/claude-recall)
+<p align="center">
+  <a href="https://github.com/prestonbrown/claude-recall/releases"><img src="https://img.shields.io/github/v/release/prestonbrown/claude-recall?style=flat-square&color=blue&label=version" alt="Version"></a>
+  <a href="https://github.com/prestonbrown/claude-recall/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/prestonbrown/claude-recall/test.yml?branch=main&style=flat-square&label=tests" alt="Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
+  <br>
+  <img src="https://img.shields.io/badge/python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/go-1.21+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.21+">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="Platform">
+</p>
 
 A dynamic learning and work tracking system for AI coding agents. Tracks patterns, corrections, and gotchas across sessions while helping manage ongoing work with handoffs tracking.
 
