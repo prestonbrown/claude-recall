@@ -342,13 +342,6 @@ sync_working_dir() {
         return 0
     fi
 
-    # Sync core Python code from working directory
-    if [[ -d "$SCRIPT_DIR/core" ]]; then
-        mkdir -p "$install_path/core"
-        cp -R "$SCRIPT_DIR/core/"* "$install_path/core/"
-        log_success "Synced Python code to plugin cache"
-    fi
-
     # Sync Go source from working directory (for building on target)
     if [[ -d "$SCRIPT_DIR/go" ]]; then
         mkdir -p "$install_path/go"
@@ -359,86 +352,34 @@ sync_working_dir() {
     fi
 }
 
-install_venv() {
-    log_info "Setting up Python virtual environment for TUI..."
-
-    # Find the installed plugin path from the registry
-    local install_path
-    install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
-        "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
-
-    if [[ -z "$install_path" || ! -d "$install_path" ]]; then
-        log_warn "Could not find installed plugin path, skipping venv setup"
-        return 0
-    fi
-
-    local venv_dir="$install_path/.venv"
-
-    if [[ ! -d "$venv_dir" ]]; then
-        if ! python3 -m venv "$venv_dir" 2>/dev/null; then
-            log_warn "Could not create virtual environment (python3-venv may not be installed)"
-            log_info "TUI will require manual: pip install textual textual-plotext"
-            return 0
-        fi
-        log_success "Created virtual environment"
-    fi
-
-    log_info "Installing dependencies..."
-    if "$venv_dir/bin/pip" install --quiet --upgrade pip 2>/dev/null; then
-        # Install core dependencies (anthropic for trigger generation)
-        if [[ -f "$install_path/requirements.txt" ]]; then
-            if "$venv_dir/bin/pip" install --quiet -r "$install_path/requirements.txt" 2>/dev/null; then
-                log_success "Installed core dependencies (anthropic)"
-            else
-                log_warn "Could not install core dependencies (network issue?)"
-            fi
-        fi
-        # Install TUI dependencies
-        if "$venv_dir/bin/pip" install --quiet textual textual-plotext 2>/dev/null; then
-            log_success "Installed TUI dependencies"
-        else
-            log_warn "Could not install TUI dependencies (network issue?)"
-        fi
-    else
-        log_warn "Could not upgrade pip"
-    fi
-}
-
 install_cli() {
-    # Install claude-recall (Python) for TUI - only needed for 'watch' command
+    # Install claude-recall TUI wrapper (Python-based, deps managed externally)
     if [[ -f "$SCRIPT_DIR/bin/claude-recall" ]]; then
         mkdir -p "$HOME/.local/bin"
-        if [[ ! "$SCRIPT_DIR/bin/claude-recall" -ef "$HOME/.local/bin/claude-recall" ]]; then
-            cp "$SCRIPT_DIR/bin/claude-recall" "$HOME/.local/bin/"
-        fi
+        cp "$SCRIPT_DIR/bin/claude-recall" "$HOME/.local/bin/"
         chmod +x "$HOME/.local/bin/claude-recall"
-        log_success "Installed claude-recall (TUI) to ~/.local/bin/"
-    fi
-
-    # Check if Go recall binary exists - it handles CLI commands faster
-    if [[ -f "$SCRIPT_DIR/go/bin/recall" ]]; then
-        log_info "Go recall binary available - CLI commands use Go for performance"
+        log_success "Installed claude-recall TUI to ~/.local/bin/"
     fi
 
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-        log_warn "Add ~/.local/bin to your PATH to use 'recall' and 'claude-recall' commands"
+        log_warn "Add ~/.local/bin to PATH for 'recall' and 'claude-recall' commands"
     fi
 }
 
 build_go_binaries() {
     # Build Go binaries for high-performance hooks
     if ! command -v go >/dev/null 2>&1; then
-        log_info "Go not installed, skipping Go binary build (Python fallback will be used)"
-        return 0
+        log_error "Go not installed. Install Go first: https://go.dev/dl/"
+        exit 1
     fi
 
     local go_dir="$SCRIPT_DIR/go"
     if [[ ! -f "$go_dir/go.mod" ]]; then
-        log_info "Go source not found, skipping Go binary build"
-        return 0
+        log_error "Go source not found at $go_dir"
+        exit 1
     fi
 
-    log_info "Building Go binaries for high-performance hooks..."
+    log_info "Building Go binaries..."
 
     mkdir -p "$go_dir/bin"
 
@@ -446,27 +387,37 @@ build_go_binaries() {
     if (cd "$go_dir" && go build -o bin/recall-hook ./cmd/recall-hook 2>/dev/null); then
         log_success "Built recall-hook binary"
     else
-        log_warn "Failed to build recall-hook (Python fallback will be used)"
-        return 0
+        log_error "Failed to build recall-hook"
+        exit 1
     fi
 
     # Build recall CLI
     if (cd "$go_dir" && go build -o bin/recall ./cmd/recall 2>/dev/null); then
         log_success "Built recall CLI binary"
     else
-        log_warn "Failed to build recall CLI"
+        log_warn "Failed to build recall CLI (hook will still work)"
     fi
 }
 
 install_go_binaries() {
-    # Install Go binaries to plugin cache and ~/.local/bin
+    # Install Go binaries to locations where hooks can find them
     local go_bin_dir="$SCRIPT_DIR/go/bin"
 
     if [[ ! -f "$go_bin_dir/recall-hook" ]]; then
         return 0
     fi
 
-    # Find installed plugin path
+    # Install to LESSONS_BASE (where stop-hook.sh looks first)
+    # This is the primary location hooks check: $LESSONS_BASE/go/bin/recall-hook
+    local config_go_bin="$HOME/.config/claude-recall/go/bin"
+    mkdir -p "$config_go_bin"
+    cp "$go_bin_dir/recall-hook" "$config_go_bin/"
+    if [[ -f "$go_bin_dir/recall" ]]; then
+        cp "$go_bin_dir/recall" "$config_go_bin/"
+    fi
+    log_success "Installed Go binaries to ~/.config/claude-recall/go/bin/"
+
+    # Also install to plugin cache path (for future-proofing)
     local install_path
     install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
         "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
@@ -511,10 +462,9 @@ install_claude() {
     # Install supporting files
     cleanup_old_commands
     install_state_dir
-    install_venv
     install_cli
 
-    # Build and install Go binaries for performance
+    # Build and install Go binaries
     build_go_binaries
     install_go_binaries
 
