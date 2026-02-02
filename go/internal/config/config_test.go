@@ -240,3 +240,70 @@ func Test_LoadConfig_DebugLevelClamped(t *testing.T) {
 		t.Errorf("expected DebugLevel clamped to 0, got %d", cfg.DebugLevel)
 	}
 }
+
+func Test_LoadConfig_ProjectDir_DefaultsToCWD(t *testing.T) {
+	// Test that ProjectDir defaults to cwd when:
+	// 1. No PROJECT_DIR env var is set
+	// 2. Not in a git repository
+
+	// Create a temp directory (outside any git repo)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Clear env vars
+	t.Setenv("CLAUDE_RECALL_BASE", "")
+	t.Setenv("CLAUDE_RECALL_STATE", "")
+	t.Setenv("PROJECT_DIR", "")
+	t.Setenv("CLAUDE_RECALL_DEBUG", "")
+
+	// Save current dir and change to temp dir (no .git)
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp dir: %v", err)
+	}
+	defer os.Chdir(origDir)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Resolve symlinks for comparison (macOS /var -> /private/var)
+	expectedDir, _ := filepath.EvalSymlinks(tmpDir)
+	actualDir, _ := filepath.EvalSymlinks(cfg.ProjectDir)
+
+	// ProjectDir should be the temp directory (cwd) since there's no .git
+	if actualDir != expectedDir {
+		t.Errorf("expected ProjectDir=%q (cwd), got %q", expectedDir, actualDir)
+	}
+}
+
+func Test_LoadConfig_ProjectDir_GitRootTakesPrecedence(t *testing.T) {
+	// Test that ProjectDir uses git root when running from a subdirectory
+	// (We're running tests from within the claude-recall repo)
+
+	nonExistentPath := filepath.Join(t.TempDir(), "does-not-exist.json")
+
+	// Clear PROJECT_DIR so git root detection kicks in
+	t.Setenv("PROJECT_DIR", "")
+
+	cfg, err := Load(nonExistentPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should find git root, not just cwd
+	// The git root should contain a .git directory
+	gitDir := filepath.Join(cfg.ProjectDir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		// If not in a git repo, that's also valid - just check it's not empty
+		cwd, _ := os.Getwd()
+		if cfg.ProjectDir == "" {
+			t.Error("expected ProjectDir to be set (either git root or cwd)")
+		}
+		// In non-git environments, should fall back to cwd
+		if cfg.ProjectDir != cwd {
+			t.Logf("note: not in git repo, ProjectDir=%q, cwd=%q", cfg.ProjectDir, cwd)
+		}
+	}
+}

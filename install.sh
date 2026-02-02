@@ -346,7 +346,16 @@ sync_working_dir() {
     if [[ -d "$SCRIPT_DIR/core" ]]; then
         mkdir -p "$install_path/core"
         cp -R "$SCRIPT_DIR/core/"* "$install_path/core/"
-        log_success "Synced working directory to plugin cache"
+        log_success "Synced Python code to plugin cache"
+    fi
+
+    # Sync Go source from working directory (for building on target)
+    if [[ -d "$SCRIPT_DIR/go" ]]; then
+        mkdir -p "$install_path/go"
+        cp -R "$SCRIPT_DIR/go/"* "$install_path/go/" 2>/dev/null || true
+        # Remove built binaries (will rebuild on install)
+        rm -rf "$install_path/go/bin" 2>/dev/null || true
+        log_success "Synced Go source to plugin cache"
     fi
 }
 
@@ -396,18 +405,87 @@ install_venv() {
 }
 
 install_cli() {
-    # Install claude-recall CLI to ~/.local/bin
+    # Install claude-recall (Python) for TUI - only needed for 'watch' command
     if [[ -f "$SCRIPT_DIR/bin/claude-recall" ]]; then
         mkdir -p "$HOME/.local/bin"
         if [[ ! "$SCRIPT_DIR/bin/claude-recall" -ef "$HOME/.local/bin/claude-recall" ]]; then
             cp "$SCRIPT_DIR/bin/claude-recall" "$HOME/.local/bin/"
         fi
         chmod +x "$HOME/.local/bin/claude-recall"
-        log_success "Installed claude-recall CLI to ~/.local/bin/"
+        log_success "Installed claude-recall (TUI) to ~/.local/bin/"
+    fi
 
-        if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-            log_warn "Add ~/.local/bin to your PATH to use 'claude-recall' command"
+    # Check if Go recall binary exists - it handles CLI commands faster
+    if [[ -f "$SCRIPT_DIR/go/bin/recall" ]]; then
+        log_info "Go recall binary available - CLI commands use Go for performance"
+    fi
+
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        log_warn "Add ~/.local/bin to your PATH to use 'recall' and 'claude-recall' commands"
+    fi
+}
+
+build_go_binaries() {
+    # Build Go binaries for high-performance hooks
+    if ! command -v go >/dev/null 2>&1; then
+        log_info "Go not installed, skipping Go binary build (Python fallback will be used)"
+        return 0
+    fi
+
+    local go_dir="$SCRIPT_DIR/go"
+    if [[ ! -f "$go_dir/go.mod" ]]; then
+        log_info "Go source not found, skipping Go binary build"
+        return 0
+    fi
+
+    log_info "Building Go binaries for high-performance hooks..."
+
+    mkdir -p "$go_dir/bin"
+
+    # Build recall-hook (for stop hooks)
+    if (cd "$go_dir" && go build -o bin/recall-hook ./cmd/recall-hook 2>/dev/null); then
+        log_success "Built recall-hook binary"
+    else
+        log_warn "Failed to build recall-hook (Python fallback will be used)"
+        return 0
+    fi
+
+    # Build recall CLI
+    if (cd "$go_dir" && go build -o bin/recall ./cmd/recall 2>/dev/null); then
+        log_success "Built recall CLI binary"
+    else
+        log_warn "Failed to build recall CLI"
+    fi
+}
+
+install_go_binaries() {
+    # Install Go binaries to plugin cache and ~/.local/bin
+    local go_bin_dir="$SCRIPT_DIR/go/bin"
+
+    if [[ ! -f "$go_bin_dir/recall-hook" ]]; then
+        return 0
+    fi
+
+    # Find installed plugin path
+    local install_path
+    install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
+        "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
+
+    if [[ -n "$install_path" && -d "$install_path" ]]; then
+        mkdir -p "$install_path/go/bin"
+        cp "$go_bin_dir/recall-hook" "$install_path/go/bin/"
+        if [[ -f "$go_bin_dir/recall" ]]; then
+            cp "$go_bin_dir/recall" "$install_path/go/bin/"
         fi
+        log_success "Installed Go binaries to plugin cache"
+    fi
+
+    # Also install recall CLI to ~/.local/bin for command-line use
+    if [[ -f "$go_bin_dir/recall" ]]; then
+        mkdir -p "$HOME/.local/bin"
+        cp "$go_bin_dir/recall" "$HOME/.local/bin/recall"
+        chmod +x "$HOME/.local/bin/recall"
+        log_success "Installed recall (Go) CLI to ~/.local/bin/"
     fi
 }
 
@@ -435,6 +513,10 @@ install_claude() {
     install_state_dir
     install_venv
     install_cli
+
+    # Build and install Go binaries for performance
+    build_go_binaries
+    install_go_binaries
 
     log_success "Installed Claude Code plugin"
 }
