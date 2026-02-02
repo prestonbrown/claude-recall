@@ -20,30 +20,45 @@ Architecture, internals, and contributing guide for the Claude Recall system.
 │  └─────────────────────┘    └─────────────────────┘         │
 └─────────────────────────────────────────────────────────────┘
                               │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                Python Core (lessons_manager.py)              │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐ │
-│  │    Lessons     │  │    Handoffs    │  │   Injection    │ │
-│  │  add/cite/edit │  │ phases/agents  │  │ token tracking │ │
-│  │  decay/promote │  │ tried/next     │  │ context budget │ │
-│  └────────────────┘  └────────────────┘  └────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                              │
+           ┌──────────────────┴──────────────────┐
+           ▼                                     ▼
+┌─────────────────────────┐       ┌─────────────────────────┐
+│  Go Performance Layer   │       │      Python Core        │
+│  (fast path: ~100ms)    │       │  (slow path: ~2-3s)     │
+│  ┌───────────────────┐  │       │  ┌───────────────────┐  │
+│  │ Citation Extract  │  │       │  │ Full Processing   │  │
+│  │ Transcript Parse  │  │       │  │ Decay/Promotion   │  │
+│  │ Store Read/Write  │  │       │  │ Complex Commands  │  │
+│  └───────────────────┘  │       │  └───────────────────┘  │
+└─────────────────────────┘       └─────────────────────────┘
+           │                                     │
+           └──────────────────┬──────────────────┘
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     Storage Layer                            │
-│  ~/.config/claude-recall/                                    │
+│  ~/.local/state/claude-recall/                               │
 │  ├── LESSONS.md           # System-wide lessons              │
+│  ├── debug.log            # Debug logs (XDG state)           │
 │  ├── .decay-last-run      # Decay timestamp                  │
 │  └── .citation-state/     # Per-session checkpoints          │
 │                                                              │
-│  ~/.local/state/claude-recall/                               │
-│  └── debug.log            # Debug logs (XDG state)           │
+│  ~/.config/claude-recall/                                    │
+│  └── config.json          # User configuration (optional)    │
 │                                                              │
 │  $PROJECT/.claude-recall/                                    │
 │  ├── LESSONS.md           # Project-specific lessons         │
 │  └── HANDOFFS.md          # Active work tracking             │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    TUI / Alerting                            │
+│  ┌─────────────────────┐    ┌─────────────────────┐         │
+│  │   Debug TUI         │    │    Alerting         │         │
+│  │   - Log viewer      │    │    - Stale handoffs │         │
+│  │   - Session stats   │    │    - Latency spikes │         │
+│  │   - Real-time       │    │    - Error rates    │         │
+│  └─────────────────────┘    └─────────────────────┘         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -58,31 +73,42 @@ The primary implementation in Python. Located at `core/` with entry point `cli.p
 ```python
 @dataclass
 class Lesson:
-    id: str           # L001, S001, etc.
+    id: str              # L001, S001, etc.
     title: str
     content: str
-    category: str     # pattern, correction, gotcha, preference, decision
-    uses: int         # Total citation count
-    velocity: float   # Recent activity (decays over time)
-    tokens: int       # Estimated token count for budgeting
+    uses: int            # Total citation count
+    velocity: float      # Recent activity (decays over time)
     learned: date
-    last: date
-    source: str       # user, ai
-    scope: str        # project, system
+    last_used: date
+    category: str        # pattern, correction, gotcha, preference, decision
+    source: str = "human"    # human or ai
+    level: str = "project"   # project or system
+    promotable: bool = True  # False = never promote to system level
+    lesson_type: str = ""    # constraint|informational|preference
+    triggers: List[str] = [] # Keywords for matching relevance
+
+    @property
+    def tokens(self) -> int: # Estimated from title + content
 
 @dataclass
 class Handoff:
-    id: str           # hf-abc1234 (hash-based for multi-agent safety)
+    id: str              # hf-abc1234 (hash-based for multi-agent safety)
     title: str
-    status: str       # pending, in_progress, blocked, completed
-    phase: str        # research, planning, implementing, review
-    agent: str        # explore, general-purpose, plan, review, user
+    status: str          # not_started, in_progress, blocked, completed
     created: date
     updated: date
-    description: str
-    next_steps: str
-    files: List[str]
-    tried: List[TriedStep]
+    description: str = ""
+    next_steps: str = ""
+    phase: str = "research"      # research, planning, implementing, review
+    agent: str = "user"          # explore, general-purpose, plan, review, user
+    refs: List[str] = []         # file:line refs (e.g., "core/main.py:50")
+    tried: List[TriedStep] = []
+    checkpoint: str = ""         # Progress summary
+    last_session: Optional[date] = None
+    handoff: Optional[HandoffContext] = None  # Rich context
+    blocked_by: List[str] = []   # IDs of blocking handoffs
+    stealth: bool = False        # If True, stored in HANDOFFS_LOCAL.md
+    sessions: List[str] = []     # Linked session IDs
 ```
 
 #### Key Functions
@@ -115,16 +141,16 @@ The dual-dimension rating shows both total usage and recent activity:
 ```
 
 **Left side (uses)**: Logarithmic scale of total citations
-- 1 star: 1 use
-- 2 stars: 2-3 uses
-- 3 stars: 4-7 uses
-- 4 stars: 8-15 uses
-- 5 stars: 16+ uses
+- 1 star: 1-2 uses
+- 2 stars: 3-5 uses
+- 3 stars: 6-12 uses
+- 4 stars: 13-30 uses
+- 5 stars: 31+ uses
 
 **Right side (velocity)**: Recent activity that decays over time
 - Increases by 1.0 on each citation
-- Decays by `VELOCITY_DECAY_FACTOR` (0.7) weekly
-- Values below `VELOCITY_EPSILON` (0.1) round to zero
+- Decays by `VELOCITY_DECAY_FACTOR` (0.5) - 50% half-life per cycle
+- Values below `VELOCITY_EPSILON` (0.01) round to zero
 
 #### Token Tracking
 
@@ -141,6 +167,39 @@ During injection, total tokens are summed and warnings shown:
 | Light | <1000 | Normal injection |
 | Medium | 1000-2000 | Show token count |
 | Heavy | >2000 | Warning + suggestions |
+
+### Go Performance Layer (go/)
+
+High-performance citation processing for the hot path:
+- `go/cmd/recall-hook/` - CLI for stop hook
+- `go/internal/stores/` - Lesson/handoff stores
+- `go/internal/transcript/` - Transcript parsing
+
+The Go binary handles citation extraction and processing in ~100ms vs ~2-3s for Python.
+
+**When Go is used:**
+- Citation extraction from transcripts
+- Store reads/writes for lessons and handoffs
+- Quick validation and parsing
+
+**When Python is used:**
+- Decay calculations and promotion logic
+- Complex commands (relevance scoring, etc.)
+- Fallback when Go binary unavailable
+
+### Debug TUI (core/tui/)
+
+Real-time monitoring with `claude-recall watch`:
+- Log viewer with filtering
+- Session tracking
+- Stats aggregation
+
+### Alerting System (core/alerts.py)
+
+System health monitoring:
+- Stale handoff detection
+- Latency spike alerts
+- Error rate monitoring
 
 ### File Locking
 
@@ -344,8 +403,8 @@ export async function reconnect(delay: number = 1000): Promise<void> {
 ### Testing
 
 ```bash
-# Run all tests (420+ tests)
-python3 -m pytest tests/ -v
+# Run all tests (1900+ tests)
+./run-tests.sh
 
 # Run specific test file
 python3 -m pytest tests/test_lessons_manager.py -v
@@ -417,8 +476,8 @@ cat ~/.config/claude-recall/.decay-last-run
 
 ```python
 # Velocity decay
-VELOCITY_DECAY_FACTOR = 0.7   # Multiply velocity by this on decay
-VELOCITY_EPSILON = 0.1        # Values below round to zero
+VELOCITY_DECAY_FACTOR = 0.5   # 50% half-life per decay cycle
+VELOCITY_EPSILON = 0.01       # Values below round to zero
 
 # Handoff visibility
 HANDOFF_MAX_COMPLETED = 3    # Keep last N completed handoffs

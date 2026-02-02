@@ -10,9 +10,41 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="Platform">
 </p>
 
-A dynamic learning and work tracking system for AI coding agents. Tracks patterns, corrections, and gotchas across sessions while helping manage ongoing work with handoffs tracking.
+**Your AI coding agent learns from every session.** Claude Recall captures patterns, corrections, and gotchas so you never repeat the same mistakes. It tracks multi-step work across sessions with handoffs, ensuring continuity when context resets.
 
 Works with **Claude Code**, **OpenCode**, and other AI coding tools.
+
+## Quick Install
+
+```bash
+git clone https://github.com/prestonbrown/claude-recall.git
+cd claude-recall
+./install.sh
+```
+
+That's it. The installer configures hooks automatically.
+
+<details>
+<summary><strong>Install options</strong></summary>
+
+```bash
+./install.sh --claude    # Claude Code only
+./install.sh --opencode  # OpenCode only
+```
+
+</details>
+
+### What Happens After Install?
+
+Once installed, Claude Recall works automatically:
+
+1. **Session start**: Top lessons and active handoffs inject into context
+2. **First prompt**: Haiku scores all lessons for relevance, injects the most useful ones
+3. **During work**: Agent cites lessons (`[L001]`) when applying them - citations boost lesson rankings
+4. **Session end**: New lessons captured from `LESSON:` commands, handoffs synced from TodoWrite
+5. **Weekly**: Unused lessons decay in ranking, keeping your knowledge base fresh
+
+You'll see lessons appear in your agent's context. Cite them to boost their ranking, or let unused ones fade naturally.
 
 ## Features
 
@@ -33,18 +65,11 @@ Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 - **Completion workflow**: Extract lessons when finishing work
 - **Command patterns**: `HANDOFF:`, `HANDOFF UPDATE`, `HANDOFF COMPLETE`
 
-## Quick Install
-
-```bash
-# Clone and install
-git clone https://github.com/prestonbrown/claude-recall.git
-cd claude-recall
-./install.sh
-
-# Or install for specific tools:
-./install.sh --claude    # Claude Code only
-./install.sh --opencode  # OpenCode only
-```
+### Performance & Monitoring
+- **Go performance layer**: Citation processing uses Go binaries for ~10x faster hook execution
+- **TUI monitoring**: `claude-recall watch` for real-time debug log monitoring
+- **Alerting system**: `claude-recall alerts check` and `alerts digest` for system health
+- **Debug logging**: Structured JSON logs with configurable verbosity levels
 
 ## OpenCode Adapter
 
@@ -210,15 +235,15 @@ The system can infer phases from tool usage:
 ## File Locations
 
 ```
-~/.config/claude-recall/
-├── LESSONS.md                  # System lessons (apply everywhere)
-├── cli.py                      # Python CLI (primary)
-├── lessons-manager.sh          # Bash wrapper (calls Python)
-├── .decay-last-run             # Decay timestamp
-└── .citation-state/            # Per-session checkpoints
-
 ~/.local/state/claude-recall/
-└── debug.log                   # Debug logs (XDG state directory)
+├── LESSONS.md                  # System lessons (apply everywhere)
+├── debug.log                   # Debug logs (XDG state directory)
+├── .decay-last-run             # Decay timestamp
+├── .citation-state/            # Per-session checkpoints
+└── relevance-cache.json        # Haiku score cache
+
+~/.config/claude-recall/
+└── config.json                 # User configuration (optional)
 
 <project>/.claude-recall/
 ├── LESSONS.md                  # Project-specific lessons
@@ -233,7 +258,8 @@ claude-recall/
 │   ├── cli.py                  # CLI entry point
 │   └── ...                     # Manager, models, parsing
 ├── adapters/claude-code/       # Hook scripts
-└── tests/                      # 420+ tests
+├── go/                         # Go performance layer
+└── tests/                      # 1900+ tests
 ```
 
 ## CLI Reference
@@ -311,19 +337,18 @@ In `~/.config/claude-recall/config.json`:
 
 ### Claude Code Hooks
 
-In `~/.claude/settings.json`:
-```json
-{
-  "hooks": {
-    "SessionStart": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-hook.sh"}]}],
-    "UserPromptSubmit": [{"hooks": [
-      {"type": "command", "command": "bash ~/.claude/hooks/capture-hook.sh"},
-      {"type": "command", "command": "bash ~/.claude/hooks/smart-inject-hook.sh", "timeout": 15000}
-    ]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/stop-hook.sh"}]}]
-  }
-}
-```
+When installed as a plugin, hooks are automatically configured via `plugins/claude-recall/hooks/hooks.json`:
+
+| Hook | Scripts | Purpose |
+|------|---------|---------|
+| `SessionStart` | inject-hook.sh | Inject lessons + handoffs |
+| `UserPromptSubmit` | capture-hook.sh, smart-inject-hook.sh, lesson-reminder-hook.sh | Capture prompt, relevance scoring, reminders |
+| `Stop` | stop-hook.sh, session-end-hook.sh | Extract citations, sync handoffs |
+| `PreCompact` | precompact-hook.sh | Preserve session progress |
+| `PostToolUse:ExitPlanMode` | post-exitplanmode-hook.sh | Create handoff from plan |
+| `PostToolUse:TodoWrite` | post-todowrite-hook.sh | Sync todos to handoffs |
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full hook registration format.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -349,13 +374,13 @@ When working with you, the agent will:
 ## Testing
 
 ```bash
-# Run all tests (280 tests)
-python3 -m pytest tests/ -v
+# Run all tests (1900+ tests)
+./run-tests.sh
 
 # Run specific test files
-python3 -m pytest tests/test_lessons_manager.py -v  # Lesson tests
-python3 -m pytest tests/test_handoffs.py -v         # Handoff tests
-python3 -m pytest tests/test_debug_logger.py -v     # Debug logger tests
+./run-tests.sh tests/test_lessons_manager.py -v  # Lesson tests
+./run-tests.sh tests/test_handoffs.py -v         # Handoff tests
+./run-tests.sh tests/test_tui/ -v                # TUI tests
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) for detailed testing guide.
