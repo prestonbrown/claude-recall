@@ -1,4 +1,4 @@
-iniconfig==2.3.0
+iniconfig>=2.0.0
 linkify-it-py==2.0.3
 markdown-it-py==4.0.0
 mdit-py-plugins==0.5.0
