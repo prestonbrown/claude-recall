@@ -6,6 +6,9 @@ import sys
 import pytest
 from pathlib import Path
 
+# Project root for subprocess cwd
+PROJECT_ROOT = Path(__file__).parent.parent
+
 
 class TestGetSettingsPath:
     """Tests for get_settings_path function."""
@@ -286,7 +289,7 @@ class TestConfigCLI:
             capture_output=True,
             text=True,
             env=env,
-            cwd="/Users/pbrown/Code/claude-recall",
+            cwd=PROJECT_ROOT,
         )
 
         assert result.returncode == 0
@@ -305,7 +308,7 @@ class TestConfigCLI:
             capture_output=True,
             text=True,
             env=env,
-            cwd="/Users/pbrown/Code/claude-recall",
+            cwd=PROJECT_ROOT,
         )
 
         assert result.returncode == 0
@@ -322,7 +325,7 @@ class TestConfigCLI:
             capture_output=True,
             text=True,
             env=env,
-            cwd="/Users/pbrown/Code/claude-recall",
+            cwd=PROJECT_ROOT,
         )
 
         assert result.returncode == 0
@@ -339,7 +342,7 @@ class TestConfigCLI:
             capture_output=True,
             text=True,
             env=env,
-            cwd="/Users/pbrown/Code/claude-recall",
+            cwd=PROJECT_ROOT,
         )
 
         assert result.returncode == 0
@@ -356,7 +359,7 @@ class TestConfigCLI:
             capture_output=True,
             text=True,
             env=env,
-            cwd="/Users/pbrown/Code/claude-recall",
+            cwd=PROJECT_ROOT,
         )
 
         assert result.returncode == 0
@@ -373,7 +376,7 @@ class TestConfigCLI:
             capture_output=True,
             text=True,
             env=env,
-            cwd="/Users/pbrown/Code/claude-recall",
+            cwd=PROJECT_ROOT,
         )
 
         assert result.returncode == 0
