@@ -81,19 +81,18 @@ main() {
         local result=""
         local promo_note=""
 
-        # Use Python manager (with fallback to bash)
-        if [[ -f "$PYTHON_MANAGER" ]]; then
-            local cmd="add"
+        # Use Go binary (preferred) or legacy fallback
+        if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
             local args=()
             [[ "$level" == "system" ]] && args+=("--system")
             [[ "$promotable" == "no" ]] && { args+=("--no-promote"); promo_note=" (no-promote)"; }
 
-            result=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                "$PYTHON_BIN" "$PYTHON_MANAGER" add ${args[@]+"${args[@]}"} -- "$category" "$title" "$content" 2>&1)
+            result=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
+                "$GO_RECALL" add ${args[@]+"${args[@]}"} -- "$category" "$title" "$content" 2>&1)
         elif [[ -x "$BASH_MANAGER" ]]; then
             local cmd="add"
             [[ "$level" == "system" ]] && cmd="add-system"
-            result=$(PROJECT_DIR="$cwd" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" "$cmd" "$category" "$title" "$content" 2>&1)
+            result=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" "$cmd" "$category" "$title" "$content" 2>&1)
         fi
 
         local lesson_id=$(echo "$result" | grep -oE '[LS][0-9]+' | head -1 || echo "")

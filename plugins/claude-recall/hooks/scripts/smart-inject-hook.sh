@@ -58,13 +58,13 @@ score_and_format_lessons() {
     local prompt="$1"
     local cwd="$2"
 
-    # Call the Python score-relevance command
-    # Export LESSONS_SCORING_ACTIVE so Python can inherit it and pass to Haiku subprocess
+    # Call the Go score-relevance command
+    # Export LESSONS_SCORING_ACTIVE so child processes can inherit it
     local result
     result=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
         LESSONS_SCORING_ACTIVE=1 \
         timeout "$RELEVANCE_TIMEOUT" \
-        "$PYTHON_BIN" "$PYTHON_MANAGER" score-relevance "$prompt" \
+        "$GO_RECALL" score-relevance "$prompt" \
             --top "$TOP_LESSONS" \
             --min-score "$MIN_RELEVANCE_SCORE" \
             --timeout "$RELEVANCE_TIMEOUT" 2>/dev/null) || return 1
@@ -95,8 +95,8 @@ main() {
     # Only run smart injection on first prompt to avoid latency
     is_first_prompt "$transcript_path" || exit 0
 
-    # Skip if Python manager doesn't exist
-    [[ ! -f "$PYTHON_MANAGER" ]] && exit 0
+    # Skip if Go binary doesn't exist
+    [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]] && exit 0
 
     # Score lessons against the prompt
     local scored_lessons

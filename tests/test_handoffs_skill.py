@@ -3,11 +3,14 @@
 """
 Test suite for the /handoffs slash command skill.
 
+NOTE: CLI-related tests are skipped because Python CLI was removed.
+The CLI is now handled by Go binary (go/bin/recall).
+
 These tests verify:
 1. Skill files exist at expected paths
 2. Frontmatter has required fields
-3. Documented commands map to valid CLI subcommands
-4. Internal commands are NOT exposed in skill
+3. Documented commands map to valid CLI subcommands (SKIPPED - needs Go CLI)
+4. Internal commands are NOT exposed in skill (SKIPPED - needs Go CLI)
 """
 
 import re
@@ -197,8 +200,12 @@ class TestSkillFrontmatter:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - use Go CLI for validation")
 class TestCommandsMapToValidCLI:
-    """Test that documented commands map to valid CLI subcommands."""
+    """Test that documented commands map to valid CLI subcommands.
+
+    NOTE: Skipped because Python CLI was removed; Go binary handles this.
+    """
 
     @pytest.mark.parametrize("skill_path", SKILL_PATHS)
     def test_documented_commands_are_valid(
@@ -241,8 +248,12 @@ class TestCommandsMapToValidCLI:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - use Go CLI for validation")
 class TestInternalCommandsNotExposed:
-    """Test that internal commands are not exposed in skill documentation."""
+    """Test that internal commands are not exposed in skill documentation.
+
+    NOTE: Skipped because Python CLI was removed; Go binary handles this.
+    """
 
     @pytest.mark.parametrize("internal_cmd", INTERNAL_COMMANDS)
     @pytest.mark.parametrize("skill_path", SKILL_PATHS)

@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# claude-recall - Claude Recall CLI and TUI
+# claude-recall - Claude Recall TUI wrapper
+#
+# The Python CLI has been replaced by Go binaries for better performance.
+# This wrapper handles TUI (watch) commands via Python and delegates
+# all other commands to the Go 'recall' binary.
 #
 # Usage:
 #   claude-recall              # Launch TUI (default)
 #   claude-recall watch        # Launch TUI explicitly
-#   claude-recall inject 5     # Inject top 5 lessons
 #   claude-recall --summary    # One-shot text summary
 #   claude-recall --tail       # Colorized log tail
 #   claude-recall -p project   # Filter to specific project
+#
+# For CLI commands, use the Go binary directly:
+#   recall list                # List lessons
+#   recall handoff list        # List handoffs
+#   recall inject 5            # Inject top 5 lessons
 
 set -euo pipefail
 
@@ -22,33 +30,30 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
 # Check if we're in dev mode (running from repo)
-if [[ -f "$SCRIPT_DIR/../core/cli.py" ]]; then
+if [[ -f "$SCRIPT_DIR/../core/tui_cli.py" ]]; then
     RECALL_DIR="$SCRIPT_DIR/.."
-    CLI_PATH="$RECALL_DIR/core/cli.py"
+    TUI_PATH="$RECALL_DIR/core/tui_cli.py"
 else
     # Find plugin in cache (versioned directory)
     PLUGIN_CACHE="$HOME/.claude/plugins/cache/claude-recall/claude-recall"
     if [[ -d "$PLUGIN_CACHE" ]]; then
         # Get latest version directory
         LATEST_VERSION=$(ls -1 "$PLUGIN_CACHE" 2>/dev/null | sort -V | tail -1)
-        if [[ -n "$LATEST_VERSION" && -f "$PLUGIN_CACHE/$LATEST_VERSION/core/cli.py" ]]; then
+        if [[ -n "$LATEST_VERSION" && -f "$PLUGIN_CACHE/$LATEST_VERSION/core/tui_cli.py" ]]; then
             RECALL_DIR="$PLUGIN_CACHE/$LATEST_VERSION"
-            CLI_PATH="$RECALL_DIR/core/cli.py"
+            TUI_PATH="$RECALL_DIR/core/tui_cli.py"
         fi
     fi
 fi
 
 # Fallback to legacy locations if not found
-if [[ -z "${CLI_PATH:-}" ]]; then
-    if [[ -f "$HOME/.claude/plugins/claude-recall/core/cli.py" ]]; then
+if [[ -z "${TUI_PATH:-}" ]]; then
+    if [[ -f "$HOME/.claude/plugins/claude-recall/core/tui_cli.py" ]]; then
         RECALL_DIR="$HOME/.claude/plugins/claude-recall"
-        CLI_PATH="$RECALL_DIR/core/cli.py"
-    elif [[ -f "$HOME/.config/claude-recall/core/cli.py" ]]; then
+        TUI_PATH="$RECALL_DIR/core/tui_cli.py"
+    elif [[ -f "$HOME/.config/claude-recall/core/tui_cli.py" ]]; then
         RECALL_DIR="$HOME/.config/claude-recall"
-        CLI_PATH="$RECALL_DIR/core/cli.py"
-    elif [[ -f "$HOME/.config/claude-recall/cli.py" ]]; then
-        RECALL_DIR="$HOME/.config/claude-recall"
-        CLI_PATH="$RECALL_DIR/cli.py"
+        TUI_PATH="$RECALL_DIR/core/tui_cli.py"
     else
         echo "Error: Cannot find claude-recall installation" >&2
         exit 1
@@ -62,42 +67,58 @@ else
     PYTHON="python3"
 fi
 
-# Determine command: default to watch unless subcommand provided
-KNOWN_COMMANDS=(add add-ai cite inject list search show decay edit delete remove promote handoff approach session debug config watch)
-USE_WATCH=true
+# Commands that should go to the Go binary (not TUI)
+GO_COMMANDS=(add add-ai cite inject list search show decay edit delete remove promote handoff approach session debug config inject-combined score-relevance stop-hook-batch)
 
+# Check if first arg is a known Go command
 if [[ $# -gt 0 ]]; then
-    for cmd in "${KNOWN_COMMANDS[@]}"; do
+    for cmd in "${GO_COMMANDS[@]}"; do
         if [[ "$1" == "$cmd" ]]; then
-            USE_WATCH=false
-            break
+            # Delegate to Go binary
+            GO_RECALL="${RECALL_DIR}/go/bin/recall"
+            if [[ ! -x "$GO_RECALL" ]]; then
+                GO_RECALL="$HOME/.config/claude-recall/go/bin/recall"
+            fi
+            if [[ ! -x "$GO_RECALL" ]]; then
+                GO_RECALL="$HOME/.local/bin/recall"
+            fi
+            if [[ -x "$GO_RECALL" ]]; then
+                exec "$GO_RECALL" "$@"
+            else
+                echo "Error: Go CLI binary not found. Install with:" >&2
+                echo "  cd claude-recall && ./install.sh" >&2
+                exit 1
+            fi
         fi
     done
 fi
 
-if $USE_WATCH; then
-    CMD_ARGS=("watch" "$@")
-else
+# All other commands go to Python TUI
+# Default to watch mode if no subcommand
+if [[ $# -eq 0 ]]; then
+    CMD_ARGS=("watch")
+elif [[ "$1" == "watch" ]]; then
     CMD_ARGS=("$@")
+else
+    # Assume watch with options (e.g., -p, --summary, --tail)
+    CMD_ARGS=("watch" "$@")
 fi
 
-# Check for textual (required for TUI watch mode)
-if [[ "${CMD_ARGS[0]:-}" == "watch" ]]; then
-    NEED_TEXTUAL=true
-    for arg in "${CMD_ARGS[@]}"; do
-        if [[ "$arg" == "--summary" || "$arg" == "--tail" ]]; then
-            NEED_TEXTUAL=false
-            break
-        fi
-    done
-
-    if $NEED_TEXTUAL && ! "$PYTHON" -c "import textual" 2>/dev/null; then
-        echo "TUI mode requires textual. Install with:"
-        echo "  pip install textual textual-plotext"
-        echo ""
-        echo "Or use --summary or --tail for text-only modes."
-        exit 1
+# Check for textual (required for full TUI mode)
+NEED_TEXTUAL=true
+for arg in "${CMD_ARGS[@]}"; do
+    if [[ "$arg" == "--summary" || "$arg" == "--tail" ]]; then
+        NEED_TEXTUAL=false
+        break
     fi
+done
+
+if $NEED_TEXTUAL && ! "$PYTHON" -c "import textual" 2>/dev/null; then
+    echo "TUI mode requires textual. Install with:"
+    echo "  pip install textual textual-plotext"
+    echo ""
+    echo "Or use --summary or --tail for text-only modes."
+    exit 1
 fi
 
-exec "$PYTHON" "$CLI_PATH" "${CMD_ARGS[@]}"
+exec "$PYTHON" "$TUI_PATH" "${CMD_ARGS[@]}"

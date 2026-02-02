@@ -111,12 +111,8 @@ class TestInjectCombinedRegistration:
 class TestInjectCombinedParser:
     """Tests for inject-combined argument parsing."""
 
-    def test_inject_combined_parser_exists(self):
-        """CLI should have inject-combined subparser."""
-        import argparse
-        from core.cli import main
-        # Parse with --help to verify subcommand exists
-        # This is a bit hacky but ensures the parser is configured
+    def test_inject_combined_command_registered(self):
+        """inject-combined command should be registered in COMMAND_REGISTRY."""
         from core.commands import COMMAND_REGISTRY
         assert "inject-combined" in COMMAND_REGISTRY
 
@@ -302,54 +298,18 @@ class TestInjectCombinedErrorHandling:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - inject-combined now handled by Go binary")
 class TestInjectCombinedCLI:
-    """Integration tests for inject-combined via subprocess."""
+    """Integration tests for inject-combined via subprocess.
+
+    NOTE: These tests are skipped because the Python CLI (core/cli.py) was removed.
+    The inject-combined command is now handled by the Go binary (go/bin/recall).
+    """
 
     def test_cli_returns_json(self, tmp_path, isolated_subprocess_env):
         """CLI inject-combined should return valid JSON."""
-        # Create project dir
-        project = tmp_path / "project"
-        project.mkdir()
-        (project / ".git").mkdir()
-
-        env = {
-            **isolated_subprocess_env,
-            "PROJECT_DIR": str(project),
-        }
-
-        result = subprocess.run(
-            [sys.executable, "-m", "core.cli", "inject-combined"],
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=str(Path(__file__).parent.parent),
-        )
-
-        assert result.returncode == 0
-        output = json.loads(result.stdout)
-        assert "lessons" in output
-        assert "handoffs" in output
-        assert "todos" in output
+        pass
 
     def test_cli_accepts_top_n_argument(self, tmp_path, isolated_subprocess_env):
         """CLI inject-combined should accept top_n argument."""
-        project = tmp_path / "project"
-        project.mkdir()
-        (project / ".git").mkdir()
-
-        env = {
-            **isolated_subprocess_env,
-            "PROJECT_DIR": str(project),
-        }
-
-        result = subprocess.run(
-            [sys.executable, "-m", "core.cli", "inject-combined", "10"],
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=str(Path(__file__).parent.parent),
-        )
-
-        assert result.returncode == 0
-        output = json.loads(result.stdout)
-        assert isinstance(output, dict)
+        pass

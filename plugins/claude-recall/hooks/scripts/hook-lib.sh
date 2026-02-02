@@ -80,25 +80,48 @@ load_debug_level() {
     fi
 }
 
-# Find Python manager with fallback chain:
-# 1. Installed location: $CLAUDE_RECALL_BASE/core/cli.py
-# 2. Legacy flat structure: $CLAUDE_RECALL_BASE/cli.py
-# 3. Dev location: relative to this script's directory
-#
-# Also sets PYTHON_BIN to venv python if available (for anthropic support)
-find_python_manager() {
-    local base_dir=""
-    if [[ -f "$CLAUDE_RECALL_BASE/core/cli.py" ]]; then
-        PYTHON_MANAGER="$CLAUDE_RECALL_BASE/core/cli.py"
-        base_dir="$CLAUDE_RECALL_BASE"
-    elif [[ -f "$CLAUDE_RECALL_BASE/cli.py" ]]; then
-        PYTHON_MANAGER="$CLAUDE_RECALL_BASE/cli.py"  # Legacy flat structure
-        base_dir="$CLAUDE_RECALL_BASE"
+# Find Go binary with fallback chain:
+# 1. Installed location: $CLAUDE_RECALL_BASE/go/bin/recall
+# 2. Dev location: relative to this script's directory
+# Sets GO_RECALL and GO_RECALL_HOOK binaries
+find_go_binary() {
+    GO_RECALL=""
+    GO_RECALL_HOOK=""
+
+    # Check installed location first
+    if [[ -x "$CLAUDE_RECALL_BASE/go/bin/recall" ]]; then
+        GO_RECALL="$CLAUDE_RECALL_BASE/go/bin/recall"
+        GO_RECALL_HOOK="$CLAUDE_RECALL_BASE/go/bin/recall-hook"
     else
-        # Dev location - relative to hook-lib.sh (adapters/claude-code/)
+        # Dev location - relative to hook-lib.sh
         local script_dir
         script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        PYTHON_MANAGER="$script_dir/../../core/cli.py"
+        local dev_bin="$script_dir/../../go/bin/recall"
+        if [[ -x "$dev_bin" ]]; then
+            GO_RECALL="$dev_bin"
+            GO_RECALL_HOOK="$script_dir/../../go/bin/recall-hook"
+        fi
+    fi
+
+    export GO_RECALL GO_RECALL_HOOK
+}
+
+# Find Python TUI and set up Python environment.
+# The Python CLI (cli.py) has been removed - Go handles all CLI operations.
+# Python is only used for the TUI (tui_cli.py).
+#
+# Sets PYTHON_BIN to venv python if available (for anthropic support)
+# Sets PYTHON_TUI to the TUI entry point path
+find_python_manager() {
+    local base_dir=""
+    if [[ -f "$CLAUDE_RECALL_BASE/core/tui_cli.py" ]]; then
+        PYTHON_TUI="$CLAUDE_RECALL_BASE/core/tui_cli.py"
+        base_dir="$CLAUDE_RECALL_BASE"
+    else
+        # Dev location - relative to hook-lib.sh
+        local script_dir
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        PYTHON_TUI="$script_dir/../../core/tui_cli.py"
         base_dir="$script_dir/../.."
     fi
 
@@ -109,7 +132,13 @@ find_python_manager() {
         PYTHON_BIN="python3"
     fi
 
-    export PYTHON_MANAGER PYTHON_BIN
+    # Legacy variable for backward compatibility (some scripts may reference it)
+    PYTHON_MANAGER="$PYTHON_TUI"
+
+    export PYTHON_MANAGER PYTHON_BIN PYTHON_TUI
+
+    # Also find Go binary (primary path for CLI operations)
+    find_go_binary
 }
 
 # ============================================================
@@ -199,9 +228,9 @@ log_phase() {
         PHASE_TIMES_JSON="${PHASE_TIMES_JSON%\}},\"$phase\":$duration}"
     fi
 
-    # Background the debug logging
-    if [[ -n "$PYTHON_MANAGER" && -f "$PYTHON_MANAGER" ]]; then
-        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$PYTHON_BIN" "$PYTHON_MANAGER" debug hook-phase "$hook_name" "$phase" "$duration" 2>/dev/null &
+    # Background the debug logging (Go only - Python CLI removed)
+    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug hook-phase "$hook_name" "$phase" "$duration" 2>/dev/null &
     fi
 }
 
@@ -215,12 +244,12 @@ log_hook_end() {
 
     local total_ms=$(get_elapsed_ms)
 
-    if [[ -n "$PYTHON_MANAGER" && -f "$PYTHON_MANAGER" ]]; then
-        # Pass phases as --phases if available (CLI expects named arg, not positional)
+    # Use Go binary for debug logging (Python CLI removed)
+    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
         if [[ -n "$PHASE_TIMES_JSON" && "$PHASE_TIMES_JSON" != "{}" ]]; then
-            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$PYTHON_BIN" "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" --phases "$PHASE_TIMES_JSON" 2>/dev/null &
+            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug hook-end "$hook_name" "$total_ms" --phases "$PHASE_TIMES_JSON" 2>/dev/null &
         else
-            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$PYTHON_BIN" "$PYTHON_MANAGER" debug hook-end "$hook_name" "$total_ms" 2>/dev/null &
+            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug hook-end "$hook_name" "$total_ms" 2>/dev/null &
         fi
     fi
 }
@@ -281,7 +310,10 @@ sanitize_input() {
 # Usage: log_debug "post-todowrite: no cwd in input"
 log_debug() {
     local message="$1"
-    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && [[ -f "$PYTHON_MANAGER" ]]; then
-        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$PYTHON_BIN" "$PYTHON_MANAGER" debug log "$message" 2>/dev/null || true
+    if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]]; then
+        # Use Go binary for debug logging (Python CLI removed)
+        if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug log "$message" 2>/dev/null || true
+        fi
     fi
 }

@@ -333,6 +333,7 @@ class TestCitation:
         lesson = manager.get_lesson("L001")
         assert lesson.uses == 100
 
+    @pytest.mark.skip(reason="Python CLI removed - cite command now handled by Go binary")
     def test_cli_cite_multiple_lessons(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path):
         """CLI cite command should accept multiple lesson IDs and cite all of them."""
         from core import LessonsManager
@@ -367,6 +368,7 @@ class TestCitation:
             lesson = manager2.get_lesson(lesson_id)
             assert lesson.uses == 2, f"{lesson_id} should have 2 uses (1 initial + 1 cite)"
 
+    @pytest.mark.skip(reason="Python CLI removed - cite command now handled by Go binary")
     def test_cli_cite_batch_with_invalid_id(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path):
         """CLI cite should continue processing valid IDs when one is invalid."""
         from core import LessonsManager
@@ -1275,8 +1277,13 @@ class TestTokenInjectDetails:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - commands now handled by Go binary")
 class TestCLI:
-    """Tests for command-line interface."""
+    """Tests for command-line interface.
+
+    NOTE: These tests are skipped because the Python CLI (core/cli.py) was removed.
+    CLI commands are now handled by the Go binary (go/bin/recall).
+    """
 
     def test_cli_add_with_no_promote(self, temp_lessons_base: Path, temp_project_root: Path):
         """CLI --no-promote flag should create non-promotable lesson."""
@@ -1559,8 +1566,12 @@ class TestCLI:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - hooks now use Go binary")
 class TestCaptureHook:
-    """Tests for capture-hook.sh parsing."""
+    """Tests for capture-hook.sh parsing.
+
+    NOTE: Skipped because hooks now use Go binary instead of Python CLI.
+    """
 
     def test_capture_hook_parses_no_promote(self, temp_lessons_base: Path, temp_project_root: Path, isolated_subprocess_env):
         """capture-hook.sh should parse LESSON (no-promote): syntax."""
@@ -1738,8 +1749,12 @@ class TestHookPathResolution:
         assert result.returncode == 0
 
 
+@pytest.mark.skip(reason="Python CLI removed - hooks now use Go binary")
 class TestInjectHookHandoffs:
-    """Tests for inject-hook.sh handling of handoffs, especially edge cases."""
+    """Tests for inject-hook.sh handling of handoffs, especially edge cases.
+
+    NOTE: Skipped because hooks now use Go binary instead of Python CLI.
+    """
 
     def test_inject_hook_no_crash_on_missing_review_ids(
         self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch, isolated_subprocess_env
@@ -2795,8 +2810,12 @@ class TestLessonFraming:
         assert framed == content  # Unchanged
 
 
+@pytest.mark.skip(reason="Python CLI removed - test uses subprocess calls to cli.py")
 class TestExplicitLessonType:
-    """Tests for explicitly setting lesson type."""
+    """Tests for explicitly setting lesson type.
+
+    NOTE: Skipped because tests use subprocess calls to removed cli.py.
+    """
 
     def test_add_lesson_with_explicit_type(self, temp_lessons_base: Path, temp_state_dir: Path, temp_project_root: Path, monkeypatch):
         """Lessons can be added with explicit type."""
@@ -4378,8 +4397,11 @@ class TestInjectionFormatWithTriggers:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - test uses subprocess calls to cli.py")
 class TestAutoTriggers:
     """Tests for auto-generating triggers when adding new lessons.
+
+    NOTE: Skipped because tests use subprocess calls to removed cli.py.
 
     When adding a lesson WITHOUT explicit triggers, the system should
     automatically call the Haiku API to generate relevant trigger keywords.

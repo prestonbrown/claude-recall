@@ -93,8 +93,8 @@ fi
 log_debug "post-exitplanmode: creating handoff from plan '$title'"
 
 # Create handoff with phase=implementing and capture output
-if [[ -f "$PYTHON_MANAGER" ]]; then
-    output=$(PROJECT_DIR="$project_root" "$PYTHON_BIN" "$PYTHON_MANAGER" handoff add "$title" --phase implementing --files "$plan_file" 2>&1) || {
+if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+    output=$(PROJECT_DIR="$project_root" "$GO_RECALL" handoff add "$title" --phase implementing --files "$plan_file" 2>&1) || {
         log_debug "post-exitplanmode: failed to create handoff"
         exit 0
     }
@@ -106,7 +106,7 @@ if [[ -f "$PYTHON_MANAGER" ]]; then
         # Extract session_id and store session -> handoff mapping
         session_id=$(echo "$input" | jq -r '.session_id // empty')
         if [[ -n "$session_id" ]]; then
-            PROJECT_DIR="$project_root" "$PYTHON_BIN" "$PYTHON_MANAGER" \
+            PROJECT_DIR="$project_root" "$GO_RECALL" \
                 handoff set-session "$handoff_id" "$session_id" 2>/dev/null || true
         fi
 

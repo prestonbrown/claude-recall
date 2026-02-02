@@ -21,27 +21,27 @@ hook_lib_check_recursion
 # Setup environment variables
 setup_env
 
-# Timeout for context extraction (seconds) - passed to Python CLI
+# Timeout for context extraction (seconds) - passed to Go binary
 CONTEXT_TIMEOUT=45
-# Timeout for Haiku calls that aren't handled by Python CLI
+# Timeout for Haiku calls that aren't handled by Go binary
 HAIKU_TIMEOUT=15
 
-# Extract handoff context using Python CLI (unified extraction with tool_use/thinking support)
-extract_handoff_context_python() {
+# Extract handoff context using Go binary (unified extraction with tool_use/thinking support)
+extract_handoff_context() {
     local transcript_path="$1"
     local git_ref="$2"
 
-    if [[ ! -f "$PYTHON_MANAGER" ]]; then
+    if [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]]; then
         return 1
     fi
 
-    # Call Python CLI for context extraction - it handles:
+    # Call Go binary for context extraction - it handles:
     # - Reading transcript with tool_use/thinking blocks
     # - Calling Haiku for summarization
     # - Validating the result (rejects garbage summaries)
     local result
-    result=$(PROJECT_DIR="$PROJECT_DIR" LESSONS_BASE="$LESSONS_BASE" LESSONS_SCORING_ACTIVE=1 \
-        timeout "$CONTEXT_TIMEOUT" "$PYTHON_BIN" "$PYTHON_MANAGER" extract-context "$transcript_path" --git-ref "$git_ref" 2>/dev/null) || return 1
+    result=$(PROJECT_DIR="$PROJECT_DIR" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" LESSONS_SCORING_ACTIVE=1 \
+        timeout "$CONTEXT_TIMEOUT" "$GO_RECALL" extract-context "$transcript_path" --git-ref "$git_ref" 2>/dev/null) || return 1
 
     # Check if we got valid JSON (not empty object)
     if [[ -z "$result" ]] || [[ "$result" == "{}" ]]; then
@@ -58,11 +58,11 @@ extract_handoff_context_python() {
 get_most_recent_handoff() {
     local project_root="$1"
 
-    if [[ -f "$PYTHON_MANAGER" ]]; then
+    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
         # Get first non-completed handoff (most recent by file order)
         # Matches both legacy A### format and new hf-XXXXXXX format
-        PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff list 2>/dev/null | \
+        PROJECT_DIR="$project_root" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+            "$GO_RECALL" handoff list 2>/dev/null | \
             head -1 | grep -oE '\[(A[0-9]{3}|hf-[0-9a-f]+)\]' | tr -d '[]' || true
     fi
 }
@@ -122,9 +122,13 @@ auto_create_handoff() {
     [[ -z "$title" || ${#title} -lt 5 ]] && title="Auto-detected work session"
 
     # Create the handoff with implementing phase (we're mid-work)
+    if [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]]; then
+        return 1
+    fi
+
     local result
-    result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-        "$PYTHON_BIN" "$PYTHON_MANAGER" handoff add --phase implementing -- "$title" 2>&1)
+    result=$(PROJECT_DIR="$project_root" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
+        "$GO_RECALL" handoff add --phase implementing -- "$title" 2>&1)
 
     # Extract the ID
     echo "$result" | grep -oE 'hf-[0-9a-f]{7}' | head -1
@@ -172,7 +176,7 @@ main() {
 
     [[ -z "$transcript_path" || ! -f "$transcript_path" ]] && exit 0
 
-    # Export PROJECT_DIR for Python CLI
+    # Export PROJECT_DIR for Go binary
     export PROJECT_DIR="$project_root"
 
     # Find most recent active handoff
@@ -205,17 +209,17 @@ main() {
     local git_ref
     git_ref=$(get_git_ref "$project_root")
 
-    # Extract structured handoff context using Python CLI
+    # Extract structured handoff context using Go binary
     # This handles tool_use/thinking blocks properly (not just text blocks)
     local context_json
-    context_json=$(extract_handoff_context_python "$transcript_path" "$git_ref")
+    context_json=$(extract_handoff_context "$transcript_path" "$git_ref")
 
     if [[ -n "$context_json" ]] && echo "$context_json" | jq -e . >/dev/null 2>&1; then
         # Use structured set-context command
-        if [[ -f "$PYTHON_MANAGER" ]]; then
+        if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
             local result
-            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                "$PYTHON_BIN" "$PYTHON_MANAGER" handoff set-context "$handoff_id" --json "$context_json" 2>&1)
+            result=$(PROJECT_DIR="$project_root" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
+                "$GO_RECALL" handoff set-context "$handoff_id" --json "$context_json" 2>&1)
 
             if [[ $? -eq 0 ]]; then
                 local summary_preview
@@ -224,6 +228,8 @@ main() {
             else
                 echo "[precompact] Failed to set context: $result" >&2
             fi
+        else
+            echo "[precompact] Go binary not available, skipping context update" >&2
         fi
     else
         echo "[precompact] Failed to extract handoff context" >&2

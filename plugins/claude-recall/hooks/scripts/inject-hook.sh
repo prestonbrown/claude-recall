@@ -41,16 +41,17 @@ run_decay_if_due() {
 
     if [[ $((now - last_run)) -gt $DECAY_INTERVAL ]]; then
         # Run decay in background so it doesn't slow down session start
-        # Try Python first, fall back to bash
-        if [[ -f "$PYTHON_MANAGER" ]]; then
-            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$PYTHON_BIN" "$PYTHON_MANAGER" decay 30 >/dev/null 2>&1 &
+        # Prefer Go, fall back to bash
+        if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+            PROJECT_DIR="$cwd" "$GO_RECALL" decay >/dev/null 2>&1 &
         elif [[ -x "$BASH_MANAGER" ]]; then
             "$BASH_MANAGER" decay 30 >/dev/null 2>&1 &
         fi
     fi
 }
 
-# Generate combined context (lessons + handoffs + todos) in single Python call
+# Generate combined context (lessons + handoffs + todos)
+# Uses Go binary, falls back to individual calls if unavailable
 # Returns: sets LESSONS_SUMMARY_RAW, HANDOFFS_SUMMARY, TODOS_PROMPT variables
 # Note: topLessonsToShow is configurable (default: 5), smart-inject-hook.sh adds query-relevant ones
 generate_combined_context() {
@@ -63,16 +64,27 @@ generate_combined_context() {
     HANDOFFS_SUMMARY=""
     TODOS_PROMPT=""
 
-    # Try combined inject (single Python call for all three)
-    if [[ -f "$PYTHON_MANAGER" ]]; then
+    # Try Go fast path first (recall-hook inject-combined)
+    if [[ -n "$GO_RECALL_HOOK" && -x "$GO_RECALL_HOOK" ]]; then
+        local combined_output
+        combined_output=$(PROJECT_DIR="$cwd" "$GO_RECALL_HOOK" inject-combined "$top_n" 2>/dev/null)
+
+        if [[ $? -eq 0 && -n "$combined_output" ]]; then
+            # Parse JSON output using jq
+            LESSONS_SUMMARY_RAW=$(echo "$combined_output" | jq -r '.lessons // empty')
+            HANDOFFS_SUMMARY=$(echo "$combined_output" | jq -r '.handoffs // empty')
+            TODOS_PROMPT=$(echo "$combined_output" | jq -r '.todos // empty')
+            return 0
+        fi
+    fi
+
+    # Try Go CLI inject-combined
+    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
         local stderr_file
         stderr_file=$(mktemp 2>/dev/null || echo "/tmp/inject-hook-$$")
 
         local combined_output
-        combined_output=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
-            CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-            CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-            "$PYTHON_BIN" "$PYTHON_MANAGER" inject-combined "$top_n" 2>"$stderr_file")
+        combined_output=$(PROJECT_DIR="$cwd" "$GO_RECALL" inject-combined "$top_n" 2>"$stderr_file")
 
         local exit_code=$?
         if [[ $exit_code -eq 0 && -n "$combined_output" ]]; then
@@ -88,9 +100,7 @@ generate_combined_context() {
         if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]]; then
             local error_msg
             error_msg=$(cat "$stderr_file" 2>/dev/null | head -c 500)
-            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
-                CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-                "$PYTHON_BIN" "$PYTHON_MANAGER" debug log-error \
+            PROJECT_DIR="$cwd" "$GO_RECALL" debug log-error \
                 "inject_combined_failed" "exit=$exit_code: $error_msg" 2>/dev/null &
         fi
         rm -f "$stderr_file" 2>/dev/null
@@ -100,38 +110,35 @@ generate_combined_context() {
     generate_context_fallback "$cwd" "$top_n"
 }
 
-# Fallback: individual Python/bash calls (used if inject-combined fails)
+# Fallback: individual Go/bash calls (used if inject-combined fails)
 generate_context_fallback() {
     local cwd="$1"
     local top_n="$2"
 
-    # Get lessons
-    if [[ -f "$PYTHON_MANAGER" ]]; then
-        LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
-            CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-            CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-            "$PYTHON_BIN" "$PYTHON_MANAGER" inject "$top_n" 2>/dev/null || true)
+    # Get lessons - prefer Go recall-hook, fall back to Go CLI, then bash
+    if [[ -n "$GO_RECALL_HOOK" && -x "$GO_RECALL_HOOK" ]]; then
+        LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" "$GO_RECALL_HOOK" inject "$top_n" 2>/dev/null || true)
+    fi
+    if [[ -z "$LESSONS_SUMMARY_RAW" && -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+        LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" "$GO_RECALL" inject "$top_n" 2>/dev/null || true)
     fi
     if [[ -z "$LESSONS_SUMMARY_RAW" && -x "$BASH_MANAGER" ]]; then
         LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" inject "$top_n" 2>/dev/null || true)
     fi
 
-    # Get handoffs
-    if [[ -f "$PYTHON_MANAGER" ]]; then
-        HANDOFFS_SUMMARY=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
-            CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-            CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff inject 2>/dev/null || true)
+    # Get handoffs - Go only
+    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+        HANDOFFS_SUMMARY=$(PROJECT_DIR="$cwd" "$GO_RECALL" handoff inject 2>/dev/null || true)
         if [[ "$HANDOFFS_SUMMARY" == "(no active handoffs)" ]]; then
             HANDOFFS_SUMMARY=""
         fi
     fi
 
-    # Get todos if handoffs exist
-    if [[ -n "$HANDOFFS_SUMMARY" && -f "$PYTHON_MANAGER" ]]; then
-        TODOS_PROMPT=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
-            CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff inject-todos 2>/dev/null || true)
+    # Get todos if handoffs exist - Go only
+    if [[ -n "$HANDOFFS_SUMMARY" ]]; then
+        if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+            TODOS_PROMPT=$(PROJECT_DIR="$cwd" "$GO_RECALL" handoff inject-todos 2>/dev/null || true)
+        fi
     fi
 }
 
@@ -150,7 +157,7 @@ main() {
         export CLAUDE_RECALL_SESSION="$claude_session_id"
     fi
 
-    # Generate combined context (lessons + handoffs + todos) in single Python call
+    # Generate combined context (lessons + handoffs + todos) in single call
     local phase_start
     phase_start=$(get_elapsed_ms)
     generate_combined_context "$cwd"
@@ -303,11 +310,8 @@ $todo_continuation"
         fi
 
         # Log token budget to debug log (background, non-blocking)
-        if [[ -f "$PYTHON_MANAGER" && $total_tokens -gt 0 ]]; then
-            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
-                CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-                CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" \
-                "$PYTHON_BIN" "$PYTHON_MANAGER" debug injection-budget \
+        if [[ $total_tokens -gt 0 && -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+            PROJECT_DIR="$cwd" "$GO_RECALL" debug injection-budget \
                 "$total_tokens" "$lessons_tokens" "$handoffs_tokens" "$duties_tokens" \
                 >/dev/null 2>&1 &
         fi
@@ -327,11 +331,9 @@ EOF
 
     # Check for health alerts if alerting is enabled (non-blocking, runs in background)
     # This uses the alerts module to detect issues like stale handoffs or latency spikes
-    if [[ -f "$PYTHON_MANAGER" ]]; then
+    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
         (
-            PROJECT_DIR="$cwd" CLAUDE_RECALL_BASE="$CLAUDE_RECALL_BASE" \
-                CLAUDE_RECALL_STATE="$CLAUDE_RECALL_STATE" \
-                python3 "$PYTHON_MANAGER" alerts send --bell 2>/dev/null || true
+            PROJECT_DIR="$cwd" "$GO_RECALL" alerts send --bell 2>/dev/null || true
         ) &
     fi
 

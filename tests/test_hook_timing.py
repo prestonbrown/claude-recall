@@ -163,8 +163,12 @@ class TestHookTimingAtLevel0:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - debug commands now handled by Go binary")
 class TestCLIHookTiming:
-    """Test hook timing via CLI commands at level 1."""
+    """Test hook timing via CLI commands at level 1.
+
+    NOTE: Skipped because Python CLI was removed; Go binary handles debug commands.
+    """
 
     def test_cli_hook_end_logs_at_level_1(
         self, monkeypatch, temp_state_dir, temp_project_root

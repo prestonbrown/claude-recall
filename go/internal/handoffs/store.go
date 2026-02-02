@@ -432,4 +432,10 @@ func applyHandoffUpdates(h *models.Handoff, updates map[string]interface{}) {
 	if sessions, ok := updates["sessions"].([]string); ok {
 		h.Sessions = sessions
 	}
+	if context, ok := updates["context"].(*models.HandoffContext); ok {
+		h.Handoff = context
+	}
+
+	// Ensure status and phase are compatible (auto-fix impossible states)
+	h.NormalizeState()
 }

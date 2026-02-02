@@ -3,9 +3,18 @@
 """
 CLI tests for handoff command (subprocess invocation tests).
 
-These tests invoke the actual CLI via subprocess to verify end-to-end behavior.
+NOTE: These tests are SKIPPED because the Python CLI (core/cli.py) was removed.
+The handoff commands are now handled by the Go binary (go/bin/recall).
+The Go implementation is tested via go/internal/... test files.
+
 Run with: pytest tests/test_handoff_cli.py -v
 """
+
+import pytest
+
+pytestmark = pytest.mark.skip(
+    reason="Python CLI removed - handoff commands now handled by Go binary"
+)
 
 import json
 import os

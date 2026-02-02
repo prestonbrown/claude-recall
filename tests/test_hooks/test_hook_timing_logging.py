@@ -76,8 +76,12 @@ def hook_lib_path() -> Path:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Hooks migrating from Python CLI to Go - tests will be re-enabled after migration")
 class TestHookTimingAtDebugLevel1:
-    """Verify hook timing is logged at debug level 1 (the default)."""
+    """Verify hook timing is logged at debug level 1 (the default).
+
+    NOTE: Skipped during Python-to-Go migration.
+    """
 
     def test_inject_hook_logs_timing_at_level_1(
         self, tmp_path, inject_hook_path, temp_claude_home, temp_project_root
@@ -393,8 +397,12 @@ class TestHookLibFunctions:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - debug commands now handled by Go binary")
 class TestEndToEndTimingFlow:
-    """Test that timing events flow correctly from CLI to stats aggregator."""
+    """Test that timing events flow correctly from CLI to stats aggregator.
+
+    NOTE: Skipped because Python CLI was removed; Go binary handles debug commands.
+    """
 
     def test_cli_hook_end_with_phases_creates_valid_event(self, tmp_path):
         """

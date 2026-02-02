@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -118,4 +119,40 @@ func IsValidHandoffPhase(phase string) bool {
 // IsValidHandoffAgent checks if the agent is valid
 func IsValidHandoffAgent(agent string) bool {
 	return validHandoffAgents[agent]
+}
+
+// ValidateStatusPhase checks if status and phase are compatible.
+// Returns corrected phase if auto-fixable, or error if invalid.
+// Rules:
+//   - not_started: only research or planning allowed
+//   - in_progress/blocked: any phase allowed
+//   - ready_for_review/completed: should be review phase
+func ValidateStatusPhase(status, phase string) (string, error) {
+	switch status {
+	case "not_started":
+		// Can only be in research or planning if not started
+		if phase == "implementing" || phase == "review" {
+			// Auto-fix: if implementing, status should be in_progress
+			return phase, fmt.Errorf("status 'not_started' incompatible with phase '%s'", phase)
+		}
+	case "ready_for_review", "completed":
+		// Should be in review phase
+		if phase != "review" {
+			return "review", nil // Auto-fix to review
+		}
+	}
+	return phase, nil
+}
+
+// NormalizeHandoffState ensures status and phase are compatible.
+// Modifies the handoff in place if needed.
+func (h *Handoff) NormalizeState() {
+	// If implementing but not_started, upgrade to in_progress
+	if h.Status == "not_started" && (h.Phase == "implementing" || h.Phase == "review") {
+		h.Status = "in_progress"
+	}
+	// If completed/ready_for_review, ensure review phase
+	if h.Status == "completed" || h.Status == "ready_for_review" {
+		h.Phase = "review"
+	}
 }

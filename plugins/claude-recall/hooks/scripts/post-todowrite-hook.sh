@@ -46,21 +46,21 @@ log_debug "post-todowrite: syncing todos to handoff"
 session_id=$(echo "$input" | jq -r '.session_id // empty')
 session_handoff=""
 
-if [[ -n "$session_id" ]]; then
-    session_handoff=$(PROJECT_DIR="$cwd" "$PYTHON_BIN" "$PYTHON_MANAGER" \
+if [[ -n "$session_id" && -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+    session_handoff=$(PROJECT_DIR="$cwd" "$GO_RECALL" \
         handoff get-session-handoff "$session_id" 2>/dev/null || echo "")
 fi
 
 # Sync todos to active handoff (CLI handles 3+ threshold for auto-create)
 # Pass session_handoff to sync-todos if found
-if [[ -f "$PYTHON_MANAGER" ]]; then
+if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
     if [[ -n "$session_handoff" ]]; then
-        PROJECT_DIR="$cwd" "$PYTHON_BIN" "$PYTHON_MANAGER" handoff sync-todos "$todos" \
+        PROJECT_DIR="$cwd" "$GO_RECALL" handoff sync-todos "$todos" \
             --session-handoff "$session_handoff" 2>/dev/null || {
             log_debug "post-todowrite: failed to sync todos"
         }
     else
-        PROJECT_DIR="$cwd" "$PYTHON_BIN" "$PYTHON_MANAGER" handoff sync-todos "$todos" 2>/dev/null || {
+        PROJECT_DIR="$cwd" "$GO_RECALL" handoff sync-todos "$todos" 2>/dev/null || {
             log_debug "post-todowrite: failed to sync todos"
         }
     fi

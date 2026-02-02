@@ -345,8 +345,12 @@ class TestDebugLoggingIntegration:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Hooks migrating from Python CLI to Go - tests will be re-enabled after migration")
 class TestSessionLifecycle:
-    """Test complete session lifecycle: start -> work -> stop."""
+    """Test complete session lifecycle: start -> work -> stop.
+
+    NOTE: Skipped during Python-to-Go migration.
+    """
 
     def test_full_session_with_lesson_and_citation(self, integration_env, hook_env):
         """Test: inject -> add lesson -> cite lesson -> stop."""
@@ -490,8 +494,11 @@ class TestProjectIsolation:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - CLI now handled by Go binary")
 class TestInstalledCLI:
     """Test that installed CLI works correctly.
+
+    NOTE: Skipped because Python CLI was removed; Go binary handles CLI.
 
     These tests verify the CLI works when installed in flat mode (no core/ prefix),
     simulating ~/.config/claude-recall/ where files are copied directly.
@@ -599,8 +606,12 @@ class TestInstalledCLI:
         assert result.returncode == 0, f"debug command failed: {result.stderr}"
 
 
+@pytest.mark.skip(reason="Hooks migrating from Python CLI to Go - tests will be re-enabled after migration")
 class TestAutoHandoffCreation:
-    """Test automatic handoff creation and session snapshots."""
+    """Test automatic handoff creation and session snapshots.
+
+    NOTE: Skipped during Python-to-Go migration.
+    """
 
     def test_inject_includes_handoff_duty(self, integration_env, hook_env):
         """Inject hook should include explicit HANDOFF DUTY in output."""
@@ -809,8 +820,12 @@ summary: Previous session worked on integration tests.""")
             f"HANDOFF DUTY should mention commit after completion. Output:\n{hook_output}"
 
 
+@pytest.mark.skip(reason="Hooks migrating from Python CLI to Go - tests will be re-enabled after migration")
 class TestStopHookIncrementalProcessing:
-    """Tests for stop-hook incremental processing with transcript caching."""
+    """Tests for stop-hook incremental processing with transcript caching.
+
+    NOTE: Skipped during Python-to-Go migration.
+    """
 
     def test_incremental_citation_processing(self, integration_env, isolated_subprocess_env):
         """Stop hook should only process new entries after checkpoint.

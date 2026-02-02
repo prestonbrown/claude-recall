@@ -76,8 +76,8 @@ from core.parsing import parse_lesson, format_lesson
 # File locking
 from core.file_lock import FileLock
 
-# CLI entry point
-from core.cli import main
+# TUI entry point (CLI is now handled by Go)
+from core.tui_cli import main
 
 __all__ = [
     # Version

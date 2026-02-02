@@ -641,8 +641,12 @@ class TestStopHookBatchGitCommit:
 # =============================================================================
 
 
+@pytest.mark.skip(reason="Python CLI removed - stop-hook-batch now handled by Go binary")
 class TestStopHookBatchCLI:
-    """Tests for stop-hook-batch CLI integration."""
+    """Tests for stop-hook-batch CLI integration.
+
+    NOTE: Skipped because Python CLI was removed; Go binary handles this command.
+    """
 
     def test_cli_help_includes_stop_hook_batch(self):
         """CLI help should include stop-hook-batch command."""

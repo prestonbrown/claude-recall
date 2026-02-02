@@ -25,25 +25,25 @@ hook_lib_check_recursion
 # Setup environment variables
 setup_env
 
-# Timeout for context extraction (seconds) - passed to Python CLI
+# Timeout for context extraction (seconds) - passed to Go CLI
 CONTEXT_TIMEOUT=45
 
-# Extract handoff context using Python CLI (unified extraction with tool_use/thinking support)
-extract_handoff_context_python() {
+# Extract handoff context using Go CLI (unified extraction with tool_use/thinking support)
+extract_handoff_context() {
     local transcript_path="$1"
     local git_ref="$2"
 
-    if [[ ! -f "$PYTHON_MANAGER" ]]; then
+    if [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]]; then
         return 1
     fi
 
-    # Call Python CLI for context extraction - it handles:
+    # Call Go CLI for context extraction - it handles:
     # - Reading transcript with tool_use/thinking blocks
     # - Calling Haiku for summarization
     # - Validating the result (rejects garbage summaries)
     local result
     result=$(PROJECT_DIR="$PROJECT_DIR" LESSONS_BASE="$LESSONS_BASE" LESSONS_SCORING_ACTIVE=1 \
-        timeout "$CONTEXT_TIMEOUT" "$PYTHON_BIN" "$PYTHON_MANAGER" extract-context "$transcript_path" --git-ref "$git_ref" 2>/dev/null) || return 1
+        timeout "$CONTEXT_TIMEOUT" "$GO_RECALL" extract-context "$transcript_path" --git-ref "$git_ref" 2>/dev/null) || return 1
 
     # Check if we got valid JSON (not empty object)
     if [[ -z "$result" ]] || [[ "$result" == "{}" ]]; then
@@ -60,11 +60,11 @@ extract_handoff_context_python() {
 get_most_recent_handoff() {
     local project_root="$1"
 
-    if [[ -f "$PYTHON_MANAGER" ]]; then
+    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
         # Get first non-completed handoff (most recent by file order)
         # Matches both legacy A### format and new hf-XXXXXXX format
         PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff list 2>/dev/null | \
+            "$GO_RECALL" handoff list 2>/dev/null | \
             head -1 | grep -oE '\[(A[0-9]{3}|hf-[0-9a-f]+)\]' | tr -d '[]' || true
     fi
 }
@@ -98,17 +98,17 @@ do_extract_and_set_context() {
     local handoff_id="$3"
     local project_root="$4"
 
-    # Extract structured handoff context using Python CLI
+    # Extract structured handoff context using Go CLI
     # This handles tool_use/thinking blocks properly (not just text blocks)
     local context_json
-    context_json=$(extract_handoff_context_python "$transcript_path" "$git_ref")
+    context_json=$(extract_handoff_context "$transcript_path" "$git_ref")
 
     if [[ -n "$context_json" ]] && echo "$context_json" | jq -e . >/dev/null 2>&1; then
         # Use structured set-context command
-        if [[ -f "$PYTHON_MANAGER" ]]; then
+        if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
             local result
             result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                "$PYTHON_BIN" "$PYTHON_MANAGER" handoff set-context "$handoff_id" --json "$context_json" 2>&1)
+                "$GO_RECALL" handoff set-context "$handoff_id" --json "$context_json" 2>&1)
 
             if [[ $? -eq 0 ]]; then
                 local summary_preview
@@ -162,7 +162,7 @@ main() {
         exit 0
     }
 
-    # Export PROJECT_DIR for Python CLI
+    # Export PROJECT_DIR for Go CLI
     export PROJECT_DIR="$project_root"
 
     # Get current git ref
@@ -172,8 +172,8 @@ main() {
     # Run the slow Haiku API call in background so we don't block the user
     # This saves ~1.5-3 seconds of perceived latency
     # Output goes to background.log for debugging
-    nohup bash -c "$(declare -f extract_handoff_context_python do_extract_and_set_context); \
-        PYTHON_MANAGER='$PYTHON_MANAGER' \
+    nohup bash -c "$(declare -f extract_handoff_context do_extract_and_set_context); \
+        GO_RECALL='$GO_RECALL' \
         PROJECT_DIR='$project_root' \
         LESSONS_BASE='$LESSONS_BASE' \
         LESSONS_DEBUG='${LESSONS_DEBUG:-}' \

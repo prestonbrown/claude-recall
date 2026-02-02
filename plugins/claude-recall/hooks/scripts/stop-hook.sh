@@ -30,19 +30,13 @@ TRANSCRIPT_CACHE=""
 # Byte-offset tracking for incremental transcript parsing
 OFFSET_FILE="$CLAUDE_RECALL_STATE/transcript_offsets.json"
 
-# Go binary for fast citation processing
-# Check multiple locations: installed path, then source directory
-if [[ -x "${LESSONS_BASE}/go/bin/recall-hook" ]]; then
-    GO_HOOK_BINARY="${LESSONS_BASE}/go/bin/recall-hook"
-elif [[ -x "${HOOK_LIB_DIR}/../../go/bin/recall-hook" ]]; then
-    # Development: source directory relative to adapters/claude-code/
-    GO_HOOK_BINARY="${HOOK_LIB_DIR}/../../go/bin/recall-hook"
-else
-    GO_HOOK_BINARY=""
-fi
+# Go binaries are now set by hook-lib.sh via find_go_binary()
+# GO_RECALL and GO_RECALL_HOOK are exported
+# Legacy variable for backward compatibility
+GO_HOOK_BINARY="${GO_RECALL_HOOK:-}"
 
 # Process citations using Go binary (fast path)
-# Returns 0 if successful, 1 if fallback to Python needed
+# Returns 0 if successful, 1 if Go binary not available
 # Sets GO_CITATIONS_PROCESSED to count of citations processed
 GO_CITATIONS_PROCESSED=0
 process_citations_go() {
@@ -388,8 +382,8 @@ extract_ai_lessons_json() {
 #   HANDOFF UPDATE <id>|LAST: blocked_by <id>,<id>       -> handoff update ID --blocked-by "<ids>"
 #   HANDOFF COMPLETE <id>|LAST                           -> handoff complete ID
 #
-# This function uses a single Python call to parse all patterns and process them.
-# All parsing, sanitization, and sub-agent detection happens in Python.
+# This function uses a single Go call to parse all patterns and process them.
+# All parsing, sanitization, and sub-agent detection happens in Go.
 process_handoffs() {
     local transcript_path="$1"
     local project_root="$2"
@@ -401,8 +395,8 @@ process_handoffs() {
     local t0 t1 t2 t3
     [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && t0=$(get_elapsed_ms)
 
-    # Skip if no Python manager available
-    [[ ! -f "$PYTHON_MANAGER" ]] && return 0
+    # Skip if no Go binary available
+    [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]] && return 0
 
     # Skip if no transcript cache
     [[ -z "$TRANSCRIPT_CACHE" ]] && return 0
@@ -413,10 +407,10 @@ process_handoffs() {
 
     [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && t1=$(get_elapsed_ms)
 
-    # Single Python call parses patterns, handles sub-agent blocking, and processes all operations
+    # Single Go call parses patterns, handles sub-agent blocking, and processes all operations
     local result
     result=$(echo "$TRANSCRIPT_CACHE" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-        "$PYTHON_BIN" "$PYTHON_MANAGER" handoff process-transcript $session_arg 2>&1 || true)
+        "$GO_RECALL" handoff process-transcript $session_arg 2>&1 || true)
 
     [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && t2=$(get_elapsed_ms)
 
@@ -425,7 +419,7 @@ process_handoffs() {
 
     [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 2 ]] && {
         t3=$(get_elapsed_ms)
-        echo "[timing:process_handoffs] setup=$((t1-t0))ms python=$((t2-t1))ms jq=$((t3-t2))ms" >&2
+        echo "[timing:process_handoffs] setup=$((t1-t0))ms go=$((t2-t1))ms jq=$((t3-t2))ms" >&2
     }
 
     (( processed_count > 0 )) && echo "[handoffs] $processed_count handoff command(s) processed" >&2
@@ -473,11 +467,11 @@ capture_todowrite() {
         return 0
     fi
 
-    # Call Python manager to sync todos to handoff
-    if [[ -f "$PYTHON_MANAGER" ]]; then
+    # Call Go binary to sync todos to handoff
+    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
         local result
         result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            "$PYTHON_BIN" "$PYTHON_MANAGER" approach sync-todos "$todo_json" 2>&1 || true)
+            "$GO_RECALL" handoff sync-todos "$todo_json" 2>&1 || true)
 
         if [[ -n "$result" && "$result" != Error:* ]]; then
             echo "[handoffs] Synced TodoWrite to handoff" >&2
@@ -492,9 +486,9 @@ detect_and_warn_missing_handoff() {
 
     # Check if any handoff exists now (may have been created by capture_todowrite)
     local handoff_exists=""
-    if [[ -f "$PYTHON_MANAGER" ]]; then
+    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
         handoff_exists=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" \
-            "$PYTHON_BIN" "$PYTHON_MANAGER" handoff list 2>/dev/null | grep -E '\[hf-' | head -1 || true)
+            "$GO_RECALL" handoff list 2>/dev/null | grep -E '\[hf-' | head -1 || true)
     fi
     [[ -n "$handoff_exists" ]] && return 0
 
@@ -595,54 +589,57 @@ main() {
         citation_ids=$(echo "$citations" | tr -d '[]' | tr '\n' ',' | sed 's/,$//')
     fi
 
-    # BATCH PROCESSING: Single Python call for handoffs, todos, transcript, and AI lessons
+    # BATCH PROCESSING: Single call for handoffs, todos, transcript, and AI lessons
     # Citations are handled by Go fast path when available
-    # Uses --cached-transcript to pass pre-parsed JSON via stdin (saves 50-100ms file re-read)
-    # Batches AI lessons to avoid per-lesson Python startups (saves 70-150ms each)
+    # Uses Go stop-hook-batch, falls back to individual Go calls
     phase_start=$(get_elapsed_ms)
 
-    if [[ -f "$PYTHON_MANAGER" ]]; then
-        local batch_args="--cached-transcript"
-        # Only pass citations to Python if Go didn't process them
-        [[ -n "$citation_ids" ]] && batch_args="$batch_args --citations $citation_ids"
-        [[ -n "$claude_session_id" ]] && batch_args="$batch_args --session-id $claude_session_id"
-        # Add AI lessons if any found (single quote-safe via --ai-lessons flag)
-        if [[ "$ai_lessons_json" != "[]" && -n "$ai_lessons_json" ]]; then
-            batch_args="$batch_args --ai-lessons '$ai_lessons_json'"
+    local batch_success=false
+
+    # Try Go batch processing first
+    if [[ -n "$GO_RECALL_HOOK" && -x "$GO_RECALL_HOOK" ]]; then
+        # Build JSON input for Go batch
+        local go_batch_input
+        go_batch_input=$(jq -n \
+            --arg cwd "$project_root" \
+            --arg session_id "$claude_session_id" \
+            --argjson assistant_texts "$(echo "$TRANSCRIPT_CACHE" | jq '.assistant_texts // []')" \
+            --argjson citations "$(echo "[$citation_ids]" | tr ',' ',' | jq -R 'split(",") | map(select(length > 0))')" \
+            --argjson ai_lessons "$ai_lessons_json" \
+            '{cwd: $cwd, session_id: $session_id, assistant_texts: $assistant_texts, citations: $citations, ai_lessons: $ai_lessons}' 2>/dev/null)
+
+        if [[ -n "$go_batch_input" ]]; then
+            local batch_result
+            batch_result=$(echo "$go_batch_input" | "$GO_RECALL_HOOK" stop-hook-batch 2>/dev/null)
+
+            if [[ $? -eq 0 && -n "$batch_result" ]]; then
+                batch_success=true
+                # Parse Go batch results for logging
+                local citations_proc=$(echo "$batch_result" | jq -r '.citations_processed // 0' 2>/dev/null || echo "0")
+                local lessons_added=$(echo "$batch_result" | jq -r '.lessons_added // 0' 2>/dev/null || echo "0")
+                local handoff_ops=$(echo "$batch_result" | jq -r '.handoff_ops | length // 0' 2>/dev/null || echo "0")
+
+                (( citations_proc > 0 )) && echo "[lessons] $citations_proc lesson(s) cited (Go batch)" >&2
+                (( lessons_added > 0 )) && echo "[lessons] $lessons_added AI lesson(s) added" >&2
+                (( handoff_ops > 0 )) && echo "[handoffs] $handoff_ops handoff command(s) processed" >&2
+            fi
         fi
+    fi
 
-        local batch_result
-        # Pass cached transcript via stdin to avoid Python re-reading/re-parsing file
-        batch_result=$(echo "$TRANSCRIPT_CACHE" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            eval "$PYTHON_BIN" "$PYTHON_MANAGER" stop-hook-batch $batch_args 2>&1 || echo '{}')
-
-        # Parse batch results for logging
-        local handoffs_processed=$(echo "$batch_result" | jq -r '.handoffs_processed // 0' 2>/dev/null || echo "0")
-        local todos_synced=$(echo "$batch_result" | jq -r '.todos_synced // false' 2>/dev/null || echo "false")
-        local cited_count=$(echo "$batch_result" | jq -r '.citations_count // 0' 2>/dev/null || echo "0")
-        local transcript_added=$(echo "$batch_result" | jq -r '.transcript_added // false' 2>/dev/null || echo "false")
-        local ai_lessons_added=$(echo "$batch_result" | jq -r '.ai_lessons_added // 0' 2>/dev/null || echo "0")
-
-        # Log results
-        (( handoffs_processed > 0 )) && echo "[handoffs] $handoffs_processed handoff command(s) processed" >&2
-        [[ "$todos_synced" == "true" ]] && echo "[handoffs] Synced TodoWrite to handoff" >&2
-        # Only log Python citations if Go didn't process them (Go logs its own)
-        [[ "$go_success" != "true" ]] && (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
-        (( ai_lessons_added > 0 )) && echo "[lessons] $ai_lessons_added AI lesson(s) added" >&2
-    else
-        # Fallback to individual calls if Python manager not available
+    # Fallback to individual Go calls if batch processing failed
+    if [[ "$batch_success" != "true" ]]; then
         # Process handoffs
         process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
 
         # Capture TodoWrite
         capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
 
-        # Cite lessons individually (bash fallback) - only if Go didn't already process
-        if [[ "$go_success" != "true" && -n "$citation_ids" && -x "$BASH_MANAGER" ]]; then
+        # Cite lessons individually using Go - only if Go citation fast path didn't already process
+        if [[ "$go_success" != "true" && -n "$citation_ids" && -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
             local lesson_ids=$(echo "$citation_ids" | tr ',' ' ')
             local cited_count=0
             for lesson_id in $lesson_ids; do
-                local result=$(PROJECT_DIR="$project_root" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$BASH_MANAGER" cite "$lesson_id" 2>&1 || true)
+                local result=$(PROJECT_DIR="$project_root" LESSONS_DEBUG="${LESSONS_DEBUG:-}" "$GO_RECALL" cite "$lesson_id" 2>&1 || true)
                 [[ "$result" == OK:* ]] && ((cited_count++)) || true
             done
             (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
@@ -665,9 +662,11 @@ main() {
     if (( RANDOM % 5 == 0 )) && [[ -n "$transcript_path" && -f "$transcript_path" ]]; then
         # Run in background with nohup so it doesn't block session end
         # Redirect to background.log for debugging
-        nohup "$PYTHON_BIN" "$PYTHON_MANAGER" prescore-cache \
-            --transcript "$transcript_path" \
-            >> "$CLAUDE_RECALL_STATE/background.log" 2>&1 &
+        if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+            nohup "$GO_RECALL" prescore-cache \
+                --transcript "$transcript_path" \
+                >> "$CLAUDE_RECALL_STATE/background.log" 2>&1 &
+        fi
     fi
 
     exit 0

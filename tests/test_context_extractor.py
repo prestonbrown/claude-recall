@@ -328,100 +328,21 @@ class TestExtractContextIntegration:
         )
 
 
+@pytest.mark.skip(reason="Python CLI removed - extract-context now handled by Go binary")
 class TestExtractContextCLI:
-    """Tests for the extract-context CLI command."""
+    """Tests for the extract-context CLI command.
+
+    NOTE: These tests are skipped because the Python CLI (core/cli.py) was removed.
+    The extract-context command is now handled by the Go binary (go/bin/recall).
+    """
 
     def test_cli_extract_context_outputs_json(self, tmp_path: Path, monkeypatch):
         """CLI extract-context should output valid JSON."""
-        import subprocess
-        import os
-
-        # Create a simple transcript
-        transcript = tmp_path / "test.jsonl"
-        lines = [
-            json.dumps({
-                "type": "user",
-                "message": {"content": "Fix the bug in auth.py"}
-            }),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "I'll fix the authentication bug."},
-                        {"type": "tool_use", "name": "Read", "input": {"file_path": "auth.py"}},
-                    ]
-                }
-            }),
-        ]
-        transcript.write_text("\n".join(lines) + "\n")
-
-        # Mock the Haiku call via environment/monkeypatch
-        def mock_call_haiku(prompt):
-            return json.dumps({
-                "summary": "Fixed authentication bug in auth.py",
-                "critical_files": ["auth.py"],
-                "recent_changes": ["Fixed auth function"],
-                "learnings": [],
-                "blockers": []
-            })
-
-        monkeypatch.setattr("core.context_extractor._call_haiku", mock_call_haiku)
-
-        # Run CLI
-        from core.cli import main
-        import sys
-        from io import StringIO
-
-        # Capture stdout
-        old_stdout = sys.stdout
-        sys.stdout = StringIO()
-        old_argv = sys.argv
-
-        try:
-            sys.argv = ["cli.py", "extract-context", str(transcript), "--git-ref", "abc1234"]
-            main()
-            output = sys.stdout.getvalue()
-        finally:
-            sys.stdout = old_stdout
-            sys.argv = old_argv
-
-        # Parse output as JSON
-        result = json.loads(output)
-        assert "summary" in result
-        assert "auth" in result["summary"].lower()
-        assert result["git_ref"] == "abc1234"
-        assert "critical_files" in result
-        assert "recent_changes" in result
+        pass
 
     def test_cli_extract_context_returns_empty_on_failure(self, tmp_path: Path, monkeypatch):
         """CLI extract-context should return {} when extraction fails."""
-        # Create a transcript that's too short to extract
-        transcript = tmp_path / "test.jsonl"
-        transcript.write_text('{"type": "user", "message": {"content": "hi"}}\n')
-
-        from core.cli import main
-        import sys
-        from io import StringIO
-
-        old_stdout = sys.stdout
-        sys.stdout = StringIO()
-        old_argv = sys.argv
-
-        try:
-            sys.argv = ["cli.py", "extract-context", str(transcript)]
-            try:
-                main()
-            except SystemExit as e:
-                # CLI exits with 0 for empty result
-                assert e.code == 0
-            output = sys.stdout.getvalue()
-        finally:
-            sys.stdout = old_stdout
-            sys.argv = old_argv
-
-        # Should return empty object
-        result = json.loads(output)
-        assert result == {}
+        pass
 
 
 class TestLightweightContextExtraction:
