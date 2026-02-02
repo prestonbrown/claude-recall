@@ -8,7 +8,7 @@
     {
       "name": "claude-recall",
       "description": "AI memory for Claude Code - captures lessons across sessions and tracks multi-step work via handoffs",
-      "version": "0.9.5",
+      "version": "0.9.6",
       "source": "./plugins/claude-recall"
     }
   ]
