@@ -11,6 +11,7 @@ import (
 	"github.com/pbrown/claude-recall/internal/checkpoint"
 	"github.com/pbrown/claude-recall/internal/citations"
 	"github.com/pbrown/claude-recall/internal/config"
+	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/transcript"
 )
 
@@ -24,6 +25,7 @@ type stopInput struct {
 // stopOutput matches the JSON output format
 type stopOutput struct {
 	Citations         []string `json:"citations"`
+	CitationsProcessed int     `json:"citations_processed"`
 	MessagesProcessed int      `json:"messages_processed"`
 }
 
@@ -43,8 +45,14 @@ func runStop() int {
 		return 1
 	}
 
+	// Use cwd from input for project directory (overrides config default)
+	projectDir := input.Cwd
+	if projectDir == "" {
+		projectDir = cfg.ProjectDir
+	}
+
 	// Execute the stop hook
-	result, err := executeStop(input, cfg.StateDir)
+	result, err := executeStop(input, cfg.StateDir, projectDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error executing stop: %v\n", err)
 		return 1
@@ -94,7 +102,7 @@ func expandTilde(path string) string {
 }
 
 // executeStop performs the stop hook logic.
-func executeStop(input stopInput, stateDir string) (stopOutput, error) {
+func executeStop(input stopInput, stateDir, projectDir string) (stopOutput, error) {
 	// Expand tilde in transcript path
 	transcriptPath := expandTilde(input.TranscriptPath)
 
@@ -132,13 +140,43 @@ func executeStop(input stopInput, stateDir string) (stopOutput, error) {
 		citationIDs = append(citationIDs, c.ID)
 	}
 
+	// Process citations - increment uses/velocity for each
+	citationsProcessed := 0
+	if len(citationIDs) > 0 {
+		// Set up lesson store paths
+		projectLessonsPath := filepath.Join(projectDir, ".claude-recall", "LESSONS.md")
+		systemLessonsPath := filepath.Join(stateDir, "LESSONS.md")
+		store := lessons.NewStore(projectLessonsPath, systemLessonsPath)
+
+		// Deduplicate citations before processing
+		seen := make(map[string]bool)
+		uniqueCitations := make([]string, 0, len(citationIDs))
+		for _, id := range citationIDs {
+			if !seen[id] {
+				seen[id] = true
+				uniqueCitations = append(uniqueCitations, id)
+			}
+		}
+
+		// Process each unique citation
+		for _, id := range uniqueCitations {
+			if err := store.Cite(id); err != nil {
+				// Log error but continue processing other citations
+				fmt.Fprintf(os.Stderr, "warning: failed to cite %s: %v\n", id, err)
+				continue
+			}
+			citationsProcessed++
+		}
+	}
+
 	// Update checkpoint
 	if err := checkpoint.SetOffset(checkpointPath, input.SessionID, newOffset); err != nil {
 		return stopOutput{}, fmt.Errorf("failed to update checkpoint: %w", err)
 	}
 
 	return stopOutput{
-		Citations:         citationIDs,
-		MessagesProcessed: len(messages),
+		Citations:          citationIDs,
+		CitationsProcessed: citationsProcessed,
+		MessagesProcessed:  len(messages),
 	}, nil
 }

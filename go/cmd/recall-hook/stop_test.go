@@ -109,7 +109,7 @@ func Test_StopHook_IncrementalParsing(t *testing.T) {
 		TranscriptPath: transcriptPath,
 	}
 
-	result, err := executeStop(input, stateDir)
+	result, err := executeStop(input, stateDir, tmpDir)
 	if err != nil {
 		t.Fatalf("executeStop failed: %v", err)
 	}
@@ -143,7 +143,7 @@ func Test_StopHook_ExtractsCitations(t *testing.T) {
 		TranscriptPath: transcriptPath,
 	}
 
-	result, err := executeStop(input, tmpDir)
+	result, err := executeStop(input, tmpDir, tmpDir)
 	if err != nil {
 		t.Fatalf("executeStop failed: %v", err)
 	}
@@ -183,7 +183,7 @@ func Test_StopHook_OutputsJSON(t *testing.T) {
 		TranscriptPath: transcriptPath,
 	}
 
-	result, err := executeStop(input, tmpDir)
+	result, err := executeStop(input, tmpDir, tmpDir)
 	if err != nil {
 		t.Fatalf("executeStop failed: %v", err)
 	}
@@ -217,7 +217,7 @@ func Test_StopHook_MissingTranscript(t *testing.T) {
 		TranscriptPath: filepath.Join(tmpDir, "nonexistent.jsonl"),
 	}
 
-	_, err := executeStop(input, tmpDir)
+	_, err := executeStop(input, tmpDir, tmpDir)
 	if err == nil {
 		t.Error("expected error for missing transcript, got nil")
 	}
@@ -238,7 +238,7 @@ func Test_StopHook_EmptyTranscript(t *testing.T) {
 		TranscriptPath: transcriptPath,
 	}
 
-	result, err := executeStop(input, tmpDir)
+	result, err := executeStop(input, tmpDir, tmpDir)
 	if err != nil {
 		t.Fatalf("executeStop failed: %v", err)
 	}
@@ -268,7 +268,7 @@ func Test_StopHook_UpdatesCheckpoint(t *testing.T) {
 		TranscriptPath: transcriptPath,
 	}
 
-	_, err := executeStop(input, tmpDir)
+	_, err := executeStop(input, tmpDir, tmpDir)
 	if err != nil {
 		t.Fatalf("executeStop failed: %v", err)
 	}
@@ -303,7 +303,7 @@ func Test_StopHook_NoCitationsInUserMessages(t *testing.T) {
 		TranscriptPath: transcriptPath,
 	}
 
-	result, err := executeStop(input, tmpDir)
+	result, err := executeStop(input, tmpDir, tmpDir)
 	if err != nil {
 		t.Fatalf("executeStop failed: %v", err)
 	}
@@ -311,5 +311,70 @@ func Test_StopHook_NoCitationsInUserMessages(t *testing.T) {
 	// Citations in user messages should NOT be extracted
 	if len(result.Citations) != 0 {
 		t.Errorf("citations = %v, want empty (user message citations should be ignored)", result.Citations)
+	}
+}
+
+func Test_StopHook_ProcessesCitations(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create project lessons directory and file with a lesson
+	lessonsDir := filepath.Join(tmpDir, ".claude-recall")
+	if err := os.MkdirAll(lessonsDir, 0755); err != nil {
+		t.Fatalf("failed to create lessons dir: %v", err)
+	}
+	lessonsPath := filepath.Join(lessonsDir, "LESSONS.md")
+	lessonsContent := `# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [*****] Test lesson
+- **Uses**: 5 | **Velocity**: 2.0 | **Learned**: 2024-01-01 | **Last**: 2024-01-01 | **Category**: testing
+> This is a test lesson for citation processing
+`
+	if err := os.WriteFile(lessonsPath, []byte(lessonsContent), 0644); err != nil {
+		t.Fatalf("failed to write lessons: %v", err)
+	}
+
+	// Create transcript with citation to L001
+	transcriptPath := filepath.Join(tmpDir, "transcript.jsonl")
+	transcript := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Applying [L001]: Test lesson for this task"}]}}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0644); err != nil {
+		t.Fatalf("failed to write transcript: %v", err)
+	}
+
+	input := stopInput{
+		Cwd:            tmpDir,
+		SessionID:      "test-session",
+		TranscriptPath: transcriptPath,
+	}
+
+	result, err := executeStop(input, tmpDir, tmpDir)
+	if err != nil {
+		t.Fatalf("executeStop failed: %v", err)
+	}
+
+	// Should find the L001 citation
+	if len(result.Citations) != 1 || result.Citations[0] != "L001" {
+		t.Errorf("citations = %v, want [L001]", result.Citations)
+	}
+
+	// Should have processed 1 citation
+	if result.CitationsProcessed != 1 {
+		t.Errorf("citations_processed = %d, want 1", result.CitationsProcessed)
+	}
+
+	// Verify uses/velocity were incremented in the file
+	updatedContent, err := os.ReadFile(lessonsPath)
+	if err != nil {
+		t.Fatalf("failed to read updated lessons: %v", err)
+	}
+
+	// Uses should now be 6 (was 5), Velocity should be 3.0 (was 2.0)
+	if !strings.Contains(string(updatedContent), "**Uses**: 6") {
+		t.Errorf("expected Uses to be incremented to 6, got: %s", string(updatedContent))
+	}
+	if !strings.Contains(string(updatedContent), "**Velocity**: 3") {
+		t.Errorf("expected Velocity to be incremented to 3.0, got: %s", string(updatedContent))
 	}
 }
