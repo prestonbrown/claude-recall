@@ -437,12 +437,21 @@ def main():
         help="Path to transcript JSONL file"
     )
     stop_hook_batch_parser.add_argument(
+        "--cached-transcript",
+        action="store_true",
+        help="Read pre-parsed transcript JSON from stdin (faster than --transcript)"
+    )
+    stop_hook_batch_parser.add_argument(
         "--citations", "-c",
         help="Comma-separated list of lesson citations (e.g., L001,L002,S001)"
     )
     stop_hook_batch_parser.add_argument(
         "--session-id", "-s",
         help="Claude session ID for linking handoffs and transcripts"
+    )
+    stop_hook_batch_parser.add_argument(
+        "--ai-lessons",
+        help="JSON array of AI lessons to add [{category, title, content, type?}]"
     )
 
     args = parser.parse_args()

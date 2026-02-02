@@ -30,6 +30,57 @@ TRANSCRIPT_CACHE=""
 # Byte-offset tracking for incremental transcript parsing
 OFFSET_FILE="$CLAUDE_RECALL_STATE/transcript_offsets.json"
 
+# Go binary for fast citation processing
+# Check multiple locations: installed path, then source directory
+if [[ -x "${LESSONS_BASE}/go/bin/recall-hook" ]]; then
+    GO_HOOK_BINARY="${LESSONS_BASE}/go/bin/recall-hook"
+elif [[ -x "${HOOK_LIB_DIR}/../../go/bin/recall-hook" ]]; then
+    # Development: source directory relative to adapters/claude-code/
+    GO_HOOK_BINARY="${HOOK_LIB_DIR}/../../go/bin/recall-hook"
+else
+    GO_HOOK_BINARY=""
+fi
+
+# Process citations using Go binary (fast path)
+# Returns 0 if successful, 1 if fallback to Python needed
+# Sets GO_CITATIONS_PROCESSED to count of citations processed
+GO_CITATIONS_PROCESSED=0
+process_citations_go() {
+    local cwd="$1"
+    local session_id="$2"
+    local transcript_path="$3"
+
+    # Check if Go binary exists and is executable
+    if [[ -z "$GO_HOOK_BINARY" || ! -x "$GO_HOOK_BINARY" ]]; then
+        return 1
+    fi
+
+    # Build JSON input for Go hook
+    local go_input
+    go_input=$(jq -n \
+        --arg cwd "$cwd" \
+        --arg session_id "$session_id" \
+        --arg transcript_path "$transcript_path" \
+        '{cwd: $cwd, session_id: $session_id, transcript_path: $transcript_path}')
+
+    # Call Go binary
+    local go_result
+    go_result=$(echo "$go_input" | "$GO_HOOK_BINARY" stop 2>/dev/null)
+
+    if [[ $? -ne 0 || -z "$go_result" ]]; then
+        return 1
+    fi
+
+    # Parse result
+    GO_CITATIONS_PROCESSED=$(echo "$go_result" | jq -r '.citations_processed // 0' 2>/dev/null || echo "0")
+    local citations_found=$(echo "$go_result" | jq -r '.citations | length // 0' 2>/dev/null || echo "0")
+
+    # Log result
+    (( GO_CITATIONS_PROCESSED > 0 )) && echo "[lessons] $GO_CITATIONS_PROCESSED lesson(s) cited (Go)" >&2
+
+    return 0
+}
+
 get_transcript_offset() {
     local session_id="$1"
     [[ -f "$OFFSET_FILE" ]] || echo '{}' > "$OFFSET_FILE"
@@ -128,6 +179,12 @@ parse_transcript_once() {
         # Latest timestamp for checkpoint
         latest_timestamp: ([.[] | .timestamp // empty] | last // ""),
 
+        # Bash commands (for git commit detection in Python)
+        bash_commands: [.[] | select(.type == "assistant") |
+            .message.content[]? |
+            select(.type == "tool_use" and .name == "Bash") |
+            .input.command // ""],
+
         # Extract filtered citations (all assistant texts)
         # Finds [L###] or [S###] NOT followed by " [*" (star rating = listing, not citation)
         # Uses scan with capture group to check context after each citation
@@ -204,27 +261,30 @@ cleanup_orphaned_checkpoints() {
     (( cleaned > 0 )) && echo "[lessons] Cleaned $cleaned orphaned checkpoint(s)" >&2
 }
 
-# Detect and process AI LESSON: patterns in assistant messages
+# Detect and extract AI LESSON: patterns from assistant messages
+# Returns JSON array of lessons for batch processing
 # Format: AI LESSON: category: title - content
 # Format with explicit type: AI LESSON [constraint]: category: title - content
 # Types: constraint, informational, preference (auto-classified if not specified)
 # Example: AI LESSON: correction: Always use absolute paths - Relative paths fail in shell hooks
 # Example: AI LESSON [constraint]: gotcha: Never commit WIP - Uncommitted changes are sacred
-process_ai_lessons() {
-    local transcript_path="$1"
-    local project_root="$2"
-    local last_timestamp="$3"
-    local added_count=0
+extract_ai_lessons_json() {
+    local last_timestamp="$1"
 
     # Extract AI LESSON patterns from cached assistant texts
     # Use cached data - select appropriate field based on timestamp
     local texts_field="assistant_texts"
     [[ -n "$last_timestamp" ]] && texts_field="assistant_texts_new"
     local ai_lessons=""
+    # Pattern matches: "AI LESSON: ..." or "AI LESSON [type]: ..."
     ai_lessons=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$texts_field" '.[$f][]' 2>/dev/null | \
-        grep -oE 'AI LESSON:.*' || true)
+        grep -oE 'AI LESSON( \[[a-z]+\])?:.*' || true)
 
-    [[ -z "$ai_lessons" ]] && return 0
+    [[ -z "$ai_lessons" ]] && { echo "[]"; return 0; }
+
+    # Build JSON array of lessons
+    local json_lessons="["
+    local first=true
 
     while IFS= read -r lesson_line; do
         [[ -z "$lesson_line" ]] && continue
@@ -284,28 +344,25 @@ process_ai_lessons() {
             *) category="pattern" ;;
         esac
 
-        # Add the lesson using Python manager (with bash fallback)
-        # Use -- to terminate options and prevent injection via crafted titles
-        local result=""
-        local type_args=""
-        [[ -n "$explicit_type" ]] && type_args="--type $explicit_type"
-        if [[ -f "$PYTHON_MANAGER" ]]; then
-            result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-                "$PYTHON_BIN" "$PYTHON_MANAGER" add-ai $type_args -- "$category" "$title" "$content" 2>&1 || true)
-        fi
+        # Add to JSON array (use jq for proper escaping)
+        local lesson_json
+        lesson_json=$(jq -n \
+            --arg cat "$category" \
+            --arg title "$title" \
+            --arg content "$content" \
+            --arg type "$explicit_type" \
+            '{category: $cat, title: $title, content: $content, type: $type}')
 
-        # Fall back to bash manager if Python fails
-        if [[ -z "$result" && -x "$BASH_MANAGER" ]]; then
-            # Bash manager doesn't support add-ai - log warning
-            echo "[lessons] Warning: AI lesson skipped (Python unavailable, bash fallback not supported)" >&2
-        fi
-
-        if [[ -n "$result" && "$result" != Error:* ]]; then
-            ((added_count++)) || true
+        if [[ "$first" == "true" ]]; then
+            json_lessons="$json_lessons$lesson_json"
+            first=false
+        else
+            json_lessons="$json_lessons,$lesson_json"
         fi
     done <<< "$ai_lessons"
 
-    (( added_count > 0 )) && echo "[lessons] $added_count AI lesson(s) added" >&2
+    json_lessons="$json_lessons]"
+    echo "$json_lessons"
 }
 
 # ============================================================
@@ -496,55 +553,82 @@ main() {
     parse_transcript_once "$transcript_path" "$last_timestamp" "$session_id"
     log_phase "parse_transcript" "$phase_start" "stop"
 
-    # Process AI LESSON: patterns (adds new AI-generated lessons)
+    # Extract AI LESSON: patterns as JSON (processed in batch later)
     phase_start=$(get_elapsed_ms)
-    process_ai_lessons "$transcript_path" "$project_root" "$last_timestamp"
-    log_phase "process_lessons" "$phase_start" "stop"
+    local ai_lessons_json=""
+    ai_lessons_json=$(extract_ai_lessons_json "$last_timestamp")
+    log_phase "extract_ai_lessons" "$phase_start" "stop"
 
-    # Extract citations from cache for batch processing
+    # TRY GO FAST PATH for citation processing
+    # Go binary handles: transcript parsing, citation extraction, and Cite() calls
+    # This is the hot path we want to optimize (target: <100ms vs ~2.5s Python)
+    phase_start=$(get_elapsed_ms)
+    local go_success=false
+    if process_citations_go "$cwd" "$session_id" "$transcript_path"; then
+        go_success=true
+        log_phase "citations_go" "$phase_start" "stop"
+    else
+        log_phase "citations_go_skip" "$phase_start" "stop"
+    fi
+
+    # Extract citations from cache for batch processing (only if Go failed)
     phase_start=$(get_elapsed_ms)
 
-    # Get filtered citations from cache (already excludes listings with star ratings)
-    local citations_field="citations"
-    [[ -n "$last_timestamp" ]] && citations_field="citations_new"
-    local citations=""
-    citations=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$citations_field" '.[$f][]' 2>/dev/null || true)
-
-    # Get latest timestamp from cache
+    # Get latest timestamp from cache (always needed for checkpoint)
     local latest_ts=$(echo "$TRANSCRIPT_CACHE" | jq -r '.latest_timestamp // ""' 2>/dev/null)
+
+    # Only extract citations if Go didn't already process them
+    local citations=""
+    if [[ "$go_success" != "true" ]]; then
+        # Get filtered citations from cache (already excludes listings with star ratings)
+        local citations_field="citations"
+        [[ -n "$last_timestamp" ]] && citations_field="citations_new"
+        citations=$(echo "$TRANSCRIPT_CACHE" | jq -r --arg f "$citations_field" '.[$f][]' 2>/dev/null || true)
+    fi
 
     log_phase "extract_citations" "$phase_start" "stop"
 
     # Convert citations to comma-separated IDs for batch command: [L001]\n[L002] -> L001,L002
+    # Skip if Go already processed citations successfully
     local citation_ids=""
-    if [[ -n "$citations" ]]; then
+    if [[ "$go_success" != "true" && -n "$citations" ]]; then
         citation_ids=$(echo "$citations" | tr -d '[]' | tr '\n' ',' | sed 's/,$//')
     fi
 
-    # BATCH PROCESSING: Single Python call for handoffs, todos, citations, and transcript
-    # This saves ~200-300ms by eliminating 3 Python startups (70-150ms each)
+    # BATCH PROCESSING: Single Python call for handoffs, todos, transcript, and AI lessons
+    # Citations are handled by Go fast path when available
+    # Uses --cached-transcript to pass pre-parsed JSON via stdin (saves 50-100ms file re-read)
+    # Batches AI lessons to avoid per-lesson Python startups (saves 70-150ms each)
     phase_start=$(get_elapsed_ms)
 
     if [[ -f "$PYTHON_MANAGER" ]]; then
-        local batch_args=""
-        batch_args="--transcript $transcript_path"
+        local batch_args="--cached-transcript"
+        # Only pass citations to Python if Go didn't process them
         [[ -n "$citation_ids" ]] && batch_args="$batch_args --citations $citation_ids"
         [[ -n "$claude_session_id" ]] && batch_args="$batch_args --session-id $claude_session_id"
+        # Add AI lessons if any found (single quote-safe via --ai-lessons flag)
+        if [[ "$ai_lessons_json" != "[]" && -n "$ai_lessons_json" ]]; then
+            batch_args="$batch_args --ai-lessons '$ai_lessons_json'"
+        fi
 
         local batch_result
-        batch_result=$(PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
-            "$PYTHON_BIN" "$PYTHON_MANAGER" stop-hook-batch $batch_args 2>&1 || echo '{}')
+        # Pass cached transcript via stdin to avoid Python re-reading/re-parsing file
+        batch_result=$(echo "$TRANSCRIPT_CACHE" | PROJECT_DIR="$project_root" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+            eval "$PYTHON_BIN" "$PYTHON_MANAGER" stop-hook-batch $batch_args 2>&1 || echo '{}')
 
         # Parse batch results for logging
         local handoffs_processed=$(echo "$batch_result" | jq -r '.handoffs_processed // 0' 2>/dev/null || echo "0")
         local todos_synced=$(echo "$batch_result" | jq -r '.todos_synced // false' 2>/dev/null || echo "false")
         local cited_count=$(echo "$batch_result" | jq -r '.citations_count // 0' 2>/dev/null || echo "0")
         local transcript_added=$(echo "$batch_result" | jq -r '.transcript_added // false' 2>/dev/null || echo "false")
+        local ai_lessons_added=$(echo "$batch_result" | jq -r '.ai_lessons_added // 0' 2>/dev/null || echo "0")
 
         # Log results
         (( handoffs_processed > 0 )) && echo "[handoffs] $handoffs_processed handoff command(s) processed" >&2
         [[ "$todos_synced" == "true" ]] && echo "[handoffs] Synced TodoWrite to handoff" >&2
-        (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
+        # Only log Python citations if Go didn't process them (Go logs its own)
+        [[ "$go_success" != "true" ]] && (( cited_count > 0 )) && echo "[lessons] $cited_count lesson(s) cited" >&2
+        (( ai_lessons_added > 0 )) && echo "[lessons] $ai_lessons_added AI lesson(s) added" >&2
     else
         # Fallback to individual calls if Python manager not available
         # Process handoffs
@@ -553,8 +637,8 @@ main() {
         # Capture TodoWrite
         capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
 
-        # Cite lessons individually (bash fallback)
-        if [[ -n "$citation_ids" && -x "$BASH_MANAGER" ]]; then
+        # Cite lessons individually (bash fallback) - only if Go didn't already process
+        if [[ "$go_success" != "true" && -n "$citation_ids" && -x "$BASH_MANAGER" ]]; then
             local lesson_ids=$(echo "$citation_ids" | tr ',' ' ')
             local cited_count=0
             for lesson_id in $lesson_ids; do

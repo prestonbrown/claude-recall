@@ -334,8 +334,9 @@ class StopHookBatchCommand(Command):
     2. Sync todos to handoffs (handoff sync-todos)
     3. Cite all provided lessons (cite)
     4. Add transcript to linked handoff (handoff add-transcript)
+    5. Add AI-generated lessons in batch (add-ai-batch)
 
-    Expected savings: ~200-300ms (3 fewer Python startups at 70-150ms each)
+    Expected savings: ~400-600ms (fewer Python startups + cached transcript)
     """
 
     def execute(self, args: Namespace, manager: Any) -> int:
@@ -343,8 +344,10 @@ class StopHookBatchCommand(Command):
         from pathlib import Path
 
         transcript_path = getattr(args, "transcript", "")
+        cached_transcript = getattr(args, "cached_transcript", False)
         citations_str = getattr(args, "citations", "")
         session_id = getattr(args, "session_id", "") or ""
+        ai_lessons_str = getattr(args, "ai_lessons", "")
 
         results = {
             "handoffs_processed": 0,
@@ -353,16 +356,30 @@ class StopHookBatchCommand(Command):
             "transcript_added": False,
             "git_commit_detected": False,
             "auto_completed": False,
+            "ai_lessons_added": 0,
             "errors": [],
         }
 
         # Track if git commit was detected in transcript
         git_commit_detected = False
+        transcript_data = None
 
-        # 1. Process handoffs from transcript
-        if transcript_path and Path(transcript_path).exists():
+        # 1. Get transcript data (either from stdin cache or by reading file)
+        if cached_transcript:
+            # Fast path: read pre-parsed transcript from stdin
             try:
-                # Read and parse transcript for the cached format expected by process-transcript
+                transcript_data = json.loads(sys.stdin.read())
+                # Detect git commit from cached bash_commands if available
+                bash_commands = transcript_data.get("bash_commands", [])
+                for cmd in bash_commands:
+                    if "git commit" in cmd:
+                        git_commit_detected = True
+                        break
+            except json.JSONDecodeError as e:
+                results["errors"].append(f"cached_transcript_parse: {str(e)}")
+        elif transcript_path and Path(transcript_path).exists():
+            # Slow path: read and parse transcript file
+            try:
                 with open(transcript_path, "r") as f:
                     lines = f.readlines()
                     entries = []
@@ -396,28 +413,35 @@ class StopHookBatchCommand(Command):
                         "last_todowrite": last_todowrite,
                     }
 
-                    # Process handoffs
-                    operations = manager.parse_transcript_for_handoffs(
-                        transcript_data, session_id=session_id
-                    )
-                    if operations:
-                        result = manager.handoff_batch_process(operations)
-                        results["handoffs_processed"] = len(
-                            [r for r in result.get("results", []) if r.get("ok")]
-                        )
+            except Exception as e:
+                results["errors"].append(f"transcript_read: {str(e)}")
 
-                    # 2. Sync todos if found
-                    if last_todowrite and isinstance(last_todowrite, list):
-                        # Get session handoff for priority targeting
-                        session_handoff = None
-                        if session_id:
-                            session_handoff = manager.handoff_get_by_session(session_id)
-                        sync_result = manager.handoff_sync_todos(
-                            last_todowrite,
-                            session_handoff=session_handoff,
-                            session_id=session_id,  # Prevents cross-session pollution
-                        )
-                        results["todos_synced"] = sync_result is not None
+        # 2. Process handoffs from transcript data
+        if transcript_data:
+            try:
+                # Process handoffs
+                operations = manager.parse_transcript_for_handoffs(
+                    transcript_data, session_id=session_id
+                )
+                if operations:
+                    result = manager.handoff_batch_process(operations)
+                    results["handoffs_processed"] = len(
+                        [r for r in result.get("results", []) if r.get("ok")]
+                    )
+
+                # Sync todos if found
+                last_todowrite = transcript_data.get("last_todowrite")
+                if last_todowrite and isinstance(last_todowrite, list):
+                    # Get session handoff for priority targeting
+                    session_handoff = None
+                    if session_id:
+                        session_handoff = manager.handoff_get_by_session(session_id)
+                    sync_result = manager.handoff_sync_todos(
+                        last_todowrite,
+                        session_handoff=session_handoff,
+                        session_id=session_id,  # Prevents cross-session pollution
+                    )
+                    results["todos_synced"] = sync_result is not None
 
             except Exception as e:
                 results["errors"].append(f"transcript_processing: {str(e)}")
@@ -463,6 +487,33 @@ class StopHookBatchCommand(Command):
                             break
             except Exception as e:
                 results["errors"].append(f"auto_complete: {str(e)}")
+
+        # 6. Add AI lessons in batch (saves 70-150ms per lesson vs individual calls)
+        if ai_lessons_str:
+            try:
+                ai_lessons = json.loads(ai_lessons_str)
+                if isinstance(ai_lessons, list):
+                    for lesson in ai_lessons:
+                        if not isinstance(lesson, dict):
+                            continue
+                        category = lesson.get("category", "pattern")
+                        title = lesson.get("title", "")
+                        content = lesson.get("content", "")
+                        lesson_type = lesson.get("type", "")
+                        if title:  # Skip if no title
+                            try:
+                                manager.add_ai_lesson(
+                                    level="project",
+                                    category=category,
+                                    title=title,
+                                    content=content,
+                                    lesson_type=lesson_type,
+                                )
+                                results["ai_lessons_added"] += 1
+                            except Exception as e:
+                                results["errors"].append(f"ai_lesson_{title[:20]}: {str(e)}")
+            except json.JSONDecodeError as e:
+                results["errors"].append(f"ai_lessons_parse: {str(e)}")
 
         # Output results as JSON for parsing by stop-hook.sh
         print(json.dumps(results))

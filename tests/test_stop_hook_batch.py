@@ -726,3 +726,247 @@ class TestStopHookBatchDispatch:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert isinstance(output, dict)
+
+
+# =============================================================================
+# Cached Transcript Tests
+# =============================================================================
+
+
+class TestStopHookBatchCachedTranscript:
+    """Tests for --cached-transcript mode."""
+
+    def test_cached_transcript_parses_from_stdin(self, manager, capsys, monkeypatch):
+        """Should parse transcript data from stdin when --cached-transcript is used."""
+        import io
+        import sys
+        from core.commands import StopHookBatchCommand
+
+        # Create cached transcript data (same format as jq output in stop-hook.sh)
+        cached_data = {
+            "assistant_texts": ["I'll help with that task.", "HANDOFF: Test feature"],
+            "last_todowrite": None,
+            "bash_commands": [],
+        }
+
+        # Mock stdin
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(cached_data)))
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript="",
+            cached_transcript=True,
+            citations="",
+            session_id="",
+            ai_lessons="",
+        )
+
+        cmd = StopHookBatchCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        # Should process the handoff from cached data
+        assert output["handoffs_processed"] == 1
+
+    def test_cached_transcript_detects_git_commit(self, manager, capsys, monkeypatch):
+        """Should detect git commit from bash_commands in cached data."""
+        import io
+        import sys
+        from core.commands import StopHookBatchCommand
+
+        cached_data = {
+            "assistant_texts": [],
+            "last_todowrite": None,
+            "bash_commands": ["git status", "git commit -m 'feat: add feature'"],
+        }
+
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(cached_data)))
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript="",
+            cached_transcript=True,
+            citations="",
+            session_id="",
+            ai_lessons="",
+        )
+
+        cmd = StopHookBatchCommand()
+        cmd.execute(args, manager)
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["git_commit_detected"] is True
+
+    def test_cached_transcript_syncs_todos(self, manager, capsys, monkeypatch):
+        """Should sync todos from cached last_todowrite."""
+        import io
+        import sys
+        from core.commands import StopHookBatchCommand
+
+        # First create a handoff to sync to
+        manager.handoff_add(title="Existing Handoff", phase="implementing")
+
+        cached_data = {
+            "assistant_texts": [],
+            "last_todowrite": [
+                {"content": "Task 1", "status": "completed"},
+                {"content": "Task 2", "status": "in_progress"},
+            ],
+            "bash_commands": [],
+        }
+
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(cached_data)))
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript="",
+            cached_transcript=True,
+            citations="",
+            session_id="",
+            ai_lessons="",
+        )
+
+        cmd = StopHookBatchCommand()
+        cmd.execute(args, manager)
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["todos_synced"] is True
+
+
+# =============================================================================
+# AI Lessons Batch Tests
+# =============================================================================
+
+
+class TestStopHookBatchAILessons:
+    """Tests for batch AI lesson processing."""
+
+    def test_ai_lessons_adds_single_lesson(self, manager, capsys):
+        """Should add a single AI lesson from JSON."""
+        from core.commands import StopHookBatchCommand
+
+        ai_lessons = [
+            {
+                "category": "pattern",
+                "title": "Test AI Lesson",
+                "content": "This is test content",
+                "type": "informational",
+            }
+        ]
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript="",
+            cached_transcript=False,
+            citations="",
+            session_id="",
+            ai_lessons=json.dumps(ai_lessons),
+        )
+
+        cmd = StopHookBatchCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["ai_lessons_added"] == 1
+
+    def test_ai_lessons_adds_multiple_lessons(self, manager, capsys):
+        """Should add multiple AI lessons in one call."""
+        from core.commands import StopHookBatchCommand
+
+        ai_lessons = [
+            {"category": "pattern", "title": "Lesson 1", "content": "Content 1", "type": ""},
+            {"category": "correction", "title": "Lesson 2", "content": "Content 2", "type": "constraint"},
+            {"category": "gotcha", "title": "Lesson 3", "content": "Content 3", "type": ""},
+        ]
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript="",
+            cached_transcript=False,
+            citations="",
+            session_id="",
+            ai_lessons=json.dumps(ai_lessons),
+        )
+
+        cmd = StopHookBatchCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["ai_lessons_added"] == 3
+
+    def test_ai_lessons_skips_lessons_without_title(self, manager, capsys):
+        """Should skip AI lessons without a title."""
+        from core.commands import StopHookBatchCommand
+
+        ai_lessons = [
+            {"category": "pattern", "title": "", "content": "No title"},
+            {"category": "pattern", "title": "Has title", "content": "Content"},
+        ]
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript="",
+            cached_transcript=False,
+            citations="",
+            session_id="",
+            ai_lessons=json.dumps(ai_lessons),
+        )
+
+        cmd = StopHookBatchCommand()
+        cmd.execute(args, manager)
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["ai_lessons_added"] == 1
+
+    def test_ai_lessons_handles_invalid_json(self, manager, capsys):
+        """Should handle invalid JSON gracefully."""
+        from core.commands import StopHookBatchCommand
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript="",
+            cached_transcript=False,
+            citations="",
+            session_id="",
+            ai_lessons="not valid json",
+        )
+
+        cmd = StopHookBatchCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["ai_lessons_added"] == 0
+        assert any("ai_lessons_parse" in e for e in output["errors"])
+
+    def test_ai_lessons_empty_array(self, manager, capsys):
+        """Should handle empty AI lessons array."""
+        from core.commands import StopHookBatchCommand
+
+        args = Namespace(
+            command="stop-hook-batch",
+            transcript="",
+            cached_transcript=False,
+            citations="",
+            session_id="",
+            ai_lessons="[]",
+        )
+
+        cmd = StopHookBatchCommand()
+        result = cmd.execute(args, manager)
+
+        assert result == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["ai_lessons_added"] == 0
+        assert len(output["errors"]) == 0
