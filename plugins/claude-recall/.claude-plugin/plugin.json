@@ -1,6 +1,6 @@
 {
   "name": "claude-recall",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "AI memory for Claude Code - captures lessons across sessions and tracks multi-step work via handoffs",
   "author": { "name": "Claude Recall Contributors" },
   "repository": "https://github.com/anthropics/claude-recall",
