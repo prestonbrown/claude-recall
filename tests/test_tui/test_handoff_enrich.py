@@ -694,7 +694,7 @@ class TestEnrichKeyBinding:
 
             # Mock the enrich function to track if it was called
             # Note: Patch at source location since it's imported locally in the method
-            with patch("core.handoffs.enrich_handoff") as mock_enrich:
+            with patch("core.tui.helpers.enrich_handoff") as mock_enrich:
                 # Return object with .success attribute (not dict)
                 mock_result = MagicMock()
                 mock_result.success = True
@@ -727,7 +727,7 @@ class TestEnrichKeyBinding:
             await pilot.press("down")
             await pilot.pause()
 
-            with patch("core.handoffs.enrich_handoff") as mock_enrich:
+            with patch("core.tui.helpers.enrich_handoff") as mock_enrich:
                 # Return object with .success attribute (not dict)
                 mock_result = MagicMock()
                 mock_result.success = True
@@ -758,7 +758,7 @@ class TestEnrichKeyBinding:
             await pilot.press("down")
             await pilot.pause()
 
-            with patch("core.handoffs.enrich_handoff") as mock_enrich:
+            with patch("core.tui.helpers.enrich_handoff") as mock_enrich:
                 # Return object with .success attribute (not dict)
                 mock_result = MagicMock()
                 mock_result.success = False

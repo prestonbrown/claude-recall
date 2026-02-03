@@ -185,13 +185,13 @@ class TestSkillFrontmatter:
         assert "allowed-tools" in frontmatter, f"Missing 'allowed-tools' in {skill_path}"
 
     @pytest.mark.parametrize("skill_path", SKILL_PATHS)
-    def test_allowed_tools_includes_bash_recall_cli(self, skill_path: Path):
-        """allowed-tools should include Bash(RECALL_CLI=*)."""
+    def test_allowed_tools_includes_bash_recall(self, skill_path: Path):
+        """allowed-tools should include Bash(recall *)."""
         content = skill_path.read_text()
         frontmatter = parse_frontmatter(content)
         allowed_tools = frontmatter.get("allowed-tools", "")
-        assert "Bash(RECALL_CLI=*)" in allowed_tools, (
-            f"allowed-tools should include 'Bash(RECALL_CLI=*)' in {skill_path}"
+        assert "Bash(recall *)" in allowed_tools, (
+            f"allowed-tools should include 'Bash(recall *)' in {skill_path}"
         )
 
 
@@ -317,11 +317,10 @@ class TestSkillContentQuality:
     def test_skill_mentions_cli_path(self, skill_path: Path):
         """Skill should explain how to find/use the CLI."""
         content = skill_path.read_text()
-        # Should mention RECALL_CLI or the plugin path pattern
+        # Should mention recall binary or how to use it
         mentions_cli = (
-            "RECALL_CLI" in content
-            or "cli.py" in content
-            or "~/.claude/plugins" in content
+            "recall " in content
+            or "~/.local/bin/recall" in content
         )
         assert mentions_cli, (
             f"Skill should explain how to find/use the CLI: {skill_path}"

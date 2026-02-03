@@ -1,7 +1,7 @@
 ---
 description: Manage the Claude Recall lessons system - a learning cache that tracks corrections and patterns across sessions.
 argument-hint: [list | search <term> | category <cat> | stale | show <id> | add <cat> <title> - <content> | cite <id> | delete <id>]
-allowed-tools: Bash(RECALL_CLI=*)
+allowed-tools: Bash(recall *)
 ---
 
 # Lesson Management
@@ -10,19 +10,12 @@ Manage your personal learning system: capture patterns, corrections, gotchas, pr
 
 **Arguments**: $ARGUMENTS
 
-## Finding the CLI
+## Using the CLI
 
-The CLI location varies by installation. Use this pattern to find and run it:
-
-```bash
-RECALL_CLI=$(ls ~/.claude/plugins/cache/claude-recall/claude-recall/*/core/cli.py 2>/dev/null | head -1)
-python3 "$RECALL_CLI" <command> [args...]
-```
-
-Or as a one-liner for each command:
+The `recall` binary is installed at `~/.local/bin/recall`. Commands:
 
 ```bash
-python3 "$(ls ~/.claude/plugins/cache/claude-recall/claude-recall/*/core/cli.py 2>/dev/null | head -1)" <command>
+recall <command> [args...]
 ```
 
 ## Categories
@@ -39,39 +32,36 @@ Based on the first argument, execute the corresponding operation:
 
 | Action | Args | CLI Command |
 |--------|------|-------------|
-| List all | (none) or `list` | `list` |
-| Search | `search <term>` | `search "<term>"` |
-| Filter | `category <cat>` | `list --category <cat>` |
-| Stale | `stale` | `list --stale` |
-| Show | `show <id>` | `show <id>` |
-| Add | `add <cat> <title> - <content>` | `add <cat> "<title>" "<content>"` |
-| Cite | `cite <id>` | `cite <id>` |
-| Edit | `edit <id> <content>` | `edit <id> "<new content>"` |
-| Delete | `delete <id>` | Show first, confirm with user, then `delete <id>` |
+| List all | (none) or `list` | `recall list` |
+| Search | `search <term>` | `recall list --search "<term>"` |
+| Filter | `category <cat>` | `recall list --category <cat>` |
+| Stale | `stale` | `recall list --stale` |
+| Show | `show <id>` | `recall show <id>` |
+| Add | `add <cat> <title> - <content>` | `recall add <cat> "<title>" "<content>"` |
+| Cite | `cite <id>` | `recall cite <id>` |
+| Edit | `edit <id> <content>` | `recall edit <id> --content "<new content>"` |
+| Delete | `delete <id>` | Show first, confirm with user, then `recall delete <id>` |
 
 ## Full Command Examples
 
 ```bash
-# Find CLI (set once per session)
-RECALL_CLI=$(ls ~/.claude/plugins/cache/claude-recall/claude-recall/*/core/cli.py 2>/dev/null | head -1)
-
 # List all lessons
-python3 "$RECALL_CLI" list
+recall list
 
 # Search for lessons about git
-python3 "$RECALL_CLI" search "git"
+recall list --search "git"
 
 # Show a specific lesson
-python3 "$RECALL_CLI" show L001
+recall show L001
 
 # Add a new lesson
-python3 "$RECALL_CLI" add correction "Stage files explicitly" "Use git add <file> for specific files"
+recall add correction "Stage files explicitly" "Use git add <file> for specific files"
 
 # Cite a lesson (increments usage count)
-python3 "$RECALL_CLI" cite L001
+recall cite L001
 
 # Edit a lesson
-python3 "$RECALL_CLI" edit L001 "Updated content here"
+recall edit L001 --content "Updated content here"
 ```
 
 ## Output Format

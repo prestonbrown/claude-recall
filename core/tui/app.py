@@ -495,7 +495,7 @@ class SessionDetailModal(ModalScreen):
             self.dismiss()
 
 
-# Valid options for handoff actions (imported from core.handoffs constants)
+# Valid options for handoff actions
 VALID_STATUSES = ["not_started", "in_progress", "blocked", "ready_for_review", "completed"]
 VALID_PHASES = ["research", "planning", "implementing", "review"]
 VALID_AGENTS = ["explore", "general-purpose", "plan", "review", "user"]
@@ -2583,9 +2583,9 @@ class RecallMonitorApp(App):
             else:
                 # Import the extractor
                 try:
-                    from core.context_extractor import extract_lightweight_context
+                    from core.tui.helpers import extract_lightweight_context
                 except ImportError:
-                    from context_extractor import extract_lightweight_context
+                    from helpers import extract_lightweight_context
 
                 # Extract context (file parsing only, no API)
                 context = extract_lightweight_context(transcript_path)
@@ -3203,9 +3203,9 @@ class RecallMonitorApp(App):
             return
 
         try:
-            from core.handoffs import enrich_handoff
+            from core.tui.helpers import enrich_handoff
         except ImportError:
-            from handoffs import enrich_handoff
+            from helpers import enrich_handoff
 
         result = enrich_handoff(handoff_id)
 
