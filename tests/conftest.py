@@ -2,9 +2,17 @@
 Pytest configuration and fixtures for claude-recall tests.
 """
 
+import sys
+from pathlib import Path
+
+# Ensure project root is in sys.path for 'core' module imports
+# This must happen before any imports from core
+_project_root = Path(__file__).parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 import os
 import pytest
-from pathlib import Path
 
 
 def pytest_configure(config):
