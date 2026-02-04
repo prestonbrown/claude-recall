@@ -21,6 +21,7 @@ import (
 
 // App encapsulates CLI state and dependencies for testability
 type App struct {
+	stdin        io.Reader
 	stdout       io.Writer
 	stderr       io.Writer
 	projectPath  string // Path to project LESSONS.md
@@ -30,9 +31,10 @@ type App struct {
 	stateDir     string // Path to state directory
 }
 
-// NewApp creates a new App with default stdout/stderr
+// NewApp creates a new App with default stdout/stderr/stdin
 func NewApp() *App {
 	return &App{
+		stdin:  os.Stdin,
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 	}
@@ -120,6 +122,8 @@ func (a *App) Run(args []string) int {
 		return a.runExtractContext(cmdArgs)
 	case "prescore-cache":
 		return a.runPrescoreCache(cmdArgs)
+	case "opencode":
+		return a.runOpencode(cmdArgs)
 	default:
 		fmt.Fprintf(a.stderr, "unknown command: %s\n", cmd)
 		a.printHelp()
