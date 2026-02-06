@@ -27,6 +27,9 @@ type batchInput struct {
 
 	// AI lessons to add
 	AILessons []aiLesson `json:"ai_lessons"`
+
+	// Skip handoff processing (for performance)
+	SkipHandoffs bool `json:"skip_handoffs"`
 }
 
 // aiLesson represents an AI-generated lesson to add
@@ -129,8 +132,8 @@ func runStopHookBatch() int {
 		result.LessonsAdded++
 	}
 
-	// Parse and process handoff operations from assistant texts
-	if len(input.AssistantTexts) > 0 {
+	// Parse and process handoff operations from assistant texts (if enabled)
+	if !input.SkipHandoffs && len(input.AssistantTexts) > 0 {
 		ops := parseHandoffOps(input.AssistantTexts)
 		result.HandoffOps = ops
 

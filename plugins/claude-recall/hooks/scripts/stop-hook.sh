@@ -521,8 +521,9 @@ main() {
         export CLAUDE_RECALL_SESSION="$claude_session_id"
     fi
 
-    # Opportunistic cleanup runs early (doesn't depend on current session)
-    cleanup_orphaned_checkpoints
+    # DISABLED: cleanup_orphaned_checkpoints causes 60s spikes in stop hook
+    # Move to a cron job or background task if needed
+    # cleanup_orphaned_checkpoints
 
     local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
     local project_root=$(find_project_root "$cwd")
@@ -598,15 +599,20 @@ main() {
 
     # Try Go batch processing first
     if [[ -n "$GO_RECALL_HOOK" && -x "$GO_RECALL_HOOK" ]]; then
+        # Check if handoffs are enabled
+        local skip_handoffs="true"
+        handoffs_enabled && skip_handoffs="false"
+
         # Build JSON input for Go batch
         local go_batch_input
         go_batch_input=$(jq -n \
             --arg cwd "$project_root" \
             --arg session_id "$claude_session_id" \
+            --argjson skip_handoffs "$skip_handoffs" \
             --argjson assistant_texts "$(echo "$TRANSCRIPT_CACHE" | jq '.assistant_texts // []')" \
             --argjson citations "$(echo "[$citation_ids]" | tr ',' ',' | jq -R 'split(",") | map(select(length > 0))')" \
             --argjson ai_lessons "$ai_lessons_json" \
-            '{cwd: $cwd, session_id: $session_id, assistant_texts: $assistant_texts, citations: $citations, ai_lessons: $ai_lessons}' 2>/dev/null)
+            '{cwd: $cwd, session_id: $session_id, skip_handoffs: $skip_handoffs, assistant_texts: $assistant_texts, citations: $citations, ai_lessons: $ai_lessons}' 2>/dev/null)
 
         if [[ -n "$go_batch_input" ]]; then
             local batch_result
@@ -628,11 +634,11 @@ main() {
 
     # Fallback to individual Go calls if batch processing failed
     if [[ "$batch_success" != "true" ]]; then
-        # Process handoffs
-        process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
-
-        # Capture TodoWrite
-        capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
+        # Process handoffs (if enabled)
+        if handoffs_enabled; then
+            process_handoffs "$transcript_path" "$project_root" "$last_timestamp" "$claude_session_id"
+            capture_todowrite "$transcript_path" "$project_root" "$last_timestamp"
+        fi
 
         # Cite lessons individually using Go - only if Go citation fast path didn't already process
         if [[ "$go_success" != "true" && -n "$citation_ids" && -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
@@ -648,8 +654,10 @@ main() {
 
     log_phase "batch_process" "$phase_start" "stop"
 
-    # Warn if major work detected without handoff
-    detect_and_warn_missing_handoff "$transcript_path" "$project_root"
+    # Warn if major work detected without handoff (only if handoffs enabled)
+    if handoffs_enabled; then
+        detect_and_warn_missing_handoff "$transcript_path" "$project_root"
+    fi
 
     # Update checkpoint
     [[ -n "$latest_ts" ]] && echo "$latest_ts" > "$state_file"

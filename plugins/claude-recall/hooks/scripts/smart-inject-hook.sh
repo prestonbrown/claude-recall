@@ -77,6 +77,14 @@ score_and_format_lessons() {
     echo "$result"
 }
 
+# Log when prompt-submit injection is skipped
+log_injection_skip() {
+    local project_root="$1" reason="$2" detail="$3"
+    [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]] && return 0
+    [[ "${CLAUDE_RECALL_DEBUG:-0}" -lt 1 ]] && return 0
+    PROJECT_DIR="$project_root" "$GO_RECALL" debug log "lessons_injection_skipped: hook=prompt_submit reason=$reason detail=$detail" 2>/dev/null &
+}
+
 main() {
     is_enabled || exit 0
 
@@ -86,21 +94,31 @@ main() {
     local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
     local transcript_path=$(echo "$input" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
 
+    local project_root=$(find_project_root "$cwd")
+
     # Skip if no prompt
     [[ -z "$prompt" ]] && exit 0
 
     # Skip short prompts (greetings, confirmations, etc.)
-    [[ ${#prompt} -lt $MIN_PROMPT_LENGTH ]] && exit 0
+    if [[ ${#prompt} -lt $MIN_PROMPT_LENGTH ]]; then
+        log_injection_skip "$project_root" "short_prompt" "length=${#prompt}, min=$MIN_PROMPT_LENGTH"
+        exit 0
+    fi
 
     # Only run smart injection on first prompt to avoid latency
-    is_first_prompt "$transcript_path" || exit 0
+    if ! is_first_prompt "$transcript_path"; then
+        exit 0
+    fi
 
     # Skip if Go binary doesn't exist
     [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]] && exit 0
 
     # Score lessons against the prompt
     local scored_lessons
-    scored_lessons=$(score_and_format_lessons "$prompt" "$cwd") || exit 0
+    if ! scored_lessons=$(score_and_format_lessons "$prompt" "$cwd"); then
+        log_injection_skip "$project_root" "score_failed" "timeout or error from score-relevance"
+        exit 0
+    fi
 
     # If we got relevant lessons, inject them
     if [[ -n "$scored_lessons" ]]; then

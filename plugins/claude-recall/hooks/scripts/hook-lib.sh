@@ -157,6 +157,15 @@ is_enabled() {
     [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
 }
 
+# Check if handoffs are enabled in config.json
+# Returns 0 (true) if enabled, 1 (false) if disabled
+# Defaults to true if not set
+handoffs_enabled() {
+    local enabled
+    enabled=$(get_setting "handoffsEnabled" "true")
+    [[ "$enabled" == "true" ]]
+}
+
 # Read a numeric setting with default
 # Usage: get_setting "topLessonsToShow" 3
 get_setting() {

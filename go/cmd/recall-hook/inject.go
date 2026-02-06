@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/pbrown/claude-recall/internal/config"
+	"github.com/pbrown/claude-recall/internal/debuglog"
 	"github.com/pbrown/claude-recall/internal/handoffs"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/models"
@@ -69,6 +70,14 @@ func runInject() int {
 		n = len(allLessons)
 	}
 	topLessons := allLessons[:n]
+
+	// Log which lessons are being injected
+	dlog := debuglog.New(cfg.StateDir, cfg.DebugLevel)
+	entries := make([]debuglog.LessonEntry, len(topLessons))
+	for i, l := range topLessons {
+		entries[i] = debuglog.LessonEntry{ID: l.ID, Title: l.Title}
+	}
+	dlog.LogInjection("session_start", cfg.ProjectDir, entries)
 
 	// Output formatted lessons
 	output := formatLessonsForInjection(topLessons)
@@ -140,6 +149,14 @@ func runInjectCombined() int {
 		// Non-fatal - continue without handoffs
 		activeHandoffs = []*models.Handoff{}
 	}
+
+	// Log which lessons are being injected
+	dlog := debuglog.New(cfg.StateDir, cfg.DebugLevel)
+	entries := make([]debuglog.LessonEntry, len(topLessons))
+	for i, l := range topLessons {
+		entries[i] = debuglog.LessonEntry{ID: l.ID, Title: l.Title}
+	}
+	dlog.LogInjection("session_start", projectDir, entries)
 
 	// Build output
 	result := injectCombinedOutput{

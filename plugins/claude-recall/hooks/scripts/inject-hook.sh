@@ -72,8 +72,11 @@ generate_combined_context() {
         if [[ $? -eq 0 && -n "$combined_output" ]]; then
             # Parse JSON output using jq
             LESSONS_SUMMARY_RAW=$(echo "$combined_output" | jq -r '.lessons // empty')
-            HANDOFFS_SUMMARY=$(echo "$combined_output" | jq -r '.handoffs // empty')
-            TODOS_PROMPT=$(echo "$combined_output" | jq -r '.todos // empty')
+            # Skip handoffs if disabled
+            if handoffs_enabled; then
+                HANDOFFS_SUMMARY=$(echo "$combined_output" | jq -r '.handoffs // empty')
+                TODOS_PROMPT=$(echo "$combined_output" | jq -r '.todos // empty')
+            fi
             return 0
         fi
     fi
@@ -90,8 +93,11 @@ generate_combined_context() {
         if [[ $exit_code -eq 0 && -n "$combined_output" ]]; then
             # Parse JSON output using jq
             LESSONS_SUMMARY_RAW=$(echo "$combined_output" | jq -r '.lessons // empty')
-            HANDOFFS_SUMMARY=$(echo "$combined_output" | jq -r '.handoffs // empty')
-            TODOS_PROMPT=$(echo "$combined_output" | jq -r '.todos // empty')
+            # Skip handoffs if disabled
+            if handoffs_enabled; then
+                HANDOFFS_SUMMARY=$(echo "$combined_output" | jq -r '.handoffs // empty')
+                TODOS_PROMPT=$(echo "$combined_output" | jq -r '.todos // empty')
+            fi
             rm -f "$stderr_file" 2>/dev/null
             return 0
         fi
@@ -126,8 +132,8 @@ generate_context_fallback() {
         LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" inject "$top_n" 2>/dev/null || true)
     fi
 
-    # Get handoffs - Go only
-    if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
+    # Get handoffs - Go only (skip if handoffs disabled)
+    if handoffs_enabled && [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
         HANDOFFS_SUMMARY=$(PROJECT_DIR="$cwd" "$GO_RECALL" handoff inject 2>/dev/null || true)
         if [[ "$HANDOFFS_SUMMARY" == "(no active handoffs)" ]]; then
             HANDOFFS_SUMMARY=""
@@ -266,7 +272,11 @@ LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
   ASK: \"Should I record this as a lesson? [category]: title - content\"
   CITE: When applying a lesson, say \"Applying [L###]: ...\"
   BEFORE git/implementing: Check if high-star lessons apply
-  AFTER mistakes: Cite the violated lesson, propose new if novel
+  AFTER mistakes: Cite the violated lesson, propose new if novel"
+
+        # Add handoff duty only if handoffs are enabled
+        if handoffs_enabled; then
+            summary="$summary
 
 HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
   1. Use TodoWrite to track progress - todos auto-sync to handoffs
@@ -278,6 +288,7 @@ HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
     - ASK: \"Any lessons from this work?\" (context is fresh now!)
     - Commit your changes (git commit auto-completes the handoff)
     - Or manually: HANDOFF COMPLETE <id>"
+        fi
 
         # Add todo continuation if available
         if [[ -n "$todo_continuation" ]]; then

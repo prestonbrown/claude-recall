@@ -14,6 +14,7 @@ import (
 
 	"github.com/pbrown/claude-recall/internal/anthropic"
 	"github.com/pbrown/claude-recall/internal/config"
+	"github.com/pbrown/claude-recall/internal/debuglog"
 	"github.com/pbrown/claude-recall/internal/handoffs"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/models"
@@ -29,6 +30,8 @@ type App struct {
 	handoffsPath string // Path to HANDOFFS.md
 	stealthPath  string // Path to HANDOFFS_LOCAL.md (stealth)
 	stateDir     string // Path to state directory
+	projectDir   string // Project root directory
+	debugLevel   int    // Debug level 0-3
 }
 
 // NewApp creates a new App with default stdout/stderr/stdin
@@ -70,6 +73,8 @@ func (a *App) initPaths() error {
 	if a.stateDir == "" {
 		a.stateDir = cfg.StateDir
 	}
+	a.projectDir = cfg.ProjectDir
+	a.debugLevel = cfg.DebugLevel
 
 	return nil
 }
@@ -205,6 +210,14 @@ func (a *App) runInject(args []string) int {
 		n = len(allLessons)
 	}
 	topLessons := allLessons[:n]
+
+	// Log which lessons are being injected
+	dlog := debuglog.New(a.stateDir, a.debugLevel)
+	entries := make([]debuglog.LessonEntry, len(topLessons))
+	for i, l := range topLessons {
+		entries[i] = debuglog.LessonEntry{ID: l.ID, Title: l.Title}
+	}
+	dlog.LogInjection("session_start", a.projectDir, entries)
 
 	// Output in inject format
 	if len(topLessons) == 0 {
@@ -1461,6 +1474,23 @@ func (a *App) runScoreRelevance(args []string) int {
 		fmt.Fprintf(a.stdout, "    -> %s\n", truncateContent(sl.Lesson.Content, 100))
 		count++
 	}
+
+	// Log which lessons were injected via relevance scoring
+	dlog := debuglog.New(a.stateDir, a.debugLevel)
+	var injectedEntries []debuglog.LessonEntry
+	for _, sl := range result.ScoredLessons {
+		if sl.Score < minScore {
+			continue
+		}
+		if len(injectedEntries) >= topN {
+			break
+		}
+		injectedEntries = append(injectedEntries, debuglog.LessonEntry{
+			ID:    sl.Lesson.ID,
+			Title: sl.Lesson.Title,
+		})
+	}
+	dlog.LogInjection("prompt_submit", a.projectDir, injectedEntries)
 
 	if count == 0 {
 		fmt.Fprintln(a.stdout, "No relevant lessons found.")
