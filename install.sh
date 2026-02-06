@@ -342,6 +342,13 @@ sync_working_dir() {
         return 0
     fi
 
+    # Sync hook scripts from working directory
+    if [[ -d "$SCRIPT_DIR/plugins/claude-recall/hooks/scripts" ]]; then
+        mkdir -p "$install_path/hooks/scripts"
+        cp "$SCRIPT_DIR/plugins/claude-recall/hooks/scripts/"*.sh "$install_path/hooks/scripts/" 2>/dev/null || true
+        log_success "Synced hook scripts to plugin cache"
+    fi
+
     # Sync Go source from working directory (for building on target)
     if [[ -d "$SCRIPT_DIR/go" ]]; then
         mkdir -p "$install_path/go"
