@@ -25,6 +25,8 @@ func main() {
 		os.Exit(runInjectCombined())
 	case "stop-hook-batch":
 		os.Exit(runStopHookBatch())
+	case "stop-all":
+		os.Exit(runStopAll())
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printHelp()
