@@ -1107,7 +1107,7 @@ No explanations, just ID: SCORE lines."""
         Decay lesson metrics.
 
         - Velocity is halved for all lessons (50% half-life)
-        - Uses is decremented by 1 for stale lessons (not cited in stale_threshold_days)
+        - Uses is a cumulative total and is never decremented
         - Skips if no coding sessions occurred since last decay (vacation mode)
 
         Args:
@@ -1138,7 +1138,6 @@ No explanations, just ID: SCORE lines."""
                 message="No sessions since last decay - skipping (vacation mode)",
             )
 
-        decayed_uses = 0
         decayed_velocity = 0
 
         for level, file_path in [
@@ -1166,12 +1165,6 @@ No explanations, just ID: SCORE lines."""
                         if lesson.velocity != old_velocity:
                             decayed_velocity += 1
 
-                    # Decay uses for stale lessons
-                    days_since = (date.today() - lesson.last_used).days
-                    if days_since > stale_threshold_days and lesson.uses > 1:
-                        lesson.uses -= 1
-                        decayed_uses += 1
-
                 self._write_lessons_file(file_path, lessons, level)
 
         # Evict excess lessons if maxLessons is configured
@@ -1182,19 +1175,19 @@ No explanations, just ID: SCORE lines."""
         # Log decay result
         logger = get_logger()
         logger.decay_result(
-            decayed_uses=decayed_uses,
+            decayed_uses=0,
             decayed_velocity=decayed_velocity,
             sessions_since_last=recent_sessions,
             skipped=False,
-            lessons_affected=[],  # Could track individual changes if needed
+            lessons_affected=[],
         )
 
         return DecayResult(
-            decayed_uses=decayed_uses,
+            decayed_uses=0,
             decayed_velocity=decayed_velocity,
             sessions_since_last=recent_sessions,
             skipped=False,
-            message=f"Decayed: {decayed_uses} uses, {decayed_velocity} velocities ({recent_sessions} sessions since last run)",
+            message=f"Decayed: {decayed_velocity} velocities ({recent_sessions} sessions since last run)",
         )
 
     def _evict_excess_lessons(self) -> int:

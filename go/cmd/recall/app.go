@@ -1446,11 +1446,15 @@ func (a *App) runScoreRelevance(args []string) int {
 
 	result, err := anthropic.ScoreRelevance(allLessons, query, a.stateDir, timeout)
 	if err != nil {
+		dlog := debuglog.New(a.stateDir, a.debugLevel)
+		dlog.LogScoreRelevanceError(query, err.Error())
 		fmt.Fprintf(a.stderr, "error scoring relevance: %v\n", err)
 		return 1
 	}
 
 	if result.Error != "" {
+		dlog := debuglog.New(a.stateDir, a.debugLevel)
+		dlog.LogScoreRelevanceError(query, result.Error)
 		fmt.Fprintf(a.stderr, "warning: %s\n", result.Error)
 	}
 

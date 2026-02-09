@@ -151,7 +151,7 @@ func runStopAll() int {
 	if result.LessonsAdded > 0 {
 		fmt.Fprintf(os.Stderr, "[lessons] %d AI lesson(s) added\n", result.LessonsAdded)
 	}
-	_ = dlog // available for future use
+	dlog.LogStopHook(input.SessionID, result.CitationsProcessed, result.CitationIDs, result.LessonsAdded, result.Errors)
 
 	// Output JSON result
 	output, err := json.Marshal(result)

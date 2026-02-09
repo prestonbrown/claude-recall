@@ -60,14 +60,25 @@ score_and_format_lessons() {
 
     # Call the Go score-relevance command
     # Export LESSONS_SCORING_ACTIVE so child processes can inherit it
-    local result
+    local result stderr_file
+    stderr_file=$(mktemp)
     result=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+        ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
         LESSONS_SCORING_ACTIVE=1 \
         timeout "$RELEVANCE_TIMEOUT" \
         "$GO_RECALL" score-relevance "$prompt" \
             --top "$TOP_LESSONS" \
             --min-score "$MIN_RELEVANCE_SCORE" \
-            --timeout "$RELEVANCE_TIMEOUT" 2>/dev/null) || return 1
+            --timeout "$RELEVANCE_TIMEOUT" 2>"$stderr_file") || {
+        local stderr_content
+        stderr_content=$(cat "$stderr_file" 2>/dev/null)
+        rm -f "$stderr_file"
+        if [[ -n "$stderr_content" ]]; then
+            log_injection_skip "$cwd" "score_relevance_error" "$stderr_content"
+        fi
+        return 1
+    }
+    rm -f "$stderr_file"
 
     # Check we got meaningful output
     [[ -z "$result" ]] && return 1
@@ -112,6 +123,12 @@ main() {
 
     # Skip if Go binary doesn't exist
     [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]] && exit 0
+
+    # Check for API key (required for relevance scoring via Haiku)
+    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+        log_injection_skip "$project_root" "no_api_key" "ANTHROPIC_API_KEY not set in hook environment"
+        exit 0
+    fi
 
     # Score lessons against the prompt
     local scored_lessons

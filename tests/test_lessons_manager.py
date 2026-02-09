@@ -550,8 +550,8 @@ class TestDecay:
         # Velocity should be halved (4 -> 2) when no effectiveness data exists
         assert lesson_after.velocity == pytest.approx(velocity_before * 0.5, abs=0.1)
 
-    def test_decay_reduces_uses_for_stale_lessons(self, manager: "LessonsManager"):
-        """Decay should reduce uses for lessons not cited in N days."""
+    def test_decay_does_not_reduce_uses(self, manager: "LessonsManager"):
+        """Decay should never reduce uses - it is a cumulative total."""
         manager.add_lesson("project", "pattern", "Stale lesson", "Old content")
 
         # Manually set the last-used date to 60 days ago
@@ -559,8 +559,7 @@ class TestDecay:
         old_date = date.today() - timedelta(days=60)
         manager._update_lesson_date("L001", last_used=old_date)
 
-        # Cite to build uses
-        # (Note: citing updates last_used, so we need to reset it)
+        # Set uses to 5
         manager._set_lesson_uses("L001", 5)
         manager._update_lesson_date("L001", last_used=old_date)
 
@@ -568,8 +567,8 @@ class TestDecay:
         manager.decay_lessons(stale_threshold_days=30)
 
         lesson_after = manager.get_lesson("L001")
-        # Uses should have decreased by 1
-        assert lesson_after.uses == 4
+        # Uses is cumulative and should NOT decrease
+        assert lesson_after.uses == 5
 
     def test_decay_preserves_minimum_uses(self, manager: "LessonsManager"):
         """Decay should never reduce uses below 1."""

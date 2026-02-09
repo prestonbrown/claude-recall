@@ -65,6 +65,37 @@ func (l *Logger) LogInjectionSkip(hook string, projectDir string, reason string,
 	})
 }
 
+// LogScoreRelevanceError logs errors from the score-relevance command.
+func (l *Logger) LogScoreRelevanceError(query string, errMsg string) {
+	if l.debugLevel < 1 {
+		return
+	}
+
+	l.write(map[string]interface{}{
+		"event": "score_relevance_error",
+		"level": "warn",
+		"query": query,
+		"error": errMsg,
+	})
+}
+
+// LogStopHook logs stop hook processing results.
+func (l *Logger) LogStopHook(sessionID string, citationsProcessed int, citationIDs []string, lessonsAdded int, errors []string) {
+	if l.debugLevel < 1 {
+		return
+	}
+
+	l.write(map[string]interface{}{
+		"event":               "stop_hook_processed",
+		"level":               "info",
+		"session_id":          sessionID,
+		"citations_processed": citationsProcessed,
+		"citation_ids":        citationIDs,
+		"lessons_added":       lessonsAdded,
+		"errors":              errors,
+	})
+}
+
 func (l *Logger) write(entry map[string]interface{}) {
 	entry["timestamp"] = time.Now().Format(time.RFC3339)
 
