@@ -107,6 +107,10 @@ main() {
     local prompt=$(echo "$input" | jq -r '.prompt // ""' 2>/dev/null || echo "")
     local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
 
+    # Set session ID for dedup tracking
+    local session_id=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+    _HOOK_SESSION_ID="$session_id"
+
     local project_root=$(find_project_root "$cwd")
 
     # Skip if no prompt
@@ -141,7 +145,25 @@ main() {
         fi
     fi
 
-    # If we got relevant lessons, inject them
+    # If we got relevant lessons, filter out already-injected ones
+    if [[ -n "$scored_lessons" ]]; then
+        # Extract IDs from scored output
+        local new_ids=$(echo "$scored_lessons" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u)
+
+        # Filter out already injected
+        local injected=$(get_injected_ids)
+        if [[ -n "$injected" ]]; then
+            local filtered="$scored_lessons"
+            while IFS= read -r id; do
+                [[ -n "$id" ]] && filtered=$(echo "$filtered" | grep -v "\[$id\]" || true)
+            done <<< "$injected"
+            scored_lessons="$filtered"
+        fi
+
+        # Re-extract IDs after filtering (only record what we actually inject)
+        new_ids=$(echo "$scored_lessons" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u)
+    fi
+
     if [[ -n "$scored_lessons" ]]; then
         local context="RELEVANT LESSONS for your query:
 $scored_lessons
@@ -152,6 +174,9 @@ Cite [ID] when applying. LESSON: [category:] title - content to add (output only
         cat << EOF
 {"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":$escaped}}
 EOF
+
+        # Record injected IDs for dedup
+        [[ -n "$new_ids" ]] && record_injected $new_ids
     fi
 
     exit 0

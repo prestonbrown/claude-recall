@@ -134,6 +134,10 @@ main() {
         export CLAUDE_RECALL_SESSION="$claude_session_id"
     fi
 
+    # Clear session dedup state for fresh session
+    _HOOK_SESSION_ID="$claude_session_id"
+    clear_dedup
+
     # Generate lessons context in single call
     local phase_start
     phase_start=$(get_elapsed_ms)
@@ -198,6 +202,10 @@ LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
                 "$total_tokens" "$lessons_tokens" "0" "$duties_tokens" \
                 >/dev/null 2>&1 &
         fi
+
+        # Record injected lesson IDs for session dedup
+        local injected_ids=$(echo "$summary" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u)
+        [[ -n "$injected_ids" ]] && record_injected $injected_ids
 
         local escaped
         escaped=$(printf '%s' "$summary" | jq -Rs .)

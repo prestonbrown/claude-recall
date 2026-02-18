@@ -312,6 +312,47 @@ sanitize_input() {
 }
 
 # ============================================================
+# SESSION DEDUP HELPERS
+# ============================================================
+
+# Session ID set by hooks during input parsing
+_HOOK_SESSION_ID=""
+
+# Path to session dedup state file
+get_dedup_file() {
+    local session_id="${_HOOK_SESSION_ID:-unknown}"
+    echo "${CLAUDE_RECALL_STATE:-$HOME/.local/state/claude-recall}/session-dedup-${session_id}.json"
+}
+
+# Get already-injected lesson IDs (one per line)
+get_injected_ids() {
+    local dedup_file=$(get_dedup_file)
+    [[ -f "$dedup_file" ]] && jq -r '.[]' "$dedup_file" 2>/dev/null || true
+}
+
+# Record lesson IDs as injected
+# Usage: record_injected L001 S003 L005
+record_injected() {
+    local dedup_file=$(get_dedup_file)
+    local dir=$(dirname "$dedup_file")
+    [[ -d "$dir" ]] || mkdir -p "$dir"
+
+    local existing="[]"
+    [[ -f "$dedup_file" ]] && existing=$(cat "$dedup_file" 2>/dev/null || echo "[]")
+
+    # Merge new IDs with existing, deduplicate
+    local new_ids_json
+    new_ids_json=$(printf '%s\n' "$@" | jq -R -s 'split("\n") | map(select(. != ""))')
+    echo "$existing" | jq --argjson new "$new_ids_json" '. + $new | unique' > "$dedup_file"
+}
+
+# Clear dedup state (called on SessionStart)
+clear_dedup() {
+    local dedup_file=$(get_dedup_file)
+    rm -f "$dedup_file"
+}
+
+# ============================================================
 # DEBUG HELPERS
 # ============================================================
 

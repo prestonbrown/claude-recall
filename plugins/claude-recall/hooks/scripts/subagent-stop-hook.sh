@@ -30,6 +30,10 @@ main() {
     # Parse input - SubagentStop provides cwd and the subagent's output
     local input=$(cat)
     local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
+
+    # Set session ID for dedup tracking
+    local session_id=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+    _HOOK_SESSION_ID="$session_id"
     local subagent_output=$(echo "$input" | jq -r '.stdout // .output // ""' 2>/dev/null || echo "")
 
     # Skip if output is empty or very short
@@ -59,6 +63,24 @@ main() {
     [[ -z "$result" ]] && exit 0
     [[ "$result" == *"No lessons found"* ]] && exit 0
 
+    # Extract IDs from results
+    local new_ids=$(echo "$result" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u)
+
+    # Filter out already injected
+    local injected=$(get_injected_ids)
+    if [[ -n "$injected" ]]; then
+        local filtered="$result"
+        while IFS= read -r id; do
+            [[ -n "$id" ]] && filtered=$(echo "$filtered" | grep -v "\[$id\]" || true)
+        done <<< "$injected"
+        result="$filtered"
+    fi
+
+    # Re-extract IDs after filtering
+    new_ids=$(echo "$result" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u)
+
+    [[ -z "$result" ]] && exit 0
+
     local context="RELEVANT LESSONS after subagent work:
 $result
 
@@ -68,6 +90,9 @@ Cite [ID] when applying."
     cat << EOF
 {"hookSpecificOutput":{"hookEventName":"SubagentStop","additionalContext":$escaped}}
 EOF
+
+    # Record injected IDs for dedup
+    [[ -n "$new_ids" ]] && record_injected $new_ids
 }
 
 main
