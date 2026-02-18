@@ -303,6 +303,17 @@ class ScoreRelevanceCommand(Command):
         return 0
 
 
+class ScoreLocalCommand(Command):
+    """Score lessons by relevance using local BM25 (no API key needed)."""
+
+    def execute(self, args: Namespace, manager: Any) -> int:
+        top_n = getattr(args, "top", 5)
+        min_score = getattr(args, "min_score", 1)
+        result = manager.score_relevance_local(args.text, top_n=top_n, min_score=min_score)
+        print(result.format(top_n=top_n, min_score=min_score))
+        return 0
+
+
 class PrescoreCacheCommand(Command):
     """Pre-score lessons against transcript queries for cache warmup."""
 
@@ -716,6 +727,7 @@ COMMAND_REGISTRY: Dict[str, Type[Command]] = {
     "delete": DeleteCommand,
     "promote": PromoteCommand,
     "score-relevance": ScoreRelevanceCommand,
+    "score-local": ScoreLocalCommand,
     "prescore-cache": PrescoreCacheCommand,
     "stop-hook-batch": StopHookBatchCommand,
     "migrate-triggers": MigrateTriggersCommand,

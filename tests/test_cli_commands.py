@@ -623,7 +623,7 @@ class TestCommandPatternIntegration:
             "add", "add-ai", "add-system",
             "cite", "inject", "list",
             "decay", "edit", "delete", "promote",
-            "score-relevance",
+            "score-relevance", "score-local",
         ]
 
         for cmd in basic_commands:

@@ -173,6 +173,7 @@ Commands:
   debug injection-budget <t> <l> <h> <d>   Log token budget breakdown
 
   score-relevance <query> [opts]   Score lessons by relevance (Haiku API)
+  score-local <query> [opts]       Score lessons locally using BM25 (no API key)
   extract-context <path> [opts]    Extract handoff context from transcript
   prescore-cache --transcript <p>  Pre-warm relevance cache
 

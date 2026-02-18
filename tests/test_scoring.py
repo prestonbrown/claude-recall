@@ -276,3 +276,133 @@ class TestScoreLessonsLocal:
         results = score_lessons_local(lessons, "git workflow", top_n=5)
         for r in results:
             assert isinstance(r, ScoredLesson)
+
+
+# =============================================================================
+# LessonsManager.score_relevance_local() tests
+# =============================================================================
+
+
+class TestScoreRelevanceLocal:
+    """Test score_relevance_local method on LessonsManager."""
+
+    @pytest.fixture
+    def manager(self, tmp_path):
+        """Create a LessonsManager with temp paths and some lessons."""
+        from core.manager import LessonsManager
+
+        lessons_base = tmp_path / ".config" / "claude-recall"
+        lessons_base.mkdir(parents=True)
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".git").mkdir()
+        (project / ".claude-recall").mkdir()
+
+        mgr = LessonsManager(lessons_base, project)
+        # Add a few lessons for scoring
+        mgr.add_lesson(
+            level="project", category="pattern", title="Git rebase workflow",
+            content="Always rebase feature branches before merging to main",
+        )
+        mgr.add_lesson(
+            level="project", category="pattern", title="Python virtual environments",
+            content="Use python3 -m venv to create isolated environments",
+        )
+        mgr.add_lesson(
+            level="project", category="gotcha", title="Docker networking gotcha",
+            content="Bridge networks require explicit port mapping for host access",
+        )
+        return mgr
+
+    def test_returns_relevance_result(self, manager):
+        """Returns a RelevanceResult dataclass."""
+        from core.models import RelevanceResult
+        result = manager.score_relevance_local("git rebase")
+        assert isinstance(result, RelevanceResult)
+
+    def test_relevant_lessons_ranked_first(self, manager):
+        """Lessons matching the query appear at the top."""
+        result = manager.score_relevance_local("git rebase merge", top_n=5, min_score=1)
+        assert len(result.scored_lessons) >= 1
+        assert "rebase" in result.scored_lessons[0].lesson.title.lower()
+
+    def test_empty_lessons_returns_empty_result(self, tmp_path):
+        """With no lessons, returns empty RelevanceResult."""
+        from core.manager import LessonsManager
+
+        lessons_base = tmp_path / "empty_config"
+        lessons_base.mkdir(parents=True)
+        project = tmp_path / "empty_project"
+        project.mkdir()
+        (project / ".git").mkdir()
+        (project / ".claude-recall").mkdir()
+
+        mgr = LessonsManager(lessons_base, project)
+        result = mgr.score_relevance_local("anything")
+        assert result.scored_lessons == []
+
+    def test_min_score_filtering(self, manager):
+        """Results below min_score are excluded."""
+        result = manager.score_relevance_local("git rebase", top_n=10, min_score=1)
+        for sl in result.scored_lessons:
+            assert sl.score >= 1
+
+    def test_top_n_limits_results(self, manager):
+        """At most top_n results are returned."""
+        result = manager.score_relevance_local("lesson", top_n=1)
+        assert len(result.scored_lessons) <= 1
+
+    def test_query_truncated_to_max_len(self, manager):
+        """Long queries are truncated without error."""
+        long_query = "git " * 2000  # Well over SCORE_RELEVANCE_MAX_QUERY_LEN
+        result = manager.score_relevance_local(long_query)
+        assert result.query_text is not None  # No crash
+
+    def test_format_output(self, manager):
+        """RelevanceResult.format() produces readable output."""
+        result = manager.score_relevance_local("git rebase", top_n=5, min_score=1)
+        output = result.format(top_n=5, min_score=1)
+        assert isinstance(output, str)
+        assert len(output) > 0
+
+
+# =============================================================================
+# ScoreLocalCommand tests
+# =============================================================================
+
+
+class TestScoreLocalCommand:
+    """Test the score-local CLI command registration and execution."""
+
+    def test_score_local_registered(self):
+        """ScoreLocalCommand should be registered for 'score-local'."""
+        from core.commands import COMMAND_REGISTRY, ScoreLocalCommand
+        assert "score-local" in COMMAND_REGISTRY
+        assert COMMAND_REGISTRY["score-local"] is ScoreLocalCommand
+
+    def test_score_local_executes(self, tmp_path, capsys):
+        """score-local command runs and produces output."""
+        from argparse import Namespace
+        from core.commands import ScoreLocalCommand
+        from core.manager import LessonsManager
+
+        lessons_base = tmp_path / ".config" / "claude-recall"
+        lessons_base.mkdir(parents=True)
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".git").mkdir()
+        (project / ".claude-recall").mkdir()
+
+        mgr = LessonsManager(lessons_base, project)
+        mgr.add_lesson(
+            level="project", category="pattern", title="Git rebase",
+            content="Rebase before merge",
+        )
+
+        args = Namespace(text="git rebase", top=5, min_score=1)
+        cmd = ScoreLocalCommand()
+        exit_code = cmd.execute(args, mgr)
+        assert exit_code == 0
+
+        captured = capsys.readouterr()
+        assert len(captured.out) > 0

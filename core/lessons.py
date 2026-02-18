@@ -1049,6 +1049,25 @@ No explanations, just ID: SCORE lines."""
                 error=error_msg,
             )
 
+    def score_relevance_local(self, query_text: str, top_n: int = 5, min_score: int = 1) -> RelevanceResult:
+        """Score lessons locally using BM25 (no API key needed).
+
+        Args:
+            query_text: Text to score lessons against
+            top_n: Maximum number of results to return
+            min_score: Minimum score threshold (0-10)
+
+        Returns:
+            RelevanceResult with lessons sorted by relevance score (descending)
+        """
+        from core.scoring import score_lessons_local
+        query_text = query_text[:SCORE_RELEVANCE_MAX_QUERY_LEN]
+        all_lessons = self.list_lessons(scope="all")
+        if not all_lessons:
+            return RelevanceResult(scored_lessons=[], query_text=query_text)
+        scored = score_lessons_local(all_lessons, query_text, top_n=top_n, min_score=min_score)
+        return RelevanceResult(scored_lessons=scored, query_text=query_text)
+
     def get_total_tokens(self, scope: str = "all") -> int:
         """
         Get total token count for all lessons.
