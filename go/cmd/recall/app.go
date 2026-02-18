@@ -18,6 +18,7 @@ import (
 	"github.com/pbrown/claude-recall/internal/handoffs"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/models"
+	"github.com/pbrown/claude-recall/internal/scoring"
 )
 
 // App encapsulates CLI state and dependencies for testability
@@ -123,6 +124,8 @@ func (a *App) Run(args []string) int {
 		return a.runDebug(cmdArgs)
 	case "score-relevance":
 		return a.runScoreRelevance(cmdArgs)
+	case "score-local":
+		return a.runScoreLocal(cmdArgs)
 	case "extract-context":
 		return a.runExtractContext(cmdArgs)
 	case "prescore-cache":
@@ -1506,6 +1509,81 @@ func (a *App) runScoreRelevance(args []string) int {
 		cacheIndicator = " (cached)"
 	}
 	fmt.Fprintf(a.stdout, "\nShowing %d results%s\n", count, cacheIndicator)
+
+	return 0
+}
+
+// runScoreLocal scores lessons locally using BM25 (no API key required)
+func (a *App) runScoreLocal(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(a.stderr, "usage: recall score-local <query> [--top N] [--min-score N]")
+		return 1
+	}
+
+	query := args[0]
+	topN := 5
+	minScore := 1
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--top":
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil {
+					topN = n
+				}
+				i++
+			}
+		case "--min-score":
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil {
+					minScore = n
+				}
+				i++
+			}
+		}
+	}
+
+	store := lessons.NewStore(a.projectPath, a.systemPath)
+	allLessons, err := store.List()
+	if err != nil {
+		fmt.Fprintf(a.stderr, "error listing lessons: %v\n", err)
+		return 1
+	}
+
+	if len(allLessons) == 0 {
+		fmt.Fprintln(a.stdout, "No lessons found.")
+		return 0
+	}
+
+	scorer := scoring.NewBM25Scorer(allLessons)
+	results := scorer.Score(query)
+
+	// Filter and limit results
+	count := 0
+	for _, sl := range results {
+		if sl.Score < minScore {
+			continue
+		}
+		if count >= topN {
+			break
+		}
+
+		// Format stars based on score (same as score-relevance)
+		stars := strings.Repeat("\u2b50", (sl.Score+1)/2)
+		if stars == "" {
+			stars = "-"
+		}
+
+		fmt.Fprintf(a.stdout, "[%s] %s (relevance: %d/10) %s\n", sl.Lesson.ID, stars, sl.Score, sl.Lesson.Title)
+		fmt.Fprintf(a.stdout, "    -> %s\n", truncateContent(sl.Lesson.Content, 100))
+		count++
+	}
+
+	if count == 0 {
+		fmt.Fprintln(a.stdout, "No relevant lessons found.")
+	}
+
+	fmt.Fprintf(a.stdout, "\nShowing %d results (local BM25)\n", count)
 
 	return 0
 }
