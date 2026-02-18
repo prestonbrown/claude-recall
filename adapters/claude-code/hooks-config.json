@@ -25,6 +25,12 @@
       ]
     }],
 
+    "SubagentStop": [{
+      "hooks": [
+        { "type": "command", "command": "bash {{HOOKS_DIR}}/subagent-stop-hook.sh", "timeout": 3000 }
+      ]
+    }],
+
     "Stop": [{
       "hooks": [
         { "type": "command", "command": "bash {{HOOKS_DIR}}/stop-hook.sh", "timeout": 5000 }
