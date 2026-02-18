@@ -1583,7 +1583,7 @@ func (a *App) runScoreLocal(args []string) int {
 		fmt.Fprintln(a.stdout, "No relevant lessons found.")
 	}
 
-	fmt.Fprintf(a.stdout, "\nShowing %d results (local BM25)\n", count)
+	fmt.Fprintf(a.stderr, "\nShowing %d results (local BM25)\n", count)
 
 	return 0
 }

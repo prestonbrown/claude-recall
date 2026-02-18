@@ -343,7 +343,10 @@ record_injected() {
     # Merge new IDs with existing, deduplicate
     local new_ids_json
     new_ids_json=$(printf '%s\n' "$@" | jq -R -s 'split("\n") | map(select(. != ""))')
-    echo "$existing" | jq --argjson new "$new_ids_json" '. + $new | unique' > "$dedup_file"
+    local tmp
+    tmp=$(mktemp "${dedup_file}.XXXXXX")
+    echo "$existing" | jq --argjson new "$new_ids_json" '. + $new | unique' > "$tmp"
+    mv "$tmp" "$dedup_file"
 }
 
 # Clear dedup state (called on SessionStart)
