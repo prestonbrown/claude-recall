@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT
 # Claude Recall UserPromptSubmit hook - injects lessons relevant to the user's query
 #
-# Uses Haiku to score lesson relevance against the user's prompt.
-# Only runs on first prompt of session to avoid latency on every message.
+# Uses local BM25 scoring to find relevant lessons for each prompt.
+# Runs on every substantive prompt (>= MIN_PROMPT_LENGTH chars).
+# Optional Haiku upgrade path available via useHaikuScoring setting.
 
 set -euo pipefail
 
@@ -24,52 +25,55 @@ get_relevance_top_n() {
 
 # Tunable parameters for relevance scoring
 RELEVANCE_TOP_N=$(get_relevance_top_n)  # Number of lessons to inject after scoring
-SCORE_RELEVANCE_TIMEOUT=10 # Haiku timeout in seconds (10s handles ~100 lessons)
+SCORE_RELEVANCE_TIMEOUT=2  # Local BM25 timeout in seconds
 MIN_PROMPT_LENGTH=20       # Skip scoring for very short prompts
 MIN_RELEVANCE_SCORE=3      # Only include lessons scored >= this threshold
 
-# Backward compatibility aliases
 TOP_LESSONS=$RELEVANCE_TOP_N
-RELEVANCE_TIMEOUT=$SCORE_RELEVANCE_TIMEOUT
 
-# Check if this is the first prompt in the session
-# Returns 0 (true) if first prompt, 1 (false) otherwise
-is_first_prompt() {
-    local transcript_path="$1"
-
-    # No transcript = first prompt
-    [[ -z "$transcript_path" || ! -f "$transcript_path" ]] && return 0
-
-    # Empty transcript = first prompt
-    local size=$(wc -c < "$transcript_path" 2>/dev/null || echo "0")
-    [[ "$size" -eq 0 ]] && return 0
-
-    # Check if transcript has any assistant messages yet
-    # If no assistant messages, this is still the "first" meaningful prompt
-    if ! grep -q '"role":"assistant"' "$transcript_path" 2>/dev/null; then
-        return 0
-    fi
-
-    return 1
-}
-
-# Score lessons against the prompt and return formatted output
+# Score lessons against the prompt using local BM25 scoring
 score_and_format_lessons() {
     local prompt="$1"
     local cwd="$2"
 
-    # Call the Go score-relevance command
-    # Export LESSONS_SCORING_ACTIVE so child processes can inherit it
+    local result stderr_file
+    stderr_file=$(mktemp)
+    result=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+        timeout "$SCORE_RELEVANCE_TIMEOUT" \
+        "$GO_RECALL" score-local "$prompt" \
+            --top "$TOP_LESSONS" \
+            --min-score "$MIN_RELEVANCE_SCORE" 2>"$stderr_file") || {
+        local stderr_content
+        stderr_content=$(cat "$stderr_file" 2>/dev/null)
+        rm -f "$stderr_file"
+        if [[ -n "$stderr_content" ]]; then
+            log_injection_skip "$cwd" "score_local_error" "$stderr_content"
+        fi
+        return 1
+    }
+    rm -f "$stderr_file"
+
+    [[ -z "$result" ]] && return 1
+    [[ "$result" == *"No lessons found"* ]] && return 1
+
+    echo "$result"
+}
+
+# Score lessons using Haiku API (optional upgrade path)
+score_and_format_lessons_haiku() {
+    local prompt="$1"
+    local cwd="$2"
+
     local result stderr_file
     stderr_file=$(mktemp)
     result=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
         ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
         LESSONS_SCORING_ACTIVE=1 \
-        timeout "$RELEVANCE_TIMEOUT" \
+        timeout 10 \
         "$GO_RECALL" score-relevance "$prompt" \
             --top "$TOP_LESSONS" \
             --min-score "$MIN_RELEVANCE_SCORE" \
-            --timeout "$RELEVANCE_TIMEOUT" 2>"$stderr_file") || {
+            --timeout 10 2>"$stderr_file") || {
         local stderr_content
         stderr_content=$(cat "$stderr_file" 2>/dev/null)
         rm -f "$stderr_file"
@@ -80,7 +84,6 @@ score_and_format_lessons() {
     }
     rm -f "$stderr_file"
 
-    # Check we got meaningful output
     [[ -z "$result" ]] && return 1
     [[ "$result" == *"No lessons found"* ]] && return 1
     [[ "$result" == *"error"* ]] && return 1
@@ -103,7 +106,6 @@ main() {
     local input=$(cat)
     local prompt=$(echo "$input" | jq -r '.prompt // ""' 2>/dev/null || echo "")
     local cwd=$(echo "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
-    local transcript_path=$(echo "$input" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
 
     local project_root=$(find_project_root "$cwd")
 
@@ -116,25 +118,27 @@ main() {
         exit 0
     fi
 
-    # Only run smart injection on first prompt to avoid latency
-    if ! is_first_prompt "$transcript_path"; then
-        exit 0
-    fi
-
     # Skip if Go binary doesn't exist
     [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]] && exit 0
 
-    # Check for API key (required for relevance scoring via Haiku)
-    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-        log_injection_skip "$project_root" "no_api_key" "ANTHROPIC_API_KEY not set in hook environment"
-        exit 0
+    # Optional Haiku scoring upgrade (requires API key + explicit opt-in)
+    local use_haiku="false"
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        use_haiku=$(get_setting "useHaikuScoring" "false")
     fi
 
     # Score lessons against the prompt
     local scored_lessons
-    if ! scored_lessons=$(score_and_format_lessons "$prompt" "$cwd"); then
-        log_injection_skip "$project_root" "score_failed" "timeout or error from score-relevance"
-        exit 0
+    if [[ "$use_haiku" == "true" ]]; then
+        if ! scored_lessons=$(score_and_format_lessons_haiku "$prompt" "$cwd"); then
+            log_injection_skip "$project_root" "score_failed" "timeout or error from score-relevance (haiku)"
+            exit 0
+        fi
+    else
+        if ! scored_lessons=$(score_and_format_lessons "$prompt" "$cwd"); then
+            log_injection_skip "$project_root" "score_failed" "timeout or error from score-local"
+            exit 0
+        fi
     fi
 
     # If we got relevant lessons, inject them
