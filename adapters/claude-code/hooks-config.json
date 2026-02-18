@@ -27,30 +27,8 @@
 
     "Stop": [{
       "hooks": [
-        { "type": "command", "command": "bash {{HOOKS_DIR}}/stop-hook.sh", "timeout": 5000 },
-        { "type": "command", "command": "bash {{HOOKS_DIR}}/session-end-hook.sh", "timeout": 30000 }
+        { "type": "command", "command": "bash {{HOOKS_DIR}}/stop-hook.sh", "timeout": 5000 }
       ]
-    }],
-
-    "PreCompact": [{
-      "hooks": [
-        { "type": "command", "command": "bash {{HOOKS_DIR}}/precompact-hook.sh", "timeout": 45000 }
-      ]
-    }],
-
-    "PostToolUse": [
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          { "type": "command", "command": "bash {{HOOKS_DIR}}/post-exitplanmode-hook.sh", "timeout": 5000 }
-        ]
-      },
-      {
-        "matcher": "TodoWrite",
-        "hooks": [
-          { "type": "command", "command": "bash {{HOOKS_DIR}}/post-todowrite-hook.sh", "timeout": 5000 }
-        ]
-      }
-    ]
+    }]
   }
 }

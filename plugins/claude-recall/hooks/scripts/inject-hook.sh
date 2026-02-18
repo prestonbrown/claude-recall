@@ -50,9 +50,9 @@ run_decay_if_due() {
     fi
 }
 
-# Generate combined context (lessons + handoffs + todos)
+# Generate combined context (lessons only)
 # Uses Go binary, falls back to individual calls if unavailable
-# Returns: sets LESSONS_SUMMARY_RAW, HANDOFFS_SUMMARY, TODOS_PROMPT variables
+# Returns: sets LESSONS_SUMMARY_RAW variable
 # Note: topLessonsToShow is configurable (default: 5), smart-inject-hook.sh adds query-relevant ones
 generate_combined_context() {
     local cwd="$1"
@@ -61,8 +61,6 @@ generate_combined_context() {
 
     # Reset output variables
     LESSONS_SUMMARY_RAW=""
-    HANDOFFS_SUMMARY=""
-    TODOS_PROMPT=""
 
     # Try Go fast path first (recall-hook inject-combined)
     if [[ -n "$GO_RECALL_HOOK" && -x "$GO_RECALL_HOOK" ]]; then
@@ -70,13 +68,7 @@ generate_combined_context() {
         combined_output=$(PROJECT_DIR="$cwd" "$GO_RECALL_HOOK" inject-combined "$top_n" 2>/dev/null)
 
         if [[ $? -eq 0 && -n "$combined_output" ]]; then
-            # Parse JSON output using jq
             LESSONS_SUMMARY_RAW=$(echo "$combined_output" | jq -r '.lessons // empty')
-            # Skip handoffs if disabled
-            if handoffs_enabled; then
-                HANDOFFS_SUMMARY=$(echo "$combined_output" | jq -r '.handoffs // empty')
-                TODOS_PROMPT=$(echo "$combined_output" | jq -r '.todos // empty')
-            fi
             return 0
         fi
     fi
@@ -91,13 +83,7 @@ generate_combined_context() {
 
         local exit_code=$?
         if [[ $exit_code -eq 0 && -n "$combined_output" ]]; then
-            # Parse JSON output using jq
             LESSONS_SUMMARY_RAW=$(echo "$combined_output" | jq -r '.lessons // empty')
-            # Skip handoffs if disabled
-            if handoffs_enabled; then
-                HANDOFFS_SUMMARY=$(echo "$combined_output" | jq -r '.handoffs // empty')
-                TODOS_PROMPT=$(echo "$combined_output" | jq -r '.todos // empty')
-            fi
             rm -f "$stderr_file" 2>/dev/null
             return 0
         fi
@@ -131,21 +117,6 @@ generate_context_fallback() {
     if [[ -z "$LESSONS_SUMMARY_RAW" && -x "$BASH_MANAGER" ]]; then
         LESSONS_SUMMARY_RAW=$(PROJECT_DIR="$cwd" CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-}" "$BASH_MANAGER" inject "$top_n" 2>/dev/null || true)
     fi
-
-    # Get handoffs - Go only (skip if handoffs disabled)
-    if handoffs_enabled && [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
-        HANDOFFS_SUMMARY=$(PROJECT_DIR="$cwd" "$GO_RECALL" handoff inject 2>/dev/null || true)
-        if [[ "$HANDOFFS_SUMMARY" == "(no active handoffs)" ]]; then
-            HANDOFFS_SUMMARY=""
-        fi
-    fi
-
-    # Get todos if handoffs exist - Go only
-    if [[ -n "$HANDOFFS_SUMMARY" ]]; then
-        if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
-            TODOS_PROMPT=$(PROJECT_DIR="$cwd" "$GO_RECALL" handoff inject-todos 2>/dev/null || true)
-        fi
-    fi
 }
 
 main() {
@@ -163,59 +134,20 @@ main() {
         export CLAUDE_RECALL_SESSION="$claude_session_id"
     fi
 
-    # Generate combined context (lessons + handoffs + todos) in single call
+    # Generate lessons context in single call
     local phase_start
     phase_start=$(get_elapsed_ms)
     generate_combined_context "$cwd"
     log_phase "load_combined" "$phase_start" "inject"
 
-    # Variables set by generate_combined_context:
-    # - LESSONS_SUMMARY_RAW: formatted lessons
-    # - HANDOFFS_SUMMARY: active handoffs
-    # - TODOS_PROMPT: todo continuation prompt
-    local handoffs="$HANDOFFS_SUMMARY"
-    local todo_continuation="$TODOS_PROMPT"
-
-    # NOTE: Session linking removed - now happens only when Claude explicitly
-    # works on a handoff (via TodoWrite sync after user confirms continuation)
-
     # Build combined summary
     local summary="$LESSONS_SUMMARY_RAW"
-    if [[ -n "$handoffs" ]]; then
-        if [[ -n "$summary" ]]; then
-            summary="$summary
-
-$handoffs"
-        else
-            summary="$handoffs"
-        fi
-    fi
-
-    # Check for session snapshot from previous session (saved by precompact hook when no handoff existed)
-    local snapshot_file="$cwd/.claude-recall/.session-snapshot"
-    if [[ -f "$snapshot_file" ]]; then
-        local snapshot_content
-        snapshot_content=$(cat "$snapshot_file")
-        summary="$summary
-
-## Previous Session (no handoff was active)
-$snapshot_content
-Consider creating a handoff if continuing this work."
-        # Clean up snapshot after injecting
-        rm -f "$snapshot_file"
-        echo "[inject] Loaded session snapshot from previous session" >&2
-    fi
 
     # Generate user-visible feedback (stderr)
     local sys_count=0 proj_count=0
     if [[ "$summary" =~ LESSONS\ \(([0-9]+)S,\ ([0-9]+)L ]]; then
         sys_count="${BASH_REMATCH[1]}"
         proj_count="${BASH_REMATCH[2]}"
-    fi
-
-    local handoff_count=0
-    if [[ -n "$handoffs" ]]; then
-        handoff_count=$(echo "$handoffs" | grep -cE "^### \[(hf-[0-9a-f]+|A[0-9]{3})\]" || true)
     fi
 
     # Build feedback message (only non-zero parts)
@@ -234,37 +166,8 @@ Consider creating a handoff if continuing this work."
         fi
         feedback="$lessons_str lessons"
     fi
-    if [[ $handoff_count -gt 0 ]]; then
-        if [[ -n "$feedback" ]]; then
-            feedback="$feedback, $handoff_count active handoffs"
-        else
-            feedback="$handoff_count active handoffs"
-        fi
-    fi
 
     if [[ -n "$summary" ]]; then
-        # Check for ready_for_review handoffs that need lesson extraction
-        local review_ids=""
-        if [[ -n "$handoffs" ]] && echo "$handoffs" | grep -q "ready_for_review"; then
-            # Extract handoff IDs that have ready_for_review status
-            review_ids=$(echo "$handoffs" | grep -B2 "ready_for_review" | grep -oE '\[hf-[0-9a-f]+\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//' || true)
-        fi
-
-        # Add lesson review duty if there are handoffs ready for review
-        if [[ -n "$review_ids" ]]; then
-            # Format each ID on its own line (stop-hook regex only matches ONE ID per line)
-            local complete_cmds
-            complete_cmds=$(echo "$review_ids" | tr ' ' '\n' | sed 's/^/      HANDOFF COMPLETE /')
-            summary="$summary
-
-LESSON REVIEW DUTY: Handoff(s) [$review_ids] completed all work.
-  1. Review the tried steps above with the user
-  2. ASK: \"Any lessons to extract from this work? Patterns, gotchas, or decisions worth recording?\"
-  3. Record any lessons the user wants to keep
-  4. Then output (one per line):
-$complete_cmds"
-        fi
-
         # Add lesson duty reminder
         summary="$summary
 
@@ -274,46 +177,15 @@ LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
   BEFORE git/implementing: Check if high-star lessons apply
   AFTER mistakes: Cite the violated lesson, propose new if novel"
 
-        # Add handoff duty only if handoffs are enabled
-        if handoffs_enabled; then
-            summary="$summary
-
-HANDOFF DUTY: For MAJOR work (3+ files, multi-step, integration), you MUST:
-  1. Use TodoWrite to track progress - todos auto-sync to handoffs
-  2. If working without TodoWrite, output: HANDOFF: title
-  MAJOR = new feature, 4+ files, architectural, integration, refactoring
-  MINOR = single-file fix, config, docs (no handoff needed)
-  COMPLETION: When all todos done in this session:
-    - If code changed, run /review
-    - ASK: \"Any lessons from this work?\" (context is fresh now!)
-    - Commit your changes (git commit auto-completes the handoff)
-    - Or manually: HANDOFF COMPLETE <id>"
-        fi
-
-        # Add todo continuation if available
-        if [[ -n "$todo_continuation" ]]; then
-            summary="$summary
-
-$todo_continuation"
-        fi
-
         # Calculate and log token budget breakdown
         # Token estimate: ~4 bytes per token for English text
-        local lessons_tokens=0 handoffs_tokens=0 duties_tokens=0 total_tokens=0
+        local lessons_tokens=0 duties_tokens=0 total_tokens=0
         if [[ -n "${summary%%$'\n'*}" ]]; then
-            # Lessons come from generate_context which is before handoffs appended
-            # We need to track the original summary length before handoffs
-            # For simplicity, estimate from component sizes
             if [[ -n "$LESSONS_SUMMARY_RAW" ]]; then
                 lessons_tokens=$(( ${#LESSONS_SUMMARY_RAW} / 4 ))
             fi
-            if [[ -n "$handoffs" && "$handoffs" != "(no active handoffs)" ]]; then
-                handoffs_tokens=$(( ${#handoffs} / 4 ))
-            fi
-            # Duties text is roughly 500-700 chars
             local lessons_len=${#LESSONS_SUMMARY_RAW}
-            local handoffs_len=${#handoffs}
-            duties_tokens=$(( (${#summary} - lessons_len - handoffs_len) / 4 ))
+            duties_tokens=$(( (${#summary} - lessons_len) / 4 ))
             if [[ $duties_tokens -lt 0 ]]; then
                 duties_tokens=0
             fi
@@ -323,18 +195,12 @@ $todo_continuation"
         # Log token budget to debug log (background, non-blocking)
         if [[ $total_tokens -gt 0 && -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
             PROJECT_DIR="$cwd" "$GO_RECALL" debug injection-budget \
-                "$total_tokens" "$lessons_tokens" "$handoffs_tokens" "$duties_tokens" \
+                "$total_tokens" "$lessons_tokens" "0" "$duties_tokens" \
                 >/dev/null 2>&1 &
         fi
 
         local escaped
         escaped=$(printf '%s' "$summary" | jq -Rs .)
-        # NOTE: $feedback contains user-visible summary like "4 system + 4 project lessons, 3 active handoffs"
-        # Currently disabled - Claude Code doesn't surface systemMessage or stderr to users.
-        # When/if Claude Code adds hook feedback display, uncomment:
-        # cat << EOF
-        # {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":$escaped,"systemMessage":"Injected: $feedback"}}
-        # EOF
         cat << EOF
 {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":$escaped}}
 EOF
