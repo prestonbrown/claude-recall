@@ -1,5 +1,7 @@
 # Better Lesson Injection
 
+> **Status:** Implemented
+
 ## Problem
 
 1. **Haiku scoring is dead** - Claude Code uses OAuth internally, never exports `ANTHROPIC_API_KEY` to hook environment. Relevance scoring silently exits on every session.

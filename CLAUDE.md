@@ -1,31 +1,32 @@
 # Claude Recall
 
-A learning system for AI coding agents that captures lessons across sessions and tracks multi-step work via handoffs.
+A learning system for AI coding agents that captures lessons across sessions.
 
 ## Quick Reference
 
 | Component | Location |
 |-----------|----------|
 | Core Python | `core/cli.py` (entry), `core/lessons.py`, `core/handoffs.py`, `core/debug_logger.py` |
-| Claude hooks | `adapters/claude-code/inject-hook.sh`, `smart-inject-hook.sh`, `stop-hook.sh` |
+| Claude hooks | `adapters/claude-code/inject-hook.sh`, `smart-inject-hook.sh` (BM25, every prompt), `subagent-stop-hook.sh`, `stop-hook.sh` |
 | Tests | `tests/test_lessons_manager.py`, `tests/test_handoffs.py` |
 | Project lessons | `.claude-recall/LESSONS.md` (gitignored by default) |
 | System lessons | `~/.local/state/claude-recall/LESSONS.md` (XDG state) |
-| Handoffs | `.claude-recall/HANDOFFS.md` |
-| State files | `~/.local/state/claude-recall/` (decay, citation state, logs) |
+| Handoffs | `.claude-recall/HANDOFFS.md` (library exists, hooks removed) |
+| State files | `~/.local/state/claude-recall/` (decay, citation state, session dedup, logs) |
 
 ## How It Works
 
 ```
-SessionStart hook → injects top 3 lessons + active handoffs + duty reminder
-UserPromptSubmit hook → on first prompt, scores lessons by relevance via Haiku
-Agent works → cites [L###]/[S###], outputs LESSON:/APPROACH: commands
-Stop hook → parses output, updates lessons/handoffs, tracks citations
+SessionStart hook → injects top N lessons by star rating + duty reminder
+UserPromptSubmit hook → scores lessons by relevance via BM25 (every prompt)
+SubagentStop hook → injects lessons relevant to subagent output
+Agent works → cites [L###]/[S###], outputs LESSON: commands
+Stop hook → parses output, updates lessons, tracks citations
 ```
 
 **Lessons**: Dual-rated `[uses|velocity]` - left = total uses (log scale), right = recency (decays 50%/week). At 50 uses, project lessons promote to system.
 
-**Handoffs**: Track multi-step work with status, phase (research→planning→implementing→review), tried steps, and next steps.
+**Session deduplication**: Tracks which lessons have been injected this session to avoid repeating them across prompts.
 
 ## Key Commands
 
@@ -37,7 +38,8 @@ Stop hook → parses output, updates lessons/handoffs, tracks citations
 
 # CLI usage
 python3 core/cli.py inject 5                          # Top 5 by stars
-python3 core/cli.py score-relevance "query" --top 5   # Top 5 by relevance
+python3 core/cli.py score-local "query" --top 5       # Top 5 by BM25 relevance (local)
+python3 core/cli.py score-relevance "query" --top 5   # Top 5 by relevance (requires API key)
 python3 core/cli.py add pattern "Title" "Content"
 python3 core/cli.py cite L001
 python3 core/cli.py handoff list
@@ -72,9 +74,6 @@ Key gotchas:
 Stop hook parses these from agent output:
 - `LESSON: [category:] title - content` → add project lesson
 - `[L001]:` or `[S001]:` → cite (increments uses/velocity)
-- `HANDOFF: title` → start tracking work
-- `HANDOFF UPDATE H001: tried success|fail|partial - desc` → record attempt
-- `HANDOFF COMPLETE H001` → finish and extract lessons
 
 ## OpenCode Adapter
 
