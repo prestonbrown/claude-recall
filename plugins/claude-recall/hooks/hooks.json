@@ -11,37 +11,21 @@
     "UserPromptSubmit": [{
       "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/capture-hook.sh\"", "timeout": 5000 },
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/smart-inject-hook.sh\"", "timeout": 15000 },
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/smart-inject-hook.sh\"", "timeout": 5000 },
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lesson-reminder-hook.sh\"", "timeout": 2000 }
+      ]
+    }],
+
+    "SubagentStop": [{
+      "hooks": [
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/subagent-stop-hook.sh\"", "timeout": 3000 }
       ]
     }],
 
     "Stop": [{
       "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/stop-hook.sh\"", "timeout": 5000 },
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-end-hook.sh\"", "timeout": 30000 }
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/stop-hook.sh\"", "timeout": 5000 }
       ]
-    }],
-
-    "PreCompact": [{
-      "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/precompact-hook.sh\"", "timeout": 45000 }
-      ]
-    }],
-
-    "PostToolUse": [
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/post-exitplanmode-hook.sh\"", "timeout": 5000 }
-        ]
-      },
-      {
-        "matcher": "TodoWrite",
-        "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/post-todowrite-hook.sh\"", "timeout": 5000 }
-        ]
-      }
-    ]
+    }]
   }
 }
