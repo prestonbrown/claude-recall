@@ -80,27 +80,17 @@ load_debug_level() {
     fi
 }
 
-# Find Go binary with fallback chain:
-# 1. Installed location: $CLAUDE_RECALL_BASE/go/bin/recall
-# 2. Dev location: relative to this script's directory
+# Find Go binary at ~/.local/bin (the single canonical install location)
 # Sets GO_RECALL and GO_RECALL_HOOK binaries
 find_go_binary() {
     GO_RECALL=""
     GO_RECALL_HOOK=""
 
-    # Check installed location first
-    if [[ -x "$CLAUDE_RECALL_BASE/go/bin/recall" ]]; then
-        GO_RECALL="$CLAUDE_RECALL_BASE/go/bin/recall"
-        GO_RECALL_HOOK="$CLAUDE_RECALL_BASE/go/bin/recall-hook"
-    else
-        # Dev location - relative to hook-lib.sh
-        local script_dir
-        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        local dev_bin="$script_dir/../../go/bin/recall"
-        if [[ -x "$dev_bin" ]]; then
-            GO_RECALL="$dev_bin"
-            GO_RECALL_HOOK="$script_dir/../../go/bin/recall-hook"
-        fi
+    if [[ -x "$HOME/.local/bin/recall" ]]; then
+        GO_RECALL="$HOME/.local/bin/recall"
+    fi
+    if [[ -x "$HOME/.local/bin/recall-hook" ]]; then
+        GO_RECALL_HOOK="$HOME/.local/bin/recall-hook"
     fi
 
     export GO_RECALL GO_RECALL_HOOK

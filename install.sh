@@ -407,44 +407,33 @@ build_go_binaries() {
 }
 
 install_go_binaries() {
-    # Install Go binaries to locations where hooks can find them
+    # Install Go binaries to ~/.local/bin (the single canonical location)
     local go_bin_dir="$SCRIPT_DIR/go/bin"
 
     if [[ ! -f "$go_bin_dir/recall-hook" ]]; then
         return 0
     fi
 
-    # Install to LESSONS_BASE (where stop-hook.sh looks first)
-    # This is the primary location hooks check: $LESSONS_BASE/go/bin/recall-hook
-    local config_go_bin="$HOME/.config/claude-recall/go/bin"
-    mkdir -p "$config_go_bin"
-    cp "$go_bin_dir/recall-hook" "$config_go_bin/"
+    mkdir -p "$HOME/.local/bin"
+
+    cp "$go_bin_dir/recall-hook" "$HOME/.local/bin/recall-hook"
+    chmod +x "$HOME/.local/bin/recall-hook"
+
     if [[ -f "$go_bin_dir/recall" ]]; then
-        cp "$go_bin_dir/recall" "$config_go_bin/"
-    fi
-    log_success "Installed Go binaries to ~/.config/claude-recall/go/bin/"
-
-    # Also install to plugin cache path (for future-proofing)
-    local install_path
-    install_path=$(jq -r '.plugins["claude-recall@claude-recall"][0].installPath // empty' \
-        "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null)
-
-    if [[ -n "$install_path" && -d "$install_path" ]]; then
-        mkdir -p "$install_path/go/bin"
-        cp "$go_bin_dir/recall-hook" "$install_path/go/bin/"
-        if [[ -f "$go_bin_dir/recall" ]]; then
-            cp "$go_bin_dir/recall" "$install_path/go/bin/"
-        fi
-        log_success "Installed Go binaries to plugin cache"
-    fi
-
-    # Also install recall CLI to ~/.local/bin for command-line use
-    if [[ -f "$go_bin_dir/recall" ]]; then
-        mkdir -p "$HOME/.local/bin"
         cp "$go_bin_dir/recall" "$HOME/.local/bin/recall"
         chmod +x "$HOME/.local/bin/recall"
-        log_success "Installed recall (Go) CLI to ~/.local/bin/"
     fi
+
+    log_success "Installed Go binaries to ~/.local/bin/"
+}
+
+# Quick rebuild + install for development (no plugin reinstall needed)
+dev_install_binaries() {
+    log_info "Dev install: rebuilding and installing..."
+    build_go_binaries
+    install_go_binaries
+    sync_working_dir
+    log_success "Dev install complete - binaries and hook scripts updated"
 }
 
 install_claude() {
@@ -636,11 +625,17 @@ main() {
             install_state_dir
             install_opencode
             ;;
+        --dev)
+            check_deps
+            dev_install_binaries
+            exit 0
+            ;;
         --help|-h)
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
             echo "  (none)       Install as Claude Code plugin"
+            echo "  --dev        Rebuild and install Go binaries only (fast dev cycle)"
             echo "  --opencode   Install OpenCode adapter only"
             echo "  --migrate    Migrate from old config locations"
             echo "  --uninstall  Remove the system (keeps lessons)"
