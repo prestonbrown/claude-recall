@@ -150,13 +150,33 @@ main() {
         # Extract IDs from scored output
         local new_ids=$(echo "$scored_lessons" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u)
 
-        # Filter out already injected
+        # Filter out already injected (remove header + content line pairs)
         local injected=$(get_injected_ids)
         if [[ -n "$injected" ]]; then
-            local filtered="$scored_lessons"
-            while IFS= read -r id; do
-                [[ -n "$id" ]] && filtered=$(echo "$filtered" | grep -v "\[$id\]" || true)
-            done <<< "$injected"
+            local filtered=""
+            local skip_next=false
+            while IFS= read -r line; do
+                if $skip_next; then
+                    skip_next=false
+                    continue
+                fi
+                local dominated=false
+                while IFS= read -r id; do
+                    if [[ -n "$id" && "$line" == *"[$id]"* ]]; then
+                        dominated=true
+                        break
+                    fi
+                done <<< "$injected"
+                if $dominated; then
+                    skip_next=true
+                    continue
+                fi
+                if [[ -n "$filtered" ]]; then
+                    filtered="$filtered"$'\n'"$line"
+                else
+                    filtered="$line"
+                fi
+            done <<< "$scored_lessons"
             scored_lessons="$filtered"
         fi
 
