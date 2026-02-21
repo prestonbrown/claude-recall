@@ -1479,7 +1479,7 @@ func (a *App) runScoreRelevance(args []string) int {
 		}
 
 		fmt.Fprintf(a.stdout, "[%s] %s (relevance: %d/10) %s\n", sl.Lesson.ID, stars, sl.Score, sl.Lesson.Title)
-		fmt.Fprintf(a.stdout, "    -> %s\n", truncateContent(sl.Lesson.Content, 100))
+		fmt.Fprintf(a.stdout, "    -> %s\n", sl.Lesson.Content)
 		count++
 	}
 
@@ -1575,7 +1575,7 @@ func (a *App) runScoreLocal(args []string) int {
 		}
 
 		fmt.Fprintf(a.stdout, "[%s] %s (relevance: %d/10) %s\n", sl.Lesson.ID, stars, sl.Score, sl.Lesson.Title)
-		fmt.Fprintf(a.stdout, "    -> %s\n", truncateContent(sl.Lesson.Content, 100))
+		fmt.Fprintf(a.stdout, "    -> %s\n", sl.Lesson.Content)
 		count++
 	}
 
