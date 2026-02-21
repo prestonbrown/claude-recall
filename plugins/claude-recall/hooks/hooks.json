@@ -1,31 +1,58 @@
 {
   "description": "Claude Recall - AI memory for Claude Code",
   "hooks": {
-    "SessionStart": [{
-      "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/inject-hook.sh\"", "timeout": 5000 },
-        { "type": "command", "command": "rm -f ~/.local/state/claude-recall/.reminder-state", "timeout": 1000 }
-      ]
-    }],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/inject-hook.sh\"", "timeout": 5000 }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "rm -f ~/.local/state/claude-recall/.reminder-state", "timeout": 1000 }
+        ]
+      }
+    ],
 
-    "UserPromptSubmit": [{
-      "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/capture-hook.sh\"", "timeout": 5000 },
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/smart-inject-hook.sh\"", "timeout": 5000 },
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lesson-reminder-hook.sh\"", "timeout": 2000 }
-      ]
-    }],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/capture-hook.sh\"", "timeout": 5000 }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/smart-inject-hook.sh\"", "timeout": 5000 }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lesson-reminder-hook.sh\"", "timeout": 2000 }
+        ]
+      }
+    ],
 
-    "SubagentStop": [{
-      "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/subagent-stop-hook.sh\"", "timeout": 3000 }
-      ]
-    }],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/subagent-stop-hook.sh\"", "timeout": 3000 }
+        ]
+      }
+    ],
 
-    "Stop": [{
-      "hooks": [
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/stop-hook.sh\"", "timeout": 5000 }
-      ]
-    }]
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/stop-hook.sh\"", "timeout": 5000 }
+        ]
+      }
+    ]
   }
 }

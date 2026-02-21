@@ -96,7 +96,7 @@ log_injection_skip() {
     local project_root="$1" reason="$2" detail="$3"
     [[ -z "$GO_RECALL" || ! -x "$GO_RECALL" ]] && return 0
     [[ "${CLAUDE_RECALL_DEBUG:-0}" -lt 1 ]] && return 0
-    PROJECT_DIR="$project_root" "$GO_RECALL" debug log "lessons_injection_skipped: hook=prompt_submit reason=$reason detail=$detail" 2>/dev/null &
+    PROJECT_DIR="$project_root" "$GO_RECALL" debug log "lessons_injection_skipped: hook=prompt_submit reason=$reason detail=$detail" >/dev/null 2>&1 &
 }
 
 main() {

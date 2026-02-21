@@ -344,4 +344,4 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
   };
 };
 
-export default LessonsPlugin;
+

@@ -229,7 +229,7 @@ log_phase() {
 
     # Background the debug logging (Go only - Python CLI removed)
     if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
-        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug hook-phase "$hook_name" "$phase" "$duration" 2>/dev/null &
+        PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug hook-phase "$hook_name" "$phase" "$duration" >/dev/null 2>&1 &
     fi
 }
 
@@ -246,9 +246,9 @@ log_hook_end() {
     # Use Go binary for debug logging (Python CLI removed)
     if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
         if [[ -n "$PHASE_TIMES_JSON" && "$PHASE_TIMES_JSON" != "{}" ]]; then
-            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug hook-end "$hook_name" "$total_ms" --phases "$PHASE_TIMES_JSON" 2>/dev/null &
+            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug hook-end "$hook_name" "$total_ms" --phases "$PHASE_TIMES_JSON" >/dev/null 2>&1 &
         else
-            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug hook-end "$hook_name" "$total_ms" 2>/dev/null &
+            PROJECT_DIR="${PROJECT_DIR:-$(pwd)}" "$GO_RECALL" debug hook-end "$hook_name" "$total_ms" >/dev/null 2>&1 &
         fi
     fi
 }

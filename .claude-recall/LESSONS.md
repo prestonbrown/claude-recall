@@ -44,3 +44,7 @@
 - **Uses**: 0 | **Velocity**: 0 | **Learned**: 2026-02-02 | **Last**: 2026-02-02 | **Category**: gotcha
 > When bumping versions in claude-recall, update BOTH core/_version.py AND plugins/claude-recall/.claude-plugin/plugin.json. Claude Code uses the plugin.json version for cache paths.
 
+### [L010] [-----|-----] Background commands must redirect both stdout and stderr
+- **Uses**: 0 | **Velocity**: 0 | **Learned**: 2026-02-21 | **Last**: 2026-02-21 | **Category**: gotcha
+> When backgrounding shell commands with &, always use >/dev/null 2>&1 & not just 2>/dev/null &. Commands that fail (e.g. unknown subcommand) dump help text to stdout, which corrupts hook JSON output. This caused lesson injection to silently break - Claude Code couldn't parse the contaminated JSON and fell back to 'Success' with no lesson data.
+

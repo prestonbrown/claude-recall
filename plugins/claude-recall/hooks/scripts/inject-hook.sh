@@ -93,7 +93,7 @@ generate_combined_context() {
             local error_msg
             error_msg=$(cat "$stderr_file" 2>/dev/null | head -c 500)
             PROJECT_DIR="$cwd" "$GO_RECALL" debug log-error \
-                "inject_combined_failed" "exit=$exit_code: $error_msg" 2>/dev/null &
+                "inject_combined_failed" "exit=$exit_code: $error_msg" >/dev/null 2>&1 &
         fi
         rm -f "$stderr_file" 2>/dev/null
     fi
@@ -215,11 +215,8 @@ EOF
     fi
 
     # Check for health alerts if alerting is enabled (non-blocking, runs in background)
-    # This uses the alerts module to detect issues like stale handoffs or latency spikes
     if [[ -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
-        (
-            PROJECT_DIR="$cwd" "$GO_RECALL" alerts send --bell 2>/dev/null || true
-        ) &
+        PROJECT_DIR="$cwd" "$GO_RECALL" alerts send --bell >/dev/null 2>&1 &
     fi
 
     # Trigger decay check in background (runs weekly)
