@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+# Consume stdin (Claude Code pipes hook input)
+cat > /dev/null &
+
 # Guard against recursive calls from Haiku subprocesses
 [[ -n "${LESSONS_SCORING_ACTIVE:-}" ]] && exit 0
 
@@ -17,7 +20,8 @@ CLAUDE_RECALL_DEBUG="${CLAUDE_RECALL_DEBUG:-${RECALL_DEBUG:-${LESSONS_DEBUG:-}}}
 LESSONS_BASE="$CLAUDE_RECALL_BASE"
 LESSONS_DEBUG="$CLAUDE_RECALL_DEBUG"
 
-STATE_FILE="$CLAUDE_RECALL_BASE/.reminder-state"
+CLAUDE_RECALL_STATE="${CLAUDE_RECALL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-recall}"
+STATE_FILE="$CLAUDE_RECALL_STATE/.reminder-state"
 CONFIG_FILE="${CLAUDE_RECALL_CONFIG:-$HOME/.config/claude-recall/config.json}"
 
 # Priority: env var > config file > default (12)
@@ -77,16 +81,20 @@ fi
 HIGH_STAR=$(grep -E '^###\s*\[[LS][0-9]+\].*\[\*{3,}' "$LESSONS_FILE" 2>/dev/null | head -3)
 
 if [[ -n "$HIGH_STAR" ]]; then
-  echo "📚 LESSON CHECK - High-priority lessons to keep in mind:"
-  echo "$HIGH_STAR"
-  echo ""
+  CONTEXT="LESSON CHECK - High-priority lessons to keep in mind:
+$HIGH_STAR"
+
+  ESCAPED=$(printf '%s' "$CONTEXT" | jq -Rs .)
+  cat << EOF
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":$ESCAPED}}
+EOF
 
   # Log reminded lessons for effectiveness tracking (if debug enabled)
   if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]]; then
-    DEBUG_LOG="$CLAUDE_RECALL_BASE/debug.log"
+    DEBUG_LOG="$CLAUDE_RECALL_STATE/debug.log"
     LESSON_IDS=$(echo "$HIGH_STAR" | grep -oE '\[[LS][0-9]+\]' | tr -d '[]' | tr '\n' ',' | sed 's/,$//')
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    echo "{\"timestamp\":\"$TIMESTAMP\",\"event\":\"reminder\",\"lesson_ids\":\"$LESSON_IDS\",\"prompt_count\":$COUNT}" >> "$DEBUG_LOG"
+    echo "{\"timestamp\":\"$TIMESTAMP\",\"event\":\"reminder\",\"lesson_ids\":\"$LESSON_IDS\",\"prompt_count\":$COUNT}" >> "$DEBUG_LOG" 2>/dev/null &
   fi
 fi
 
