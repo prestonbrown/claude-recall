@@ -54,7 +54,7 @@ score_and_format_lessons() {
     rm -f "$stderr_file"
 
     [[ -z "$result" ]] && return 1
-    [[ "$result" == *"No lessons found"* ]] && return 1
+    [[ "$result" == *"No"*"lessons found"* ]] && return 1
 
     echo "$result"
 }
@@ -85,7 +85,7 @@ score_and_format_lessons_haiku() {
     rm -f "$stderr_file"
 
     [[ -z "$result" ]] && return 1
-    [[ "$result" == *"No lessons found"* ]] && return 1
+    [[ "$result" == *"No"*"lessons found"* ]] && return 1
     [[ "$result" == *"error"* ]] && return 1
 
     echo "$result"
@@ -148,7 +148,7 @@ main() {
     # If we got relevant lessons, filter out already-injected ones
     if [[ -n "$scored_lessons" ]]; then
         # Extract IDs from scored output
-        local new_ids=$(echo "$scored_lessons" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u)
+        local new_ids=$(echo "$scored_lessons" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u || true)
 
         # Filter out already injected (remove header + content line pairs)
         local injected=$(get_injected_ids)
@@ -181,7 +181,7 @@ main() {
         fi
 
         # Re-extract IDs after filtering (only record what we actually inject)
-        new_ids=$(echo "$scored_lessons" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u)
+        new_ids=$(echo "$scored_lessons" | grep -oE '\[[LS][0-9]{3}\]' | tr -d '[]' | sort -u || true)
     fi
 
     if [[ -n "$scored_lessons" ]]; then
