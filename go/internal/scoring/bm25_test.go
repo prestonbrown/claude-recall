@@ -162,3 +162,29 @@ func TestScore_TiebreakByUses(t *testing.T) {
 		t.Errorf("expected same scores, got %d and %d", results[0].Score, results[1].Score)
 	}
 }
+
+func TestBM25_TriggersBoostRelevance(t *testing.T) {
+	l1 := &models.Lesson{ID: "L001", Title: "Object deletion", Content: "Multiple deletion strategies", Triggers: []string{"safe_delete", "delete_deferred"}}
+	l2 := &models.Lesson{ID: "L002", Title: "Object deletion", Content: "Multiple deletion strategies"}
+	scorer := NewBM25Scorer([]*models.Lesson{l1, l2})
+	results := scorer.Score("safe_delete")
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Lesson.ID != "L001" {
+		t.Errorf("expected L001 first (has triggers), got %s", results[0].Lesson.ID)
+	}
+	if results[0].Score <= results[1].Score {
+		t.Errorf("L001 (score %d) should beat L002 (score %d)", results[0].Score, results[1].Score)
+	}
+}
+
+func TestBM25_NoTriggersUnchanged(t *testing.T) {
+	l1 := &models.Lesson{ID: "L001", Title: "XML no recompile", Content: "XML files loaded at runtime"}
+	l2 := &models.Lesson{ID: "L002", Title: "Icon font sync", Content: "After adding icon to codepoints"}
+	scorer := NewBM25Scorer([]*models.Lesson{l1, l2})
+	results := scorer.Score("XML runtime")
+	if results[0].Lesson.ID != "L001" {
+		t.Errorf("expected L001 first, got %s", results[0].Lesson.ID)
+	}
+}

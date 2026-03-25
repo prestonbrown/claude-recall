@@ -59,11 +59,20 @@ func NewBM25Scorer(lessons []*models.Lesson) *BM25Scorer {
 		return s
 	}
 
-	// Tokenize each lesson (title + content)
+	// Tokenize each lesson (title + content + triple-weighted triggers)
 	totalLen := 0
 	for _, l := range lessons {
 		text := l.Title + " " + l.Content
 		tokens := Tokenize(text)
+
+		// Append trigger terms 3x for weighting
+		if len(l.Triggers) > 0 {
+			triggerTokens := Tokenize(strings.Join(l.Triggers, " "))
+			for i := 0; i < 3; i++ {
+				tokens = append(tokens, triggerTokens...)
+			}
+		}
+
 		s.docTokens = append(s.docTokens, tokens)
 		s.docLens = append(s.docLens, len(tokens))
 		totalLen += len(tokens)
