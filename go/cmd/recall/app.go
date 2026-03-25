@@ -139,6 +139,8 @@ func (a *App) Run(args []string) int {
 		return a.runDismiss(cmdArgs)
 	case "stats":
 		return a.runStats(cmdArgs)
+	case "digest":
+		return a.runDigest(cmdArgs)
 	default:
 		fmt.Fprintf(a.stderr, "unknown command: %s\n", cmd)
 		a.printHelp()
@@ -186,6 +188,9 @@ Commands:
   stats                            Session injection/citation breakdown
   stats <id>                       Lesson-specific precision stats
   stats --weekly                   Week-over-week trend report
+
+  digest                           Show latest weekly precision digest
+  digest --generate                Generate fresh digest for current week
 
   score-relevance <query> [opts]   Score lessons by relevance (Haiku API)
   score-local <query> [opts]       Score lessons locally using BM25 (no API key)
