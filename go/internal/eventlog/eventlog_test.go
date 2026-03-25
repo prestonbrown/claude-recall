@@ -150,3 +150,183 @@ func TestRead_MissingFile(t *testing.T) {
 		t.Fatalf("expected nil, got %v", events)
 	}
 }
+
+func TestReadBySession(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	log := New(path)
+
+	for _, s := range []string{"sess-A", "sess-B", "sess-A"} {
+		if err := log.Append(Event{
+			Timestamp: time.Now(),
+			Type:      "citation",
+			Session:   s,
+			Lesson:    "L001",
+		}); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	events, err := log.ReadFiltered(Filter{Session: "sess-A"})
+	if err != nil {
+		t.Fatalf("ReadFiltered failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	for _, ev := range events {
+		if ev.Session != "sess-A" {
+			t.Errorf("expected session sess-A, got %q", ev.Session)
+		}
+	}
+}
+
+func TestReadByLesson(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	log := New(path)
+
+	for _, l := range []string{"L010", "L020", "L010"} {
+		if err := log.Append(Event{
+			Timestamp: time.Now(),
+			Type:      "citation",
+			Session:   "sess-X",
+			Lesson:    l,
+		}); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	events, err := log.ReadFiltered(Filter{Lesson: "L020"})
+	if err != nil {
+		t.Fatalf("ReadFiltered failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Lesson != "L020" {
+		t.Errorf("expected lesson L020, got %q", events[0].Lesson)
+	}
+}
+
+func TestReadBySince(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	log := New(path)
+
+	old := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 3, 20, 0, 0, 0, 0, time.UTC)
+
+	for _, ts := range []time.Time{old, recent} {
+		if err := log.Append(Event{
+			Timestamp: ts,
+			Type:      "injection",
+			Session:   "sess-T",
+		}); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	events, err := log.ReadFiltered(Filter{Since: cutoff})
+	if err != nil {
+		t.Fatalf("ReadFiltered failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if !events[0].Timestamp.Equal(recent) {
+		t.Errorf("expected recent timestamp, got %v", events[0].Timestamp)
+	}
+}
+
+func TestPrune_RemovesOldEntries(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	log := New(path)
+
+	now := time.Now()
+	oldTS := now.AddDate(0, 0, -100)
+	recentTS := now.AddDate(0, 0, -10)
+
+	for _, ts := range []time.Time{oldTS, oldTS, recentTS} {
+		if err := log.Append(Event{
+			Timestamp: ts,
+			Type:      "citation",
+			Session:   "sess-P",
+			Lesson:    "L001",
+		}); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	pruned, err := log.Prune(90)
+	if err != nil {
+		t.Fatalf("Prune failed: %v", err)
+	}
+	if pruned != 2 {
+		t.Fatalf("expected 2 pruned, got %d", pruned)
+	}
+
+	events, err := log.Read()
+	if err != nil {
+		t.Fatalf("Read after prune failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 remaining event, got %d", len(events))
+	}
+}
+
+func TestPrune_NoopOnEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nonexistent.jsonl")
+	log := New(path)
+
+	pruned, err := log.Prune(90)
+	if err != nil {
+		t.Fatalf("Prune failed: %v", err)
+	}
+	if pruned != 0 {
+		t.Fatalf("expected 0 pruned, got %d", pruned)
+	}
+}
+
+func TestPrune_IntegrationWithRetention(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	log := New(path)
+
+	now := time.Now()
+	for i := 0; i < 120; i++ {
+		ts := now.AddDate(0, 0, -119+i) // day -119 through day 0
+		if err := log.Append(Event{
+			Timestamp: ts,
+			Type:      "citation",
+			Session:   "sess-I",
+			Lesson:    "L001",
+		}); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	pruned, err := log.Prune(90)
+	if err != nil {
+		t.Fatalf("Prune failed: %v", err)
+	}
+
+	remaining, err := log.Read()
+	if err != nil {
+		t.Fatalf("Read after prune failed: %v", err)
+	}
+
+	// 120 days of events, keep last 90 days → prune ~30
+	if pruned+len(remaining) != 120 {
+		t.Fatalf("pruned (%d) + remaining (%d) != 120", pruned, len(remaining))
+	}
+	if pruned < 28 || pruned > 32 {
+		t.Fatalf("expected ~30 pruned, got %d", pruned)
+	}
+	if len(remaining) < 88 || len(remaining) > 92 {
+		t.Fatalf("expected ~90 remaining, got %d", len(remaining))
+	}
+}

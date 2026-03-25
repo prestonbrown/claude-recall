@@ -48,6 +48,15 @@ func (l *Log) Append(e Event) error {
 	return err
 }
 
+// Filter specifies criteria for ReadFiltered. Zero-value fields are ignored.
+type Filter struct {
+	Session string
+	Lesson  string
+	Project string
+	Since   time.Time
+	Type    string
+}
+
 // Read returns all events from the log file.
 // Returns nil, nil for missing or empty files. Malformed lines are skipped.
 func (l *Log) Read() ([]Event, error) {
@@ -78,4 +87,79 @@ func (l *Log) Read() ([]Event, error) {
 		return events, err
 	}
 	return events, nil
+}
+
+// ReadFiltered returns events matching all non-zero fields in the filter (AND logic).
+func (l *Log) ReadFiltered(f Filter) ([]Event, error) {
+	all, err := l.Read()
+	if err != nil {
+		return nil, err
+	}
+
+	var result []Event
+	for _, ev := range all {
+		if f.Session != "" && ev.Session != f.Session {
+			continue
+		}
+		if f.Lesson != "" && ev.Lesson != f.Lesson {
+			continue
+		}
+		if f.Project != "" && ev.Project != f.Project {
+			continue
+		}
+		if f.Type != "" && ev.Type != f.Type {
+			continue
+		}
+		if !f.Since.IsZero() && ev.Timestamp.Before(f.Since) {
+			continue
+		}
+		result = append(result, ev)
+	}
+	return result, nil
+}
+
+// Prune removes events older than retentionDays and rewrites the file.
+// Returns the count of pruned entries. Returns 0, nil for missing or empty files.
+func (l *Log) Prune(retentionDays int) (int, error) {
+	all, err := l.Read()
+	if err != nil {
+		return 0, err
+	}
+	if len(all) == 0 {
+		return 0, nil
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	var kept []Event
+	pruned := 0
+	for _, ev := range all {
+		if ev.Timestamp.Before(cutoff) {
+			pruned++
+		} else {
+			kept = append(kept, ev)
+		}
+	}
+
+	if pruned == 0 {
+		return 0, nil
+	}
+
+	f, err := os.Create(l.path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	for _, ev := range kept {
+		data, err := json.Marshal(ev)
+		if err != nil {
+			return 0, err
+		}
+		data = append(data, '\n')
+		if _, err := f.Write(data); err != nil {
+			return 0, err
+		}
+	}
+
+	return pruned, nil
 }
