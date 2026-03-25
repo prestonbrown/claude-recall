@@ -278,6 +278,88 @@ func Test_LoadConfig_ProjectDir_DefaultsToCWD(t *testing.T) {
 	}
 }
 
+func Test_LoadConfig_EventLogDefaults(t *testing.T) {
+	nonExistentPath := filepath.Join(t.TempDir(), "does-not-exist.json")
+
+	// Clear env vars that could interfere
+	t.Setenv("CLAUDE_RECALL_EVENT_LOG_ENABLED", "")
+	t.Setenv("CLAUDE_RECALL_EVENT_LOG_RETENTION_DAYS", "")
+	t.Setenv("CLAUDE_RECALL_DIGEST_ENABLED", "")
+
+	cfg, err := Load(nonExistentPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if cfg.EventLogEnabled == nil || !*cfg.EventLogEnabled {
+		t.Error("expected EventLogEnabled to default to true")
+	}
+	if cfg.EventLogRetentionDays != 90 {
+		t.Errorf("expected EventLogRetentionDays=90, got %d", cfg.EventLogRetentionDays)
+	}
+	if cfg.DigestEnabled == nil || !*cfg.DigestEnabled {
+		t.Error("expected DigestEnabled to default to true")
+	}
+}
+
+func Test_LoadConfig_EventLogFromJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	configData := map[string]interface{}{
+		"event_log_enabled":        false,
+		"event_log_retention_days": 30,
+		"digest_enabled":           false,
+	}
+	data, _ := json.Marshal(configData)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	// Clear env vars
+	t.Setenv("CLAUDE_RECALL_EVENT_LOG_ENABLED", "")
+	t.Setenv("CLAUDE_RECALL_EVENT_LOG_RETENTION_DAYS", "")
+	t.Setenv("CLAUDE_RECALL_DIGEST_ENABLED", "")
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if cfg.EventLogEnabled == nil || *cfg.EventLogEnabled {
+		t.Error("expected EventLogEnabled=false from JSON")
+	}
+	if cfg.EventLogRetentionDays != 30 {
+		t.Errorf("expected EventLogRetentionDays=30, got %d", cfg.EventLogRetentionDays)
+	}
+	if cfg.DigestEnabled == nil || *cfg.DigestEnabled {
+		t.Error("expected DigestEnabled=false from JSON")
+	}
+}
+
+func Test_LoadConfig_EventLogEnvOverrides(t *testing.T) {
+	nonExistentPath := filepath.Join(t.TempDir(), "does-not-exist.json")
+
+	t.Setenv("CLAUDE_RECALL_EVENT_LOG_ENABLED", "false")
+	t.Setenv("CLAUDE_RECALL_EVENT_LOG_RETENTION_DAYS", "7")
+	t.Setenv("CLAUDE_RECALL_DIGEST_ENABLED", "0")
+
+	cfg, err := Load(nonExistentPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if cfg.EventLogEnabled == nil || *cfg.EventLogEnabled {
+		t.Error("expected EventLogEnabled=false from env")
+	}
+	if cfg.EventLogRetentionDays != 7 {
+		t.Errorf("expected EventLogRetentionDays=7, got %d", cfg.EventLogRetentionDays)
+	}
+	if cfg.DigestEnabled == nil || *cfg.DigestEnabled {
+		t.Error("expected DigestEnabled=false from env")
+	}
+}
+
 func Test_LoadConfig_ProjectDir_GitRootTakesPrecedence(t *testing.T) {
 	// Test that ProjectDir uses git root when running from a subdirectory
 	// (We're running tests from within the claude-recall repo)

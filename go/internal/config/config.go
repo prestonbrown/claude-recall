@@ -17,6 +17,10 @@ type Config struct {
 	StateDir   string `json:"state_dir"`   // State directory, default: ~/.local/state/claude-recall
 	ProjectDir string `json:"project_dir"` // Project root, default: git root or cwd
 	DebugLevel int    `json:"debug_level"` // Debug level 0-3, from CLAUDE_RECALL_DEBUG
+
+	EventLogEnabled       *bool `json:"event_log_enabled"`        // Master switch for session-log writing, default: true
+	EventLogRetentionDays int   `json:"event_log_retention_days"` // Events older than this pruned during decay, default: 90
+	DigestEnabled         *bool `json:"digest_enabled"`           // Whether to auto-generate weekly digests, default: true
 }
 
 // Load reads configuration from the given JSON file path,
@@ -49,6 +53,9 @@ func Load(configPath string) (*Config, error) {
 	return cfg, nil
 }
 
+// boolPtr returns a pointer to a bool value.
+func boolPtr(b bool) *bool { return &b }
+
 // applyDefaults sets default values for any empty config fields.
 func applyDefaults(cfg *Config) {
 	homeDir, err := os.UserHomeDir()
@@ -64,6 +71,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.ProjectDir == "" {
 		cfg.ProjectDir = findProjectDir()
+	}
+	if cfg.EventLogEnabled == nil {
+		cfg.EventLogEnabled = boolPtr(true)
+	}
+	if cfg.EventLogRetentionDays == 0 {
+		cfg.EventLogRetentionDays = 90
+	}
+	if cfg.DigestEnabled == nil {
+		cfg.DigestEnabled = boolPtr(true)
 	}
 }
 
@@ -87,6 +103,27 @@ func applyEnvOverrides(cfg *Config) {
 	// Project directory: PROJECT_DIR
 	if val := os.Getenv("PROJECT_DIR"); val != "" {
 		cfg.ProjectDir = val
+	}
+
+	// Event log enabled: CLAUDE_RECALL_EVENT_LOG_ENABLED
+	if val := os.Getenv("CLAUDE_RECALL_EVENT_LOG_ENABLED"); val != "" {
+		if b, err := strconv.ParseBool(val); err == nil {
+			cfg.EventLogEnabled = boolPtr(b)
+		}
+	}
+
+	// Event log retention days: CLAUDE_RECALL_EVENT_LOG_RETENTION_DAYS
+	if val := os.Getenv("CLAUDE_RECALL_EVENT_LOG_RETENTION_DAYS"); val != "" {
+		if days, err := strconv.Atoi(val); err == nil {
+			cfg.EventLogRetentionDays = days
+		}
+	}
+
+	// Digest enabled: CLAUDE_RECALL_DIGEST_ENABLED
+	if val := os.Getenv("CLAUDE_RECALL_DIGEST_ENABLED"); val != "" {
+		if b, err := strconv.ParseBool(val); err == nil {
+			cfg.DigestEnabled = boolPtr(b)
+		}
 	}
 
 	// Debug level: CLAUDE_RECALL_DEBUG > RECALL_DEBUG > LESSONS_DEBUG
