@@ -13,7 +13,7 @@ func TestPrecisionByLesson(t *testing.T) {
 		{Timestamp: now, Type: "injection", Session: "s2", Lesson: "L001", Score: 750, Query: "compile fail"},
 		{Timestamp: now, Type: "injection", Session: "s3", Lesson: "L002", Score: 600, Query: "deploy issue"},
 		{Timestamp: now, Type: "citation", Session: "s1", Lesson: "L001"},
-		{Timestamp: now, Type: "dismissal", Session: "s3", Lesson: "L002"},
+		{Timestamp: now, Type: "dismiss", Session: "s3", Lesson: "L002"},
 	}
 
 	result := PrecisionByLesson(events)

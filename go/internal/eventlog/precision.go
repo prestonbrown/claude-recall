@@ -58,7 +58,7 @@ func PrecisionByLesson(events []Event) map[string]*LessonPrecision {
 			})
 		case "citation":
 			lp.Citations++
-		case "dismissal":
+		case "dismiss":
 			lp.Dismissals++
 		}
 	}
