@@ -135,6 +135,8 @@ func (a *App) Run(args []string) int {
 		return a.runPrescoreCache(cmdArgs)
 	case "opencode":
 		return a.runOpencode(cmdArgs)
+	case "stats":
+		return a.runStats(cmdArgs)
 	default:
 		fmt.Fprintf(a.stderr, "unknown command: %s\n", cmd)
 		a.printHelp()
@@ -177,6 +179,10 @@ Commands:
   debug hook-phase <h> <p> <ms>    Log hook phase timing
   debug hook-end <h> <ms> [--phases json]  Log hook completion
   debug injection-budget <t> <l> <h> <d>   Log token budget breakdown
+
+  stats                            Session injection/citation breakdown
+  stats <id>                       Lesson-specific precision stats
+  stats --weekly                   Week-over-week trend report
 
   score-relevance <query> [opts]   Score lessons by relevance (Haiku API)
   score-local <query> [opts]       Score lessons locally using BM25 (no API key)
