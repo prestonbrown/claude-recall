@@ -135,6 +135,8 @@ func (a *App) Run(args []string) int {
 		return a.runPrescoreCache(cmdArgs)
 	case "opencode":
 		return a.runOpencode(cmdArgs)
+	case "dismiss":
+		return a.runDismiss(cmdArgs)
 	case "stats":
 		return a.runStats(cmdArgs)
 	default:
@@ -159,6 +161,7 @@ Commands:
   edit <id> [--title T] [...]      Edit a lesson's properties
   delete <id>                      Delete a lesson
   decay [--force]                  Run velocity decay cycle
+  dismiss <id>                     Dismiss a lesson as noise for this session
 
   handoff list                     List active handoffs
   handoff add <title> [opts]       Add new handoff (--desc D, --stealth)
@@ -450,6 +453,38 @@ func (a *App) runDecay(args []string) int {
 		fmt.Fprintln(a.stdout, "No decay needed")
 	}
 
+	return 0
+}
+
+// runDismiss logs a dismiss event for a lesson (noise signal)
+func (a *App) runDismiss(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(a.stderr, "usage: recall dismiss <ID>")
+		return 1
+	}
+	lessonID := args[0]
+
+	store := lessons.NewStore(a.projectPath, a.systemPath)
+	lesson, err := store.Get(lessonID)
+	if err != nil {
+		fmt.Fprintf(a.stderr, "error: lesson %s not found: %v\n", lessonID, err)
+		return 1
+	}
+
+	eventLogPath := filepath.Join(a.stateDir, "session-log.jsonl")
+	elog := eventlog.New(eventLogPath)
+	err = elog.Append(eventlog.Event{
+		Timestamp: time.Now(),
+		Type:      "dismiss",
+		Lesson:    lessonID,
+		Project:   a.projectDir,
+	})
+	if err != nil {
+		fmt.Fprintf(a.stderr, "error logging dismiss: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(a.stdout, "Dismissed [%s] %s for this session.\n", lessonID, lesson.Title)
 	return 0
 }
 
