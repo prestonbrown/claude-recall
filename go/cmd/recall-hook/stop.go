@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pbrown/claude-recall/internal/checkpoint"
 	"github.com/pbrown/claude-recall/internal/citations"
 	"github.com/pbrown/claude-recall/internal/config"
+	"github.com/pbrown/claude-recall/internal/eventlog"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/transcript"
 )
@@ -24,9 +26,10 @@ type stopInput struct {
 
 // stopOutput matches the JSON output format
 type stopOutput struct {
-	Citations         []string `json:"citations"`
-	CitationsProcessed int     `json:"citations_processed"`
-	MessagesProcessed int      `json:"messages_processed"`
+	Citations          []string `json:"citations"`
+	CitationsProcessed int      `json:"citations_processed"`
+	MessagesProcessed  int      `json:"messages_processed"`
+	CitedIDs           []string `json:"-"` // successfully cited IDs (not serialized)
 }
 
 // runStop implements the stop hook command.
@@ -56,6 +59,23 @@ func runStop() int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error executing stop: %v\n", err)
 		return 1
+	}
+
+	// Emit citation events to session log
+	if cfg.EventLogEnabled != nil && *cfg.EventLogEnabled && len(result.CitedIDs) > 0 {
+		elog := eventlog.New(filepath.Join(cfg.StateDir, "session-log.jsonl"))
+		now := time.Now()
+		for _, id := range result.CitedIDs {
+			if err := elog.Append(eventlog.Event{
+				Timestamp: now,
+				Type:      "citation",
+				Session:   input.SessionID,
+				Lesson:    id,
+				Project:   projectDir,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: event log append failed: %v\n", err)
+			}
+		}
 	}
 
 	// Output JSON result
@@ -142,6 +162,7 @@ func executeStop(input stopInput, stateDir, projectDir string) (stopOutput, erro
 
 	// Process citations - increment uses/velocity for each
 	citationsProcessed := 0
+	var citedIDs []string
 	if len(citationIDs) > 0 {
 		// Set up lesson store paths
 		projectLessonsPath := filepath.Join(projectDir, ".claude-recall", "LESSONS.md")
@@ -166,6 +187,7 @@ func executeStop(input stopInput, stateDir, projectDir string) (stopOutput, erro
 				continue
 			}
 			citationsProcessed++
+			citedIDs = append(citedIDs, id)
 		}
 	}
 
@@ -178,5 +200,6 @@ func executeStop(input stopInput, stateDir, projectDir string) (stopOutput, erro
 		Citations:          citationIDs,
 		CitationsProcessed: citationsProcessed,
 		MessagesProcessed:  len(messages),
+		CitedIDs:           citedIDs,
 	}, nil
 }

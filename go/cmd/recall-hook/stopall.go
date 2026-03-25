@@ -8,10 +8,13 @@ import (
 	"regexp"
 	"strings"
 
+	"time"
+
 	"github.com/pbrown/claude-recall/internal/checkpoint"
 	"github.com/pbrown/claude-recall/internal/citations"
 	"github.com/pbrown/claude-recall/internal/config"
 	"github.com/pbrown/claude-recall/internal/debuglog"
+	"github.com/pbrown/claude-recall/internal/eventlog"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/transcript"
 )
@@ -106,6 +109,7 @@ func runStopAll() int {
 
 	// Extract and process citations
 	extractedCitations := citations.ExtractFromMessages(messages)
+	var citedIDs []string
 	for _, c := range extractedCitations {
 		result.CitationIDs = append(result.CitationIDs, c.ID)
 		if err := lessonStore.Cite(c.ID); err != nil {
@@ -113,6 +117,24 @@ func runStopAll() int {
 			continue
 		}
 		result.CitationsProcessed++
+		citedIDs = append(citedIDs, c.ID)
+	}
+
+	// Emit citation events to session log
+	if cfg.EventLogEnabled != nil && *cfg.EventLogEnabled && len(citedIDs) > 0 {
+		elog := eventlog.New(filepath.Join(cfg.StateDir, "session-log.jsonl"))
+		now := time.Now()
+		for _, id := range citedIDs {
+			if err := elog.Append(eventlog.Event{
+				Timestamp: now,
+				Type:      "citation",
+				Session:   input.SessionID,
+				Lesson:    id,
+				Project:   projectDir,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: event log append failed: %v\n", err)
+			}
+		}
 	}
 
 	// Extract and add AI lessons from assistant text
