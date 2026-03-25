@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-25
 **Status:** Draft
-**Plugin:** claude-recall v1.1.0
+**Plugin:** claude-recall v1.2.0
 **Repo:** `/home/pbrown/Code/claude-recall/`
 
 ## Problem
