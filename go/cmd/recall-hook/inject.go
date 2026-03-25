@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/pbrown/claude-recall/internal/config"
 	"github.com/pbrown/claude-recall/internal/debuglog"
+	"github.com/pbrown/claude-recall/internal/eventlog"
 	"github.com/pbrown/claude-recall/internal/handoffs"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/models"
@@ -78,6 +80,35 @@ func runInject() int {
 		entries[i] = debuglog.LessonEntry{ID: l.ID, Title: l.Title}
 	}
 	dlog.LogInjection("session_start", cfg.ProjectDir, entries)
+
+	// Emit injection events to session log
+	if cfg.EventLogEnabled != nil && *cfg.EventLogEnabled {
+		elog := eventlog.New(filepath.Join(cfg.StateDir, "session-log.jsonl"))
+		now := time.Now()
+		for _, lesson := range topLessons {
+			if err := elog.Append(eventlog.Event{
+				Timestamp: now,
+				Type:      "injection",
+				Lesson:    lesson.ID,
+				Hook:      "session_start",
+				Project:   cfg.ProjectDir,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: event log append failed: %v\n", err)
+			}
+		}
+		lessonIDs := make([]string, len(topLessons))
+		for i, l := range topLessons {
+			lessonIDs[i] = l.ID
+		}
+		if err := elog.Append(eventlog.Event{
+			Timestamp: now,
+			Type:      "session_start",
+			Lessons:   lessonIDs,
+			Project:   cfg.ProjectDir,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: event log append failed: %v\n", err)
+		}
+	}
 
 	// Output formatted lessons
 	output := formatLessonsForInjection(topLessons)
@@ -157,6 +188,37 @@ func runInjectCombined() int {
 		entries[i] = debuglog.LessonEntry{ID: l.ID, Title: l.Title}
 	}
 	dlog.LogInjection("session_start", projectDir, entries)
+
+	// Emit injection events to session log
+	if cfg.EventLogEnabled != nil && *cfg.EventLogEnabled {
+		elog := eventlog.New(filepath.Join(cfg.StateDir, "session-log.jsonl"))
+		now := time.Now()
+		for _, lesson := range topLessons {
+			if err := elog.Append(eventlog.Event{
+				Timestamp: now,
+				Type:      "injection",
+				Session:   input.SessionID,
+				Lesson:    lesson.ID,
+				Hook:      "session_start",
+				Project:   projectDir,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: event log append failed: %v\n", err)
+			}
+		}
+		lessonIDs := make([]string, len(topLessons))
+		for i, l := range topLessons {
+			lessonIDs[i] = l.ID
+		}
+		if err := elog.Append(eventlog.Event{
+			Timestamp: now,
+			Type:      "session_start",
+			Session:   input.SessionID,
+			Lessons:   lessonIDs,
+			Project:   projectDir,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: event log append failed: %v\n", err)
+		}
+	}
 
 	// Build output
 	result := injectCombinedOutput{

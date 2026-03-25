@@ -14,6 +14,7 @@ import (
 
 	"github.com/pbrown/claude-recall/internal/anthropic"
 	"github.com/pbrown/claude-recall/internal/config"
+	"github.com/pbrown/claude-recall/internal/eventlog"
 	"github.com/pbrown/claude-recall/internal/debuglog"
 	"github.com/pbrown/claude-recall/internal/handoffs"
 	"github.com/pbrown/claude-recall/internal/lessons"
@@ -30,9 +31,10 @@ type App struct {
 	systemPath   string // Path to system LESSONS.md
 	handoffsPath string // Path to HANDOFFS.md
 	stealthPath  string // Path to HANDOFFS_LOCAL.md (stealth)
-	stateDir     string // Path to state directory
-	projectDir   string // Project root directory
-	debugLevel   int    // Debug level 0-3
+	stateDir        string // Path to state directory
+	projectDir      string // Project root directory
+	debugLevel      int    // Debug level 0-3
+	eventLogEnabled bool   // Whether event logging is enabled
 }
 
 // NewApp creates a new App with default stdout/stderr/stdin
@@ -76,6 +78,7 @@ func (a *App) initPaths() error {
 	}
 	a.projectDir = cfg.ProjectDir
 	a.debugLevel = cfg.DebugLevel
+	a.eventLogEnabled = cfg.EventLogEnabled != nil && *cfg.EventLogEnabled
 
 	return nil
 }
@@ -1584,6 +1587,32 @@ func (a *App) runScoreLocal(args []string) int {
 	}
 
 	fmt.Fprintf(a.stderr, "\nShowing %d results (local BM25)\n", count)
+
+	// Emit injection events to session log
+	if a.eventLogEnabled {
+		eventLogPath := filepath.Join(a.stateDir, "session-log.jsonl")
+		elog := eventlog.New(eventLogPath)
+		now := time.Now()
+		emitted := 0
+		for _, sl := range results {
+			if sl.Score < minScore {
+				continue
+			}
+			if emitted >= topN {
+				break
+			}
+			elog.Append(eventlog.Event{
+				Timestamp: now,
+				Type:      "injection",
+				Lesson:    sl.Lesson.ID,
+				Score:     sl.Score,
+				Query:     query,
+				Hook:      "prompt_submit",
+				Project:   a.projectDir,
+			})
+			emitted++
+		}
+	}
 
 	return 0
 }
