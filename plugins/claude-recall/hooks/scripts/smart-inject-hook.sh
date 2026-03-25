@@ -39,6 +39,7 @@ score_and_format_lessons() {
     local result stderr_file
     stderr_file=$(mktemp)
     result=$(PROJECT_DIR="$cwd" LESSONS_BASE="$LESSONS_BASE" LESSONS_DEBUG="${LESSONS_DEBUG:-}" \
+        CLAUDE_SESSION_ID="${_HOOK_SESSION_ID:-}" \
         timeout "$SCORE_RELEVANCE_TIMEOUT" \
         "$GO_RECALL" score-local "$prompt" \
             --top "$TOP_LESSONS" \

@@ -1650,6 +1650,7 @@ func (a *App) runScoreLocal(args []string) int {
 			elog.Append(eventlog.Event{
 				Timestamp: now,
 				Type:      "injection",
+				Session:   os.Getenv("CLAUDE_SESSION_ID"),
 				Lesson:    sl.Lesson.ID,
 				Score:     sl.Score,
 				Query:     query,
