@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/pbrown/claude-recall/internal/eventlog"
 	"github.com/pbrown/claude-recall/internal/lock"
 	"github.com/pbrown/claude-recall/internal/models"
 )
@@ -36,6 +37,14 @@ func Decay(store *Store, config DecayConfig) (int, error) {
 	// Update state file
 	if err := saveDecayState(config.StateFile); err != nil {
 		return count, err
+	}
+
+	// Prune old event log entries (opportunistic, non-fatal)
+	eventLogPath := filepath.Join(filepath.Dir(config.StateFile), "session-log.jsonl")
+	elog := eventlog.New(eventLogPath)
+	if pruned, err := elog.Prune(90); err == nil && pruned > 0 {
+		// Logged but not returned — pruning is housekeeping
+		_ = pruned
 	}
 
 	return count, nil
