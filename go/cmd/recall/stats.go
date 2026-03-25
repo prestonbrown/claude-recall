@@ -27,9 +27,127 @@ func (a *App) runStats(args []string) int {
 	return a.runStatsSession()
 }
 
-// runStatsWeekly shows week-over-week trend report (placeholder).
+// runStatsWeekly shows week-over-week trend report.
 func (a *App) runStatsWeekly() int {
-	fmt.Fprintln(a.stdout, "Weekly stats not yet implemented.")
+	eventLogPath := filepath.Join(a.stateDir, "session-log.jsonl")
+	elog := eventlog.New(eventLogPath)
+
+	now := time.Now()
+	thisWeekStart := now.AddDate(0, 0, -7)
+	lastWeekStart := now.AddDate(0, 0, -14)
+
+	thisWeekEvents, err := elog.ReadFiltered(eventlog.Filter{Since: thisWeekStart})
+	if err != nil {
+		fmt.Fprintf(a.stderr, "error reading event log: %v\n", err)
+		return 1
+	}
+	allRecentEvents, err := elog.ReadFiltered(eventlog.Filter{Since: lastWeekStart})
+	if err != nil {
+		fmt.Fprintf(a.stderr, "error reading event log: %v\n", err)
+		return 1
+	}
+
+	// Split last week events (before thisWeekStart)
+	var lastWeekOnly []eventlog.Event
+	for _, e := range allRecentEvents {
+		if e.Timestamp.Before(thisWeekStart) {
+			lastWeekOnly = append(lastWeekOnly, e)
+		}
+	}
+
+	// Count for this week
+	sessions := make(map[string]bool)
+	var injCount, citCount int
+	for _, e := range thisWeekEvents {
+		if e.Session != "" {
+			sessions[e.Session] = true
+		}
+		switch e.Type {
+		case "injection":
+			injCount++
+		case "citation":
+			citCount++
+		}
+	}
+
+	// Count for last week
+	var lastInjCount, lastCitCount int
+	for _, e := range lastWeekOnly {
+		switch e.Type {
+		case "injection":
+			lastInjCount++
+		case "citation":
+			lastCitCount++
+		}
+	}
+
+	year, week := now.ISOWeek()
+	fmt.Fprintf(a.stdout, "Weekly Report (%d-W%02d)\n", year, week)
+	fmt.Fprintf(a.stdout, "  Sessions: %d\n", len(sessions))
+	fmt.Fprintf(a.stdout, "  Injections: %d", injCount)
+	if len(sessions) > 0 {
+		fmt.Fprintf(a.stdout, " (avg %.1f/session)", float64(injCount)/float64(len(sessions)))
+	}
+	fmt.Fprintln(a.stdout)
+	fmt.Fprintf(a.stdout, "  Citations: %d\n", citCount)
+	if injCount > 0 {
+		fmt.Fprintf(a.stdout, "  Overall precision: %.1f%%\n", float64(citCount)/float64(injCount)*100)
+	}
+
+	// Per-lesson precision
+	thisWeekPrecision := eventlog.PrecisionByLesson(thisWeekEvents)
+	type lessonStat struct {
+		id        string
+		precision float64
+	}
+	var performers, offenders []lessonStat
+	for id, p := range thisWeekPrecision {
+		if p.Injections < 2 {
+			continue
+		}
+		prec := p.Precision()
+		if prec >= 0.5 {
+			performers = append(performers, lessonStat{id, prec})
+		}
+		if prec < 0.2 {
+			offenders = append(offenders, lessonStat{id, prec})
+		}
+	}
+	sort.Slice(performers, func(i, j int) bool { return performers[i].precision > performers[j].precision })
+	sort.Slice(offenders, func(i, j int) bool { return offenders[i].precision < offenders[j].precision })
+
+	if len(performers) > 0 {
+		fmt.Fprintln(a.stdout, "\n  Top performers:")
+		for i, s := range performers {
+			if i >= 5 {
+				break
+			}
+			fmt.Fprintf(a.stdout, "    [%s] (%.0f%%)\n", s.id, s.precision*100)
+		}
+	}
+	if len(offenders) > 0 {
+		fmt.Fprintln(a.stdout, "\n  Noise offenders:")
+		for i, s := range offenders {
+			if i >= 5 {
+				break
+			}
+			fmt.Fprintf(a.stdout, "    [%s] (%.0f%%)\n", s.id, s.precision*100)
+		}
+	}
+
+	// Week-over-week comparison
+	if lastInjCount > 0 && injCount > 0 {
+		lastPrec := float64(lastCitCount) / float64(lastInjCount) * 100
+		thisPrec := float64(citCount) / float64(injCount) * 100
+		diff := thisPrec - lastPrec
+		sign := "+"
+		if diff < 0 {
+			sign = ""
+		}
+		fmt.Fprintf(a.stdout, "\n  vs Last Week:\n")
+		fmt.Fprintf(a.stdout, "    Precision: %.1f%% -> %.1f%% (%s%.1fpp)\n", lastPrec, thisPrec, sign, diff)
+	}
+
 	return 0
 }
 
