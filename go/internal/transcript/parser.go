@@ -9,8 +9,9 @@ import (
 
 // Message represents a parsed transcript line.
 type Message struct {
-	Type    string // "user", "assistant", "progress", etc.
-	Content string // Extracted text content (empty for non-assistant)
+	Type      string   // "user", "assistant", "progress", etc.
+	Content   string   // Extracted text content (empty for non-assistant)
+	FilePaths []string // File paths from tool_use blocks (Read, Edit, Write, Glob, Grep)
 }
 
 // transcriptLine is the top-level structure of a transcript JSONL line.
@@ -27,9 +28,34 @@ type messagePayload struct {
 
 // contentBlock represents a content block within a message.
 type contentBlock struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	Thinking string `json:"thinking,omitempty"`
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	Thinking string          `json:"thinking,omitempty"`
+	Name     string          `json:"name,omitempty"`
+	Input    json.RawMessage `json:"input,omitempty"`
+}
+
+// toolInput holds the file-path fields present in various tool_use inputs.
+// Read/Edit/Write/Glob use "file_path"; Grep uses "path".
+type toolInput struct {
+	FilePath string `json:"file_path"`
+	Path     string `json:"path"`
+}
+
+// extractFilePath returns the file path from a tool_use content block, or
+// empty string if the block is not a tool_use or carries no path.
+func extractFilePath(block contentBlock) string {
+	if block.Type != "tool_use" || len(block.Input) == 0 {
+		return ""
+	}
+	var ti toolInput
+	if err := json.Unmarshal(block.Input, &ti); err != nil {
+		return ""
+	}
+	if ti.FilePath != "" {
+		return ti.FilePath
+	}
+	return ti.Path
 }
 
 // MaxLineSize is the maximum buffer size for transcript lines (1MB).
@@ -119,10 +145,17 @@ func parseLine(line string) (Message, bool) {
 	// Only extract content from assistant messages
 	if tl.Type == "assistant" && tl.Message != nil {
 		var content strings.Builder
+		seen := make(map[string]bool)
 		for _, block := range tl.Message.Content {
-			// Only include text blocks, not thinking blocks
-			if block.Type == "text" {
+			switch block.Type {
+			case "text":
+				// Only include text blocks, not thinking blocks
 				content.WriteString(block.Text)
+			case "tool_use":
+				if fp := extractFilePath(block); fp != "" && !seen[fp] {
+					msg.FilePaths = append(msg.FilePaths, fp)
+					seen[fp] = true
+				}
 			}
 		}
 		msg.Content = content.String()

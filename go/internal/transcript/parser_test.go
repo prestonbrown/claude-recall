@@ -238,6 +238,78 @@ func Test_Parse_EmptyLines(t *testing.T) {
 	}
 }
 
+func Test_Parse_ExtractsToolUseFilePaths(t *testing.T) {
+	input := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/src/api/handler.go"}},{"type":"text","text":"Reading the file"}]}}`
+	r := strings.NewReader(input)
+	msgs, err := Parse(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if len(msgs[0].FilePaths) != 1 {
+		t.Fatalf("expected 1 file path, got %d", len(msgs[0].FilePaths))
+	}
+	if msgs[0].FilePaths[0] != "/home/user/src/api/handler.go" {
+		t.Errorf("expected /home/user/src/api/handler.go, got %s", msgs[0].FilePaths[0])
+	}
+	if msgs[0].Content != "Reading the file" {
+		t.Errorf("expected text content preserved, got %s", msgs[0].Content)
+	}
+}
+
+func Test_Parse_ExtractsMultipleFilePaths(t *testing.T) {
+	input := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/src/a.go"}},{"type":"tool_use","name":"Edit","input":{"file_path":"/src/b.go","old_string":"x","new_string":"y"}},{"type":"tool_use","name":"Bash","input":{"command":"ls"}},{"type":"text","text":"Done"}]}}`
+	r := strings.NewReader(input)
+	msgs, err := Parse(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs[0].FilePaths) != 2 {
+		t.Fatalf("expected 2 file paths (Read+Edit, not Bash), got %d: %v", len(msgs[0].FilePaths), msgs[0].FilePaths)
+	}
+}
+
+func Test_Parse_DeduplicatesFilePaths(t *testing.T) {
+	input := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/src/a.go"}},{"type":"tool_use","name":"Edit","input":{"file_path":"/src/a.go","old_string":"x","new_string":"y"}}]}}`
+	r := strings.NewReader(input)
+	msgs, err := Parse(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs[0].FilePaths) != 1 {
+		t.Fatalf("expected 1 deduplicated path, got %d", len(msgs[0].FilePaths))
+	}
+}
+
+func Test_Parse_SkipsToolUseWithoutFilePath(t *testing.T) {
+	input := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"git status"}}]}}`
+	r := strings.NewReader(input)
+	msgs, err := Parse(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs[0].FilePaths) != 0 {
+		t.Fatalf("expected 0 file paths for Bash tool, got %d", len(msgs[0].FilePaths))
+	}
+}
+
+func Test_Parse_GrepPathExtraction(t *testing.T) {
+	input := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Grep","input":{"pattern":"TODO","path":"/src/api/"}}]}}`
+	r := strings.NewReader(input)
+	msgs, err := Parse(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs[0].FilePaths) != 1 {
+		t.Fatalf("expected 1 path from Grep, got %d", len(msgs[0].FilePaths))
+	}
+	if msgs[0].FilePaths[0] != "/src/api/" {
+		t.Errorf("expected /src/api/, got %s", msgs[0].FilePaths[0])
+	}
+}
+
 func Test_Parse_LongLine(t *testing.T) {
 	// Create a line with content larger than default 64KB buffer
 	longText := strings.Repeat("x", 100*1024) // 100KB
