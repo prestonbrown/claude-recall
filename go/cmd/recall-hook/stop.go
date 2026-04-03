@@ -14,6 +14,7 @@ import (
 	"github.com/pbrown/claude-recall/internal/config"
 	"github.com/pbrown/claude-recall/internal/eventlog"
 	"github.com/pbrown/claude-recall/internal/lessons"
+	"github.com/pbrown/claude-recall/internal/sessionfiles"
 	"github.com/pbrown/claude-recall/internal/transcript"
 )
 
@@ -188,6 +189,18 @@ func executeStop(input stopInput, stateDir, projectDir string) (stopOutput, erro
 			}
 			citationsProcessed++
 			citedIDs = append(citedIDs, id)
+		}
+	}
+
+	// Collect file paths from tool_use blocks in all messages and write session-files cache
+	var allFilePaths []string
+	for _, msg := range messages {
+		allFilePaths = append(allFilePaths, msg.FilePaths...)
+	}
+	if len(allFilePaths) > 0 {
+		sfPath := sessionfiles.FilePath(stateDir, input.SessionID)
+		if err := sessionfiles.Merge(sfPath, allFilePaths); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to write session-files cache: %v\n", err)
 		}
 	}
 

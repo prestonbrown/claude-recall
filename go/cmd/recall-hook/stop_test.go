@@ -314,6 +314,45 @@ func Test_StopHook_NoCitationsInUserMessages(t *testing.T) {
 	}
 }
 
+func Test_StopHook_WritesSessionFileCache(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create transcript with tool_use blocks referencing file paths
+	transcriptPath := filepath.Join(tmpDir, "transcript.jsonl")
+	transcript := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/src/foo.go"}},{"type":"tool_use","name":"Edit","input":{"file_path":"/src/bar.go"}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Grep","input":{"path":"/src/baz.go"}},{"type":"text","text":"Here is the result"}]}}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0644); err != nil {
+		t.Fatalf("failed to write transcript: %v", err)
+	}
+
+	input := stopInput{
+		Cwd:            tmpDir,
+		SessionID:      "test-session-files",
+		TranscriptPath: transcriptPath,
+	}
+
+	_, err := executeStop(input, tmpDir, tmpDir)
+	if err != nil {
+		t.Fatalf("executeStop failed: %v", err)
+	}
+
+	// Verify session-files cache was written
+	sfPath := filepath.Join(tmpDir, "session-files-test-session-files.json")
+	data, err := os.ReadFile(sfPath)
+	if err != nil {
+		t.Fatalf("session-files cache not written: %v", err)
+	}
+
+	content := string(data)
+	expectedPaths := []string{"/src/foo.go", "/src/bar.go", "/src/baz.go"}
+	for _, p := range expectedPaths {
+		if !strings.Contains(content, p) {
+			t.Errorf("expected path %q not found in session-files cache: %s", p, content)
+		}
+	}
+}
+
 func Test_StopHook_ProcessesCitations(t *testing.T) {
 	tmpDir := t.TempDir()
 
