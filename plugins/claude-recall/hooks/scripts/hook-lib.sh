@@ -346,6 +346,37 @@ clear_dedup() {
 }
 
 # ============================================================
+# SESSION FILE-PATH CACHE HELPERS
+# ============================================================
+
+# Path to session file-path cache
+get_session_files_path() {
+    local session_id="${_HOOK_SESSION_ID:-}"
+    if [[ -z "$session_id" ]]; then
+        return
+    fi
+    echo "${CLAUDE_RECALL_STATE}/session-files-${session_id}.json"
+}
+
+# Clear session file-path cache (called on SessionStart)
+clear_session_files() {
+    local sf_path
+    sf_path=$(get_session_files_path)
+    if [[ -n "$sf_path" ]]; then
+        rm -f "$sf_path"
+    fi
+}
+
+# Read file paths from session-files cache, one per line
+read_session_file_paths() {
+    local sf_path
+    sf_path=$(get_session_files_path)
+    if [[ -n "$sf_path" && -f "$sf_path" ]]; then
+        jq -r '.paths[]' "$sf_path" 2>/dev/null
+    fi
+}
+
+# ============================================================
 # DEBUG HELPERS
 # ============================================================
 

@@ -92,6 +92,37 @@ score_and_format_lessons_haiku() {
     echo "$result"
 }
 
+# Get file-path context tokens to augment BM25 query.
+# Reads session-files cache first, falls back to git diff/status.
+get_file_context_tokens() {
+    local project_root="$1"
+    local file_paths=""
+
+    # Try session-files cache first
+    file_paths=$(read_session_file_paths 2>/dev/null)
+
+    # Fallback: git diff + status if no session files yet
+    if [[ -z "$file_paths" && -d "$project_root/.git" ]]; then
+        file_paths=$(cd "$project_root" && {
+            git diff --name-only 2>/dev/null
+            git status --porcelain 2>/dev/null | awk '{print $2}'
+        } | sort -u)
+    fi
+
+    if [[ -z "$file_paths" ]]; then
+        return
+    fi
+
+    # Extract path segments: strip extensions, split on /, deduplicate
+    # Drop segments shorter than 2 chars
+    echo "$file_paths" | while IFS= read -r path; do
+        # Strip project root prefix
+        path="${path#$project_root/}"
+        # Split on / and process each segment
+        echo "$path" | tr '/' '\n'
+    done | sed 's/\.[a-zA-Z]*$//' | awk 'length >= 2' | sort -u | head -20 | tr '\n' ' '
+}
+
 # Log when prompt-submit injection is skipped
 log_injection_skip() {
     local project_root="$1" reason="$2" detail="$3"
@@ -132,15 +163,24 @@ main() {
         use_haiku=$(get_setting "useHaikuScoring" "false")
     fi
 
+    # Augment query with file-path context tokens
+    local file_tokens
+    file_tokens=$(get_file_context_tokens "$project_root")
+    local augmented_prompt="$prompt"
+    if [[ -n "$file_tokens" ]]; then
+        augmented_prompt="$prompt $file_tokens"
+        log_debug "query_augmented: file_tokens=$file_tokens"
+    fi
+
     # Score lessons against the prompt
     local scored_lessons
     if [[ "$use_haiku" == "true" ]]; then
-        if ! scored_lessons=$(score_and_format_lessons_haiku "$prompt" "$cwd"); then
+        if ! scored_lessons=$(score_and_format_lessons_haiku "$augmented_prompt" "$cwd"); then
             log_injection_skip "$project_root" "score_failed" "timeout or error from score-relevance (haiku)"
             exit 0
         fi
     else
-        if ! scored_lessons=$(score_and_format_lessons "$prompt" "$cwd"); then
+        if ! scored_lessons=$(score_and_format_lessons "$augmented_prompt" "$cwd"); then
             log_injection_skip "$project_root" "score_failed" "timeout or error from score-local"
             exit 0
         fi
