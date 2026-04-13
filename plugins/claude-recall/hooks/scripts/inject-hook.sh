@@ -134,9 +134,10 @@ main() {
         export CLAUDE_RECALL_SESSION="$claude_session_id"
     fi
 
-    # Clear session dedup state for fresh session
+    # Clear session dedup state and file-path cache for fresh session
     _HOOK_SESSION_ID="$claude_session_id"
     clear_dedup
+    clear_session_files
 
     # Generate lessons context in single call
     local phase_start
