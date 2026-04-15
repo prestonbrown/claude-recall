@@ -403,6 +403,15 @@ func (a *App) runEdit(args []string) int {
 		return 1
 	}
 
+	// Reset injection-stats when lesson content changes
+	if strings.HasPrefix(id, "L") {
+		projectStatsPath := feedback.StatsFilePath(filepath.Join(a.projectDir, ".claude-recall"))
+		feedback.ResetLesson(projectStatsPath, id)
+	} else {
+		systemStatsPath := feedback.StatsFilePath(a.stateDir)
+		feedback.ResetLesson(systemStatsPath, id)
+	}
+
 	fmt.Fprintf(a.stdout, "Updated lesson %s\n", id)
 	return 0
 }
@@ -490,6 +499,15 @@ func (a *App) runDismiss(args []string) int {
 	if err != nil {
 		fmt.Fprintf(a.stderr, "error logging dismiss: %v\n", err)
 		return 1
+	}
+
+	// Reset injection-stats for dismissed lesson
+	if strings.HasPrefix(lessonID, "L") {
+		projectStatsPath := feedback.StatsFilePath(filepath.Join(a.projectDir, ".claude-recall"))
+		feedback.ResetLesson(projectStatsPath, lessonID)
+	} else {
+		systemStatsPath := feedback.StatsFilePath(a.stateDir)
+		feedback.ResetLesson(systemStatsPath, lessonID)
 	}
 
 	fmt.Fprintf(a.stdout, "Dismissed [%s] %s for this session.\n", lessonID, lesson.Title)
