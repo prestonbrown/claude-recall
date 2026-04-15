@@ -21,6 +21,10 @@ type Config struct {
 	EventLogEnabled       *bool `json:"event_log_enabled"`        // Master switch for session-log writing, default: true
 	EventLogRetentionDays int   `json:"event_log_retention_days"` // Events older than this pruned during decay, default: 90
 	DigestEnabled         *bool `json:"digest_enabled"`           // Whether to auto-generate weekly digests, default: true
+
+	FeedbackMinInjections int     `json:"feedbackMinInjections"` // Min injections before penalty eligible, default: 5
+	FeedbackMaxCiteRatio  float64 `json:"feedbackMaxCiteRatio"`  // Citation ratio below which penalty applies, default: 0.2
+	FeedbackPenalty       float64 `json:"feedbackPenalty"`       // Score multiplier applied to penalized lessons, default: 0.5
 }
 
 // Load reads configuration from the given JSON file path,
@@ -80,6 +84,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.DigestEnabled == nil {
 		cfg.DigestEnabled = boolPtr(true)
+	}
+	if cfg.FeedbackMinInjections == 0 {
+		cfg.FeedbackMinInjections = 5
+	}
+	if cfg.FeedbackMaxCiteRatio == 0 {
+		cfg.FeedbackMaxCiteRatio = 0.2
+	}
+	if cfg.FeedbackPenalty == 0 {
+		cfg.FeedbackPenalty = 0.5
 	}
 }
 
