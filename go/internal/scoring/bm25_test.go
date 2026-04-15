@@ -188,3 +188,42 @@ func TestBM25_NoTriggersUnchanged(t *testing.T) {
 		t.Errorf("expected L001 first, got %s", results[0].Lesson.ID)
 	}
 }
+
+func TestApplyPenalties(t *testing.T) {
+	results := []ScoredLesson{
+		{Lesson: &models.Lesson{ID: "L001"}, Score: 8},
+		{Lesson: &models.Lesson{ID: "L002"}, Score: 6},
+		{Lesson: &models.Lesson{ID: "L003"}, Score: 4},
+	}
+	penalties := map[string]float64{
+		"L002": 0.5,
+	}
+	penalized := ApplyPenalties(results, penalties)
+	if penalized[0].Score != 8 {
+		t.Errorf("L001 should be unchanged, got %d", penalized[0].Score)
+	}
+	if penalized[1].Score != 4 {
+		t.Errorf("L003 should be unchanged, got %d", penalized[1].Score)
+	}
+	if penalized[2].Score != 3 {
+		t.Errorf("L002 should be 6*0.5=3, got %d", penalized[2].Score)
+	}
+}
+
+func TestApplyPenalties_ResortsAfterPenalty(t *testing.T) {
+	results := []ScoredLesson{
+		{Lesson: &models.Lesson{ID: "L001"}, Score: 8},
+		{Lesson: &models.Lesson{ID: "L002"}, Score: 7},
+		{Lesson: &models.Lesson{ID: "L003"}, Score: 6},
+	}
+	penalties := map[string]float64{
+		"L001": 0.5,
+	}
+	penalized := ApplyPenalties(results, penalties)
+	if penalized[0].Lesson.ID != "L002" {
+		t.Errorf("L002 should be first after L001 penalized, got %s", penalized[0].Lesson.ID)
+	}
+	if penalized[2].Lesson.ID != "L001" {
+		t.Errorf("L001 should be last after penalty, got %s", penalized[2].Lesson.ID)
+	}
+}

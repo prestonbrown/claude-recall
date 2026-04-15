@@ -16,6 +16,7 @@ import (
 	"github.com/pbrown/claude-recall/internal/config"
 	"github.com/pbrown/claude-recall/internal/eventlog"
 	"github.com/pbrown/claude-recall/internal/debuglog"
+	"github.com/pbrown/claude-recall/internal/feedback"
 	"github.com/pbrown/claude-recall/internal/handoffs"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/models"
@@ -35,6 +36,7 @@ type App struct {
 	projectDir      string // Project root directory
 	debugLevel      int    // Debug level 0-3
 	eventLogEnabled bool   // Whether event logging is enabled
+	cfg             *config.Config // Loaded configuration
 }
 
 // NewApp creates a new App with default stdout/stderr/stdin
@@ -78,6 +80,7 @@ func (a *App) initPaths() error {
 	}
 	a.projectDir = cfg.ProjectDir
 	a.debugLevel = cfg.DebugLevel
+	a.cfg = cfg
 	a.eventLogEnabled = cfg.EventLogEnabled != nil && *cfg.EventLogEnabled
 
 	return nil
@@ -1607,13 +1610,36 @@ func (a *App) runScoreLocal(args []string) int {
 	scorer := scoring.NewBM25Scorer(allLessons)
 	results := scorer.Score(query)
 
-	// Filter and limit results
-	count := 0
+	// Apply feedback penalties to reduce scores of frequently-injected but rarely-cited lessons
+	projectStatsPath := feedback.StatsFilePath(filepath.Join(a.projectDir, ".claude-recall"))
+	systemStatsPath := feedback.StatsFilePath(a.stateDir)
+	projectStats, _ := feedback.ReadStats(projectStatsPath)
+	systemStats, _ := feedback.ReadStats(systemStatsPath)
+
+	penalties := make(map[string]float64)
+	for _, r := range results {
+		id := r.Lesson.ID
+		var penalized bool
+		if strings.HasPrefix(id, "L") {
+			penalized = feedback.ShouldPenalize(projectStats, id, a.cfg.FeedbackMinInjections, a.cfg.FeedbackMaxCiteRatio)
+		} else {
+			penalized = feedback.ShouldPenalize(systemStats, id, a.cfg.FeedbackMinInjections, a.cfg.FeedbackMaxCiteRatio)
+		}
+		if penalized {
+			penalties[id] = a.cfg.FeedbackPenalty
+		}
+	}
+	if len(penalties) > 0 {
+		results = scoring.ApplyPenalties(results, penalties)
+	}
+
+	// Filter and limit results, collecting output for injection tracking
+	var outputResults []scoring.ScoredLesson
 	for _, sl := range results {
 		if sl.Score < minScore {
 			continue
 		}
-		if count >= topN {
+		if len(outputResults) >= topN {
 			break
 		}
 
@@ -1625,28 +1651,31 @@ func (a *App) runScoreLocal(args []string) int {
 
 		fmt.Fprintf(a.stdout, "[%s] %s (relevance: %d/10) %s\n", sl.Lesson.ID, stars, sl.Score, sl.Lesson.Title)
 		fmt.Fprintf(a.stdout, "    -> %s\n", sl.Lesson.Content)
-		count++
+		outputResults = append(outputResults, sl)
 	}
 
-	if count == 0 {
+	if len(outputResults) == 0 {
 		fmt.Fprintln(a.stdout, "No relevant lessons found.")
 	}
 
-	fmt.Fprintf(a.stderr, "\nShowing %d results (local BM25)\n", count)
+	fmt.Fprintf(a.stderr, "\nShowing %d results (local BM25)\n", len(outputResults))
+
+	// Track injection counts for feedback loop
+	for _, sl := range outputResults {
+		id := sl.Lesson.ID
+		if strings.HasPrefix(id, "L") {
+			feedback.IncrementInjection(projectStatsPath, id)
+		} else {
+			feedback.IncrementInjection(systemStatsPath, id)
+		}
+	}
 
 	// Emit injection events to session log
 	if a.eventLogEnabled {
 		eventLogPath := filepath.Join(a.stateDir, "session-log.jsonl")
 		elog := eventlog.New(eventLogPath)
 		now := time.Now()
-		emitted := 0
-		for _, sl := range results {
-			if sl.Score < minScore {
-				continue
-			}
-			if emitted >= topN {
-				break
-			}
+		for _, sl := range outputResults {
 			elog.Append(eventlog.Event{
 				Timestamp: now,
 				Type:      "injection",
@@ -1657,7 +1686,6 @@ func (a *App) runScoreLocal(args []string) int {
 				Hook:      "prompt_submit",
 				Project:   a.projectDir,
 			})
-			emitted++
 		}
 	}
 

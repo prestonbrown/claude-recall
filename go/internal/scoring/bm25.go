@@ -200,3 +200,19 @@ func (s *BM25Scorer) Score(query string) []ScoredLesson {
 
 	return results
 }
+
+// ApplyPenalties applies score multipliers to specific lessons and re-sorts.
+func ApplyPenalties(results []ScoredLesson, penalties map[string]float64) []ScoredLesson {
+	for i, r := range results {
+		if mult, ok := penalties[r.Lesson.ID]; ok {
+			results[i].Score = int(float64(r.Score) * mult)
+		}
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		return results[i].Lesson.Uses > results[j].Lesson.Uses
+	})
+	return results
+}
