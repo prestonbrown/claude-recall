@@ -353,6 +353,144 @@ func Test_StopHook_WritesSessionFileCache(t *testing.T) {
 	}
 }
 
+func Test_StopHook_IncrementsCitationStats(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create project .claude-recall directory (where project stats live)
+	clauceRecallDir := filepath.Join(tmpDir, ".claude-recall")
+	if err := os.MkdirAll(clauceRecallDir, 0755); err != nil {
+		t.Fatalf("failed to create .claude-recall dir: %v", err)
+	}
+
+	// Create a project lessons file with L001
+	lessonsPath := filepath.Join(clauceRecallDir, "LESSONS.md")
+	lessonsContent := `# LESSONS.md - Project Level
+
+## Active Lessons
+
+### [L001] [*****] Test lesson
+- **Uses**: 5 | **Velocity**: 2.0 | **Learned**: 2024-01-01 | **Last**: 2024-01-01 | **Category**: testing
+> This is a test lesson for citation stats
+`
+	if err := os.WriteFile(lessonsPath, []byte(lessonsContent), 0644); err != nil {
+		t.Fatalf("failed to write lessons: %v", err)
+	}
+
+	// Create transcript with citation to L001
+	transcriptPath := filepath.Join(tmpDir, "transcript.jsonl")
+	transcript := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Applying [L001]: the lesson content here"}]}}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0644); err != nil {
+		t.Fatalf("failed to write transcript: %v", err)
+	}
+
+	stateDir := filepath.Join(tmpDir, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatalf("failed to create state dir: %v", err)
+	}
+
+	input := stopInput{
+		Cwd:            tmpDir,
+		SessionID:      "test-session-stats",
+		TranscriptPath: transcriptPath,
+	}
+
+	result, err := executeStop(input, stateDir, tmpDir)
+	if err != nil {
+		t.Fatalf("executeStop failed: %v", err)
+	}
+
+	if len(result.Citations) != 1 || result.Citations[0] != "L001" {
+		t.Fatalf("citations = %v, want [L001]", result.Citations)
+	}
+
+	// Verify citation count was incremented in project injection-stats.json
+	statsPath := filepath.Join(clauceRecallDir, "injection-stats.json")
+	data, err := os.ReadFile(statsPath)
+	if err != nil {
+		t.Fatalf("injection-stats.json not written at %s: %v", statsPath, err)
+	}
+
+	var stats map[string]struct {
+		Injections int `json:"injections"`
+		Citations  int `json:"citations"`
+	}
+	if err := json.Unmarshal(data, &stats); err != nil {
+		t.Fatalf("failed to parse injection-stats.json: %v", err)
+	}
+
+	l001 := stats["L001"]
+	if l001.Citations != 1 {
+		t.Errorf("L001 citations = %d, want 1", l001.Citations)
+	}
+}
+
+func Test_StopHook_IncrementsCitationStats_SystemLesson(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	stateDir := filepath.Join(tmpDir, "state")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatalf("failed to create state dir: %v", err)
+	}
+
+	// Create a system lessons file with S001
+	systemLessonsPath := filepath.Join(stateDir, "LESSONS.md")
+	systemLessonsContent := `# LESSONS.md - System Level
+
+## Active Lessons
+
+### [S001] [*****] System test lesson
+- **Uses**: 3 | **Velocity**: 1.0 | **Learned**: 2024-01-01 | **Last**: 2024-01-01 | **Category**: testing
+> This is a system test lesson for citation stats
+`
+	if err := os.WriteFile(systemLessonsPath, []byte(systemLessonsContent), 0644); err != nil {
+		t.Fatalf("failed to write system lessons: %v", err)
+	}
+
+	// Create transcript with citation to S001
+	transcriptPath := filepath.Join(tmpDir, "transcript.jsonl")
+	transcript := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Using [S001]: the system lesson"}]}}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0644); err != nil {
+		t.Fatalf("failed to write transcript: %v", err)
+	}
+
+	input := stopInput{
+		Cwd:            tmpDir,
+		SessionID:      "test-session-system-stats",
+		TranscriptPath: transcriptPath,
+	}
+
+	result, err := executeStop(input, stateDir, tmpDir)
+	if err != nil {
+		t.Fatalf("executeStop failed: %v", err)
+	}
+
+	if len(result.Citations) != 1 || result.Citations[0] != "S001" {
+		t.Fatalf("citations = %v, want [S001]", result.Citations)
+	}
+
+	// Verify citation count was incremented in system injection-stats.json
+	statsPath := filepath.Join(stateDir, "injection-stats.json")
+	data, err := os.ReadFile(statsPath)
+	if err != nil {
+		t.Fatalf("injection-stats.json not written at %s: %v", statsPath, err)
+	}
+
+	var stats map[string]struct {
+		Injections int `json:"injections"`
+		Citations  int `json:"citations"`
+	}
+	if err := json.Unmarshal(data, &stats); err != nil {
+		t.Fatalf("failed to parse injection-stats.json: %v", err)
+	}
+
+	s001 := stats["S001"]
+	if s001.Citations != 1 {
+		t.Errorf("S001 citations = %d, want 1", s001.Citations)
+	}
+}
+
 func Test_StopHook_ProcessesCitations(t *testing.T) {
 	tmpDir := t.TempDir()
 

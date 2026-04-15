@@ -13,6 +13,7 @@ import (
 	"github.com/pbrown/claude-recall/internal/citations"
 	"github.com/pbrown/claude-recall/internal/config"
 	"github.com/pbrown/claude-recall/internal/eventlog"
+	"github.com/pbrown/claude-recall/internal/feedback"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/sessionfiles"
 	"github.com/pbrown/claude-recall/internal/transcript"
@@ -189,6 +190,19 @@ func executeStop(input stopInput, stateDir, projectDir string) (stopOutput, erro
 			}
 			citationsProcessed++
 			citedIDs = append(citedIDs, id)
+
+			// Increment citation count in feedback stats
+			if strings.HasPrefix(id, "L") {
+				projectStatsPath := feedback.StatsFilePath(filepath.Join(projectDir, ".claude-recall"))
+				if err := feedback.IncrementCitation(projectStatsPath, id); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to increment citation stat for %s: %v\n", id, err)
+				}
+			} else {
+				systemStatsPath := feedback.StatsFilePath(stateDir)
+				if err := feedback.IncrementCitation(systemStatsPath, id); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to increment citation stat for %s: %v\n", id, err)
+				}
+			}
 		}
 	}
 
