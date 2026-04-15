@@ -96,6 +96,32 @@ func TestShouldPenalize_UnknownLesson(t *testing.T) {
 	}
 }
 
+func TestPrecisionFlow_FeedbackPenalty(t *testing.T) {
+	dir := t.TempDir()
+	statsPath := filepath.Join(dir, "injection-stats.json")
+
+	// Simulate 7 injections with 0 citations for L008
+	for i := 0; i < 7; i++ {
+		IncrementInjection(statsPath, "L008")
+	}
+
+	stats, _ := ReadStats(statsPath)
+
+	// Should be penalized (7 injections, 0 citations, ratio 0.0 < 0.2)
+	if !ShouldPenalize(stats, "L008", 5, 0.2) {
+		t.Error("L008 should be penalized: 7 injections, 0 citations")
+	}
+
+	// Simulate 2 citations — ratio becomes 2/7 ≈ 0.29 > 0.2
+	IncrementCitation(statsPath, "L008")
+	IncrementCitation(statsPath, "L008")
+
+	stats, _ = ReadStats(statsPath)
+	if ShouldPenalize(stats, "L008", 5, 0.2) {
+		t.Error("L008 should NOT be penalized after citations: ratio 0.29 > 0.2")
+	}
+}
+
 func TestResetLesson(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "injection-stats.json")

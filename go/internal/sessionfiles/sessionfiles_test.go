@@ -83,3 +83,29 @@ func TestFilePath_ForSession(t *testing.T) {
 		t.Errorf("expected %s, got %s", expected, result)
 	}
 }
+
+func TestPrecisionFlow_FilePathAugmentation(t *testing.T) {
+	dir := t.TempDir()
+
+	// Set up session-files cache with API-related paths
+	stateDir := filepath.Join(dir, "state")
+	os.MkdirAll(stateDir, 0755)
+	sfPath := FilePath(stateDir, "test-session")
+	Write(sfPath, []string{"/proj/src/api/handler.go", "/proj/src/api/router.go"})
+
+	// Read and extract segments
+	paths, _ := Read(sfPath)
+	segments := ExtractSegments(paths, "/proj")
+
+	// Verify segments include "api", "handler", "router" but not extensions
+	segSet := make(map[string]bool)
+	for _, s := range segments {
+		segSet[s] = true
+	}
+	if !segSet["api"] || !segSet["handler"] || !segSet["router"] {
+		t.Errorf("expected api/handler/router segments, got %v", segments)
+	}
+	if segSet["go"] {
+		t.Error("should not include file extension 'go'")
+	}
+}
