@@ -35,7 +35,7 @@ Create todos for each phase/step to track progress.
 
 1. **Delegate work** → See `/delegate` for rules
 2. **Write tests first** → See `/test-first` for discipline
-3. **Review before commit** → See `/review` for checklist
+3. **Review before commit** → Run `/code-review` (built-in)
 
 ### Per Phase
 
