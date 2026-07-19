@@ -486,6 +486,16 @@ install_opencode() {
         log_success "Installed lessons.ts plugin"
     fi
 
+    # Pure-logic submodule imported by lessons.ts. Must live in a
+    # subdirectory: OpenCode auto-loads every top-level plugins/*.ts as a
+    # plugin entry (and calls each exported function), but does not scan
+    # subdirectories.
+    if [[ -f "$SCRIPT_DIR/adapters/opencode/lib/memory.ts" ]]; then
+        mkdir -p "$plugin_dir/lib"
+        cp "$SCRIPT_DIR/adapters/opencode/lib/memory.ts" "$plugin_dir/lib/memory.ts"
+        log_success "Installed plugins/lib/memory.ts"
+    fi
+
     if [[ -f "$SCRIPT_DIR/adapters/opencode/command/lessons.md" ]]; then
         cp "$SCRIPT_DIR/adapters/opencode/command/lessons.md" "$command_dir/"
         log_success "Installed /lessons command"
@@ -577,10 +587,13 @@ uninstall() {
 
     # Remove OpenCode adapter
     rm -f "$HOME/.config/opencode/plugins/lessons.ts"
+    rm -f "$HOME/.config/opencode/plugins/lib/memory.ts"
+    rmdir "$HOME/.config/opencode/plugins/lib" 2>/dev/null || true
     rm -f "$HOME/.config/opencode/plugins/lesson-reminder.ts"
     rm -f "$HOME/.config/opencode/plugin/lessons.ts"
     rm -f "$HOME/.config/opencode/plugin/lesson-reminder.ts"
     rm -f "$HOME/.config/opencode/command/lessons.md"
+    rm -f "$HOME/.config/opencode/command/handoffs.md"
 
     # Remove CLI
     rm -f "$HOME/.local/bin/claude-recall"

@@ -1,14 +1,51 @@
 // SPDX-License-Identifier: MIT
-// OpenCode adapter - thin wrapper delegating to Go CLI (recall opencode <cmd>)
+// OpenCode adapter - thin wrapper delegating to the Go CLI (recall opencode <cmd>).
+//
+// Rewritten for @opencode-ai/plugin 1.17.5 (OpenCode 1.18.x):
+//   - Lifecycle arrives via the single `event` hook (Event union from the SDK);
+//     the old top-level "session.created"/"session.idle"/"message.created"/
+//     "session.compacted"/"command.executed" hooks no longer exist.
+//   - Session-start context (lessons + handoffs + todos + duty reminders +
+//     MEMORY.md) is injected via experimental.chat.system.transform.
+//   - First-prompt relevance + periodic reminders append synthetic parts in
+//     chat.message instead of client.session.prompt({ noReply: true }).
+//   - Pre-compact context is pushed to experimental.session.compacting's
+//     output.context instead of a synthetic prompt.
+//   - Todo sync uses the native todo.updated event: OpenCode's todo tool is
+//     `todowrite` and the SDK delivers the full todo list, so the old
+//     tool.execute.after hook (coupled to Claude Code's tool naming) is gone.
+//   - /lessons and /handoffs are native OpenCode commands (command/*.md): the
+//     agent runs the claude-recall CLI itself. The command.executed +
+//     client.session.revert interception hack is deleted.
+//   - WRITE BRIDGE: lessons captured by `recall opencode session-idle` are
+//     mirrored as feedback_<slug>.md files + a bridge-owned MEMORY.md section
+//     (lib/memory.ts), so Claude Code sessions read them via auto-memory.
+//   - DEEP READ: the first prompt of a session also ranks the actual memory
+//     FILES (not just the MEMORY.md index) and injects the top matches as a
+//     <relevant-memory> synthetic part.
 
 import type { Plugin } from "@opencode-ai/plugin"
+import type { Part, TextPart, Todo } from "@opencode-ai/sdk"
 import { readFileSync, existsSync, appendFileSync, mkdirSync, readdirSync, accessSync, constants } from 'fs';
 import { join, delimiter, dirname } from 'path';
 import { homedir } from 'os';
 import { spawn } from 'child_process';
+// Pure MEMORY.md logic lives in lib/ (OpenCode auto-loads every top-level
+// plugins/*.ts as a plugin entry; subdirectories are import-safe).
+import {
+  readMemoryContext, memoryDirOrCreate, parseLessonsFile, mirrorLessonsBatch,
+  rankMemoryFiles, MEMORY_INJECT_FILE_CAP,
+} from "./lib/memory";
 
 // Configuration
-const DEFAULT_CONFIG = { enabled: true, topLessonsToShow: 5, relevanceTopN: 5, remindEvery: 12, debugLevel: 1 };
+const DEFAULT_CONFIG = {
+  enabled: true, topLessonsToShow: 5, relevanceTopN: 5, remindEvery: 12, debugLevel: 1,
+  memoryMaxBytes: 8192,
+  mirrorMemory: true,            // write bridge: opencode lessons -> memory files
+  mirrorMemoryMaxPerSession: 10, // runaway cap on mirrored files per session
+  memoryRelevance: true,         // deep read: rank memory files on first prompt
+  memoryRelevanceTopN: 2,        // how many top-scoring memory files to inject
+};
 type Config = typeof DEFAULT_CONFIG;
 let CONFIG: Config = DEFAULT_CONFIG;
 
@@ -34,7 +71,10 @@ function log(level: LogLevel, event: string, data?: Record<string, any>): void {
   } catch { /* ignore */ }
 }
 
-// CLI Detection
+// CLI detection. The `recall` Go binary handles everything this adapter needs
+// (`opencode <sub>`, `score-relevance`, `inject`, `handoff ...`). The
+// `claude-recall` wrapper is NOT a fallback: it routes unknown commands to the
+// Python TUI, which would hang on `opencode <sub>`.
 const isExec = (p: string) => { try { accessSync(p, constants.X_OK); return true; } catch { return false; } };
 
 function findBinary(name: string): string | null {
@@ -48,7 +88,7 @@ function findBinary(name: string): string | null {
 }
 
 function findRecallBinary(): string | null {
-  const recall = findBinary('recall') || findBinary('claude-recall');
+  const recall = findBinary('recall');
   if (recall) return recall;
   const cache = join(homedir(), '.claude', 'plugins', 'cache', 'claude-recall', 'claude-recall');
   if (existsSync(cache)) {
@@ -61,84 +101,46 @@ function findRecallBinary(): string | null {
 
 // Cache binary lookup at module load
 let RECALL_BINARY: string | null = null;
-try { RECALL_BINARY = findRecallBinary(); } catch { /* will handle in execGo */ }
+try { RECALL_BINARY = findRecallBinary(); } catch { /* handled in execRecall */ }
 
-// Whitelist of allowed Go commands for subprocess calls
+// Whitelists for subprocess calls (defense-in-depth; args are passed as an
+// argv array to spawn, never through a shell).
 const ALLOWED_GO_COMMANDS = new Set(['session-start', 'session-idle', 'pre-compact', 'post-compact', 'session-end']);
+const ALLOWED_CLI_COMMANDS = new Set(['score-relevance', 'inject', 'handoff']);
 
-async function execGo(cmd: string, input: object): Promise<Record<string, any>> {
-  if (!ALLOWED_GO_COMMANDS.has(cmd)) {
-    throw new Error(`Invalid Go command: ${cmd}`);
-  }
-
-  // Validate input is JSON-serializable (defense-in-depth)
-  let inputJson: string;
-  try {
-    inputJson = JSON.stringify(input);
-  } catch (e) {
-    throw new Error(`Invalid input for command ${cmd}: not JSON-serializable`);
-  }
-
-  if (!RECALL_BINARY) {
-    log('error', 'binary.not_found', { cmd });
-    throw new Error("recall binary not found - run ./install.sh --opencode");
-  }
-  const binary = RECALL_BINARY;
-  return new Promise((resolve, reject) => {
-    const proc = spawn(binary, ["opencode", cmd], { env: { ...process.env, PROJECT_DIR: process.cwd() } });
-    let out = "", err = "";
-    const timer = setTimeout(() => { proc.kill(); reject(new Error(`timeout: recall opencode ${cmd}`)); }, 30000);
-    try {
-      proc.stdin.write(inputJson);
-      proc.stdin.end();
-    } catch (e) {
-      clearTimeout(timer);
-      proc.kill();
-      reject(e);
-      return;
-    }
-    proc.stdout.on("data", d => out += d);
-    proc.stderr.on("data", d => err += d);
-    proc.on("close", code => {
-      clearTimeout(timer);
-      if (code !== 0) return reject(new Error(`recall opencode ${cmd}: ${err || out}`));
-      try { resolve(JSON.parse(out)); } catch { reject(new Error(`invalid JSON: ${out}`)); }
-    });
-    proc.on("error", e => { clearTimeout(timer); reject(e); });
-  });
-}
-
-// Legacy CLI for slash commands
-const LEGACY_CLI = findBinary('claude-recall') || join(homedir(), '.config', 'claude-recall', 'core', 'cli.py');
+// Claude Code auto-memory (MEMORY.md): memoryDir / readFileCapped /
+// readMemoryContext are imported from ./lib/memory (pure, unit-tested in
+// tests/plugin_ts/). The plugin reads project memory plus the global tier
+// (memory/global symlink), capped at CONFIG.memoryMaxBytes (default 8192).
 
 // Helpers
-const COMMANDS = new Set(["lessons", "handoffs"]);
-const normCmd = (s: string) => s.trim().replace(/^\/+/, "").toLowerCase();
-const parseCmd = (t: string) => { const m = t.trim().match(/^\/?(\S+)(?:\s+([\s\S]+))?$/); return m ? { name: normCmd(m[1]), args: m[2]?.trim() ?? "" } : null; };
-const getText = (parts: any[]) => (parts || []).filter((p: any) => p?.type === "text").map((p: any) => p.text).join(" ").trim();
-const quote = (s: string) => s === "" ? "''" : `'${s.replace(/'/g, "'\"'\"'")}'`;
-const shellCmd = (exe: string, args: string[]) => [exe, ...args].map(quote).join(" ");
+const getText = (parts: Part[]) => (parts || [])
+  .filter((p): p is TextPart => p?.type === "text" && !(p as TextPart).synthetic)
+  .map(p => p.text).join(" ").trim();
 
-function buildArgs(cmd: string, argText: string): string[] {
-  const args = argText.split(/\s+/).filter(Boolean);
-  if (cmd === "lessons") return args.length ? args : ["list"];
-  if (cmd === "handoffs") return args.length === 0 ? ["handoff", "list"] : args[0] !== "handoff" ? ["handoff", ...args] : args;
-  return args;
+let partCounter = 0;
+function syntheticTextPart(sessionID: string, messageID: string, text: string): TextPart {
+  // OpenCode validates part IDs with a "prt" prefix schema (Session.updatePart);
+  // any other prefix fails the whole user-message save with a SchemaError.
+  return { id: `prt_cr${Date.now().toString(36)}${(partCounter++).toString(36)}`, sessionID, messageID, type: "text", text, synthetic: true };
 }
 
-// Plugin Export
-export const LessonsPlugin: Plugin = async ({ $, client }) => {
-  log('info', 'plugin.loaded', { legacy_cli: LEGACY_CLI });
+interface SessionState { isFirstPrompt: boolean; promptCount: number; compactionOccurred: boolean }
+
+// Plugin export
+export const LessonsPlugin: Plugin = async ({ client, directory }) => {
+  const projectDir = directory || process.cwd();
+  log('info', 'plugin.loaded', { recall_binary: RECALL_BINARY, directory: projectDir });
 
   // Session state
   const checkpoints = new Map<string, number>();
-  const state = new Map<string, { isFirstPrompt: boolean; promptCount: number; compactionOccurred: boolean }>();
+  const state = new Map<string, SessionState>();
   const processing = new Set<string>();
-  const processed = new Map<string, Set<string>>();
-  const lastActivity = new Map<string, number>(); // Track last activity time per session
+  const systemContext = new Map<string, string>(); // cached session-start injection per session
+  const pendingInit = new Map<string, Promise<void>>(); // dedupe concurrent init
+  const lastActivity = new Map<string, number>();
+  const mirrorCounts = new Map<string, number>(); // write-bridge files written per session
 
-  const wasProcessed = (sid: string, mid: string) => processed.get(sid)?.has(mid) ?? false;
-  const markProcessed = (sid: string, mid: string) => { if (!processed.has(sid)) processed.set(sid, new Set()); processed.get(sid)!.add(mid); };
   const touchSession = (sid: string) => lastActivity.set(sid, Date.now());
 
   // Cleanup stale sessions (no activity for 1 hour)
@@ -150,198 +152,419 @@ export const LessonsPlugin: Plugin = async ({ $, client }) => {
         checkpoints.delete(sid);
         state.delete(sid);
         processing.delete(sid);
-        processed.delete(sid);
+        systemContext.delete(sid);
+        pendingInit.delete(sid);
         lastActivity.delete(sid);
+        mirrorCounts.delete(sid);
         log('debug', 'session.stale_cleanup', { session_id: sid });
       }
     }
   };
-  // Run cleanup every 15 minutes
   const cleanupInterval = setInterval(cleanupStaleSessions, 15 * 60 * 1000);
+  cleanupInterval.unref?.(); // never keep the host process alive for this
 
-  const runCmd = async (sid: string, cmd: string, args: string) => {
-    const cmdLine = shellCmd(LEGACY_CLI, buildArgs(cmd, args));
-    try {
-      await client.session.shell({ path: { id: sid }, body: { agent: "claude-recall", command: cmdLine } });
-      log('info', 'command.executed', { cmd, args });
-    } catch (e) {
-      log('warn', 'command.failed', { error: String(e), cmd });
-      try { await client.session.prompt({ path: { id: sid }, body: { noReply: true, parts: [{ type: "text", text: `claude-recall failed: ${e}` }] } }); } catch (e2) { log('debug', 'command.notification_failed', { error: String(e2) }); }
+  // MEMORY.md is project-scoped; read lazily, once per plugin instance.
+  let memoryContext: string | null | undefined;
+  const getMemoryContext = (): string | null => {
+    if (memoryContext === undefined) {
+      memoryContext = readMemoryContext(projectDir, homedir(), CONFIG.memoryMaxBytes);
+      log('debug', memoryContext ? 'memory.loaded' : 'memory.none', { bytes: memoryContext?.length ?? 0 });
     }
+    return memoryContext;
   };
 
-  return {
-    "session.created": async (input) => {
-      const sid = input.session.id;
-      log('info', 'session.start', { session_id: sid });
-
-      try {
-        const result = await execGo("session-start", { cwd: process.cwd(), top_n: CONFIG.topLessonsToShow, include_duties: true, include_todos: true });
-
-        // Only initialize state AFTER successful injection
-        state.set(sid, { isFirstPrompt: true, promptCount: 0, compactionOccurred: false });
-        touchSession(sid);
-
-        const parts: string[] = [];
-        if (result.lessons_context) parts.push(`<lessons-context>\n${result.lessons_context}\n</lessons-context>`);
-        if (result.handoffs_context) parts.push(`<handoffs-context>\n${result.handoffs_context}\n</handoffs-context>`);
-        if (result.todos_prompt) parts.push(`<todos-prompt>\n${result.todos_prompt}\n</todos-prompt>`);
-        if (result.duty_reminders) parts.push(result.duty_reminders);
-        if (parts.length) await client.session.prompt({ path: { id: sid }, body: { noReply: true, parts: [{ type: "text", text: parts.join("\n\n") }] } });
-      } catch (e) {
-        log('error', 'session.injection_failed', { error: String(e) });
-        // Still initialize state but mark as degraded
-        state.set(sid, { isFirstPrompt: true, promptCount: 0, compactionOccurred: false });
-        touchSession(sid);
-      }
-    },
-
-    // TODO: OpenCode does not have a session.end event (as of @opencode-ai/plugin 1.1.49).
-    // When/if they add one, we should call execGo("session-end", ...) to capture final handoff context.
-    // For now, session.deleted is the closest we have, but it doesn't provide conversation state.
-    // The Go CLI has session-end support ready: recall opencode session-end
-    "session.deleted": async (input) => {
-      const sid = input.session.id;
-      checkpoints.delete(sid); state.delete(sid); processing.delete(sid); processed.delete(sid); lastActivity.delete(sid);
-      log('debug', 'session.cleanup', { session_id: sid });
-    },
-
-    "tool.execute.after": async (input) => {
-      if (input.tool !== "TodoWrite") return;
-      const todos = input.result?.todos;
-      if (!Array.isArray(todos)) return;
-      const valid = todos.filter((t: any) => t?.content && t?.status);
-      if (!valid.length) return;
-      const json = JSON.stringify(valid);
-      const sid = input.session?.id;
-      try {
-        const { stdout } = sid ? await $`${LEGACY_CLI} handoff sync-todos ${json} --session-id ${sid}` : await $`${LEGACY_CLI} handoff sync-todos ${json}`;
-        if (stdout) log('info', 'handoff.sync_todos', { result: stdout });
-      } catch (e) { log('debug', 'handoff.sync_failed', { error: String(e) }); }
-    },
-
-    "command.executed": (input) => {
-      void (async () => {
-        if (!CONFIG.enabled) return;
-        const rawName = String(input.command?.name ?? input.name ?? input.command ?? "");
-        let cmd = normCmd(rawName);
-        let args = String(input.command?.arguments ?? input.arguments ?? input.args ?? "");
-        const sid = input.session?.id ?? input.sessionID ?? input.sessionId;
-        const mid = input.message?.id ?? input.messageID ?? input.messageId;
-        if (!sid) return;
-        if (mid && wasProcessed(sid, mid)) return;
-
-        if (mid && (!cmd || !args)) {
-          try { const msg = await client.session.message({ path: { id: sid, messageID: mid } }); const parsed = parseCmd(getText(msg.parts)); if (parsed) { cmd = parsed.name; args = args || parsed.args; } } catch { /* ignore */ }
-        }
-        if (!COMMANDS.has(cmd)) return;
-        if (mid) { markProcessed(sid, mid); try { await client.session.revert({ path: { id: sid }, body: { messageID: mid } }); } catch { /* ignore */ } }
-        await runCmd(sid, cmd, args);
-      })().catch(e => log('error', 'command.executed.failed', { error: String(e) }));
-    },
-
-    "message.created": async (input) => {
-      if (input.message.role !== "user") return;
-      const sid = input.session.id;
-      touchSession(sid);
-      const mid = input.message.id;
-      const text = getText(input.message.parts);
-
-      if (mid && text) {
-        const parsed = parseCmd(text);
-        if (parsed && COMMANDS.has(parsed.name)) {
-          if (wasProcessed(sid, mid)) return;
-          markProcessed(sid, mid);
-          try { await client.session.revert({ path: { id: sid }, body: { messageID: mid } }); } catch { /* ignore */ }
-          await runCmd(sid, parsed.name, parsed.args);
+  // Subprocess execution
+  function execRecall(args: string[], stdinJson?: string): Promise<{ stdout: string; stderr: string }> {
+    if (!RECALL_BINARY) {
+      log('error', 'binary.not_found', { cmd: args[0] });
+      return Promise.reject(new Error("recall binary not found - run ./install.sh --opencode"));
+    }
+    const binary = RECALL_BINARY;
+    return new Promise((resolve, reject) => {
+      const proc = spawn(binary, args, { env: { ...process.env, PROJECT_DIR: projectDir } });
+      let out = "", err = "";
+      const timer = setTimeout(() => { proc.kill(); reject(new Error(`timeout: recall ${args.join(' ')}`)); }, 30000);
+      if (stdinJson !== undefined) {
+        try {
+          proc.stdin.write(stdinJson);
+          proc.stdin.end();
+        } catch (e) {
+          clearTimeout(timer);
+          proc.kill();
+          reject(e);
           return;
         }
       }
+      proc.stdout.on("data", d => out += d);
+      proc.stderr.on("data", d => err += d);
+      proc.on("close", code => {
+        clearTimeout(timer);
+        if (code !== 0) return reject(new Error(`recall ${args.join(' ')}: ${err || out}`));
+        resolve({ stdout: out, stderr: err });
+      });
+      proc.on("error", e => { clearTimeout(timer); reject(e); });
+    });
+  }
 
-      const s = state.get(sid);
-      if (!s || !text.trim()) return;
+  async function execGo(cmd: string, input: object): Promise<Record<string, any>> {
+    if (!ALLOWED_GO_COMMANDS.has(cmd)) {
+      throw new Error(`Invalid Go command: ${cmd}`);
+    }
+    let inputJson: string;
+    try {
+      inputJson = JSON.stringify(input);
+    } catch {
+      throw new Error(`Invalid input for command ${cmd}: not JSON-serializable`);
+    }
+    const { stdout } = await execRecall(["opencode", cmd], inputJson);
+    try { return JSON.parse(stdout); } catch { throw new Error(`invalid JSON: ${stdout}`); }
+  }
 
-      if (s.isFirstPrompt) {
-        try {
-          const { stdout } = await $`${LEGACY_CLI} score-relevance ${text} --top ${CONFIG.relevanceTopN}`;
-          if (stdout?.trim()) await client.session.prompt({ path: { id: sid }, body: { noReply: true, parts: [{ type: "text", text: `<relevant-lessons>\n${stdout}\n</relevant-lessons>` }] } });
-        } catch (e) { log('debug', 'injection.smart_failed', { error: String(e) }); }
-        s.isFirstPrompt = false;
+  async function execCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    if (!args.length || !ALLOWED_CLI_COMMANDS.has(args[0])) {
+      throw new Error(`Invalid CLI command: ${args[0] ?? ''}`);
+    }
+    return execRecall(args);
+  }
+
+  // Session-start context: Go session-start output + MEMORY.md, cached per session.
+  async function buildSessionContext(sid: string): Promise<string> {
+    const parts: string[] = [];
+    const sections: string[] = [];
+    try {
+      const result = await execGo("session-start", { cwd: projectDir, top_n: CONFIG.topLessonsToShow, include_duties: true, include_todos: true });
+      if (result.lessons_context) { parts.push(`<lessons-context>\n${result.lessons_context}\n</lessons-context>`); sections.push('lessons'); }
+      if (result.handoffs_context) { parts.push(`<handoffs-context>\n${result.handoffs_context}\n</handoffs-context>`); sections.push('handoffs'); }
+      if (result.todos_prompt) { parts.push(`<todos-prompt>\n${result.todos_prompt}\n</todos-prompt>`); sections.push('todos'); }
+      if (result.duty_reminders) { parts.push(result.duty_reminders); sections.push('duties'); }
+    } catch (e) {
+      log('error', 'session.injection_failed', { error: String(e), session_id: sid });
+    }
+    const mem = getMemoryContext();
+    if (mem) { parts.push(`<claude-memory>\n${mem}\n</claude-memory>`); sections.push('memory'); }
+    const ctx = parts.join("\n\n");
+    log('info', 'session.context_built', { session_id: sid, sections, bytes: ctx.length });
+    log('debug', 'session.context_content', { session_id: sid, content: ctx });
+    return ctx;
+  }
+
+  // Idempotent, concurrency-safe session init. Called from session.created and
+  // lazily from the injection hooks (covers resumed sessions / plugin reloads).
+  function ensureSession(sid: string): Promise<void> {
+    if (state.has(sid)) return Promise.resolve();
+    let pending = pendingInit.get(sid);
+    if (!pending) {
+      pending = (async () => {
+        log('info', 'session.start', { session_id: sid });
+        const ctx = await buildSessionContext(sid);
+        state.set(sid, { isFirstPrompt: true, promptCount: 0, compactionOccurred: false });
+        systemContext.set(sid, ctx);
+        touchSession(sid);
+      })().finally(() => pendingInit.delete(sid));
+      pendingInit.set(sid, pending);
+    }
+    return pending;
+  }
+
+  const cleanupSession = (sid: string) => {
+    checkpoints.delete(sid);
+    state.delete(sid);
+    processing.delete(sid);
+    systemContext.delete(sid);
+    lastActivity.delete(sid);
+    mirrorCounts.delete(sid);
+  };
+
+  // `recall handoff list` has no --json mode; parse the "ID [status] title" lines.
+  async function findActiveHandoffId(): Promise<string> {
+    try {
+      const { stdout } = await execCli(["handoff", "list"]);
+      for (const line of stdout.split('\n')) {
+        const m = line.match(/^(\S+) \[([^\]]+)\]/);
+        if (m && m[2] !== "completed") return m[1];
+      }
+    } catch { /* no handoffs or CLI failure */ }
+    return "";
+  }
+
+  // WRITE BRIDGE: mirror newly captured project lessons into Claude Code
+  // auto-memory (feedback_<slug>.md + a bridge-owned MEMORY.md section), so
+  // Claude Code sessions on this project pick them up natively. PROJECT
+  // lessons only: system lessons (S###) are user-level memory and the global
+  // tier (~/.claude/memory-global) is Claude Code's domain - we never write
+  // there. Every step is failure-isolated: mirroring must never break the
+  // session.idle flow.
+  function mirrorAddedLessons(sid: string, ids: string[]): void {
+    try {
+      if (!CONFIG.mirrorMemory) {
+        log('debug', 'memory.mirror_skipped', { session_id: sid, reason: 'disabled_by_config', count: ids.length });
+        return;
+      }
+      const projectIds = ids.filter(id => /^L\d{3}$/.test(id));
+      const systemSkipped = ids.length - projectIds.length;
+      if (systemSkipped > 0) {
+        log('debug', 'memory.mirror_skipped', { session_id: sid, reason: 'system_lesson_not_mirrored', count: systemSkipped });
+      }
+      if (!projectIds.length) return;
+
+      const already = mirrorCounts.get(sid) ?? 0;
+      const remaining = Math.max(0, CONFIG.mirrorMemoryMaxPerSession - already);
+      if (remaining <= 0) {
+        log('info', 'memory.mirror_skipped', { session_id: sid, reason: 'session_cap', count: projectIds.length });
+        return;
       }
 
-      s.promptCount++;
-      if (s.promptCount % CONFIG.remindEvery === 0) {
-        try {
-          const { stdout } = await $`${LEGACY_CLI} inject ${CONFIG.topLessonsToShow}`;
-          if (stdout?.trim()) await client.session.prompt({ path: { id: sid }, body: { noReply: true, parts: [{ type: "text", text: `<periodic-reminder>\n${stdout}\n</periodic-reminder>` }] } });
-        } catch (e) { log('debug', 'injection.periodic_failed', { error: String(e) }); }
-        s.promptCount = 0;
+      const dir = memoryDirOrCreate(projectDir, homedir());
+      if (!dir) {
+        log('warn', 'memory.mirror_error', { session_id: sid, error: 'memory dir unavailable', lessons: projectIds });
+        return;
+      }
+
+      // The Go side just wrote these lessons to the project store; read it
+      // back to resolve titles/content (session-idle returns IDs only).
+      let store: Map<string, { title: string; content: string }>;
+      try {
+        store = parseLessonsFile(readFileSync(join(projectDir, '.claude-recall', 'LESSONS.md'), 'utf8'));
+      } catch (e) {
+        log('warn', 'memory.mirror_error', { session_id: sid, error: `lessons store unreadable: ${String(e)}`, lessons: projectIds });
+        return;
+      }
+
+      const lessons: { id: string; title: string; content: string }[] = [];
+      for (const id of projectIds) {
+        const l = store.get(id);
+        if (!l) {
+          log('info', 'memory.mirror_skipped', { session_id: sid, lesson_id: id, reason: 'lesson_not_found' });
+          continue;
+        }
+        lessons.push({ id, title: l.title, content: l.content });
+      }
+      if (!lessons.length) return;
+
+      const outcomes = mirrorLessonsBatch({ memoryDir: dir, lessons, maxToWrite: remaining });
+      for (const o of outcomes) {
+        if (o.status === 'written') {
+          log('info', 'memory.mirror_written', { session_id: sid, lesson_id: o.id, filename: o.filename, index_changed: o.indexChanged === true });
+        } else if (o.status === 'skipped') {
+          log('info', 'memory.mirror_skipped', { session_id: sid, lesson_id: o.id, reason: o.reason });
+        } else {
+          log('warn', 'memory.mirror_error', { session_id: sid, lesson_id: o.id, error: o.error });
+        }
+      }
+      mirrorCounts.set(sid, already + outcomes.filter(o => o.status === 'written').length);
+    } catch (e) {
+      log('warn', 'memory.mirror_error', { session_id: sid, error: String(e) });
+    }
+  }
+
+  async function onSessionIdle(sid: string): Promise<void> {
+    touchSession(sid);
+    if (processing.has(sid)) return;
+    processing.add(sid);
+    try {
+      const res = await client.session.messages({ path: { id: sid } });
+      const msgs = res.data ?? [];
+      const cp = checkpoints.get(sid) ?? 0;
+      const arr = msgs.slice(cp).map(m => ({ role: m.info.role, content: getText(m.parts) }));
+      const result = await execGo("session-idle", { cwd: projectDir, session_id: sid, messages: arr, checkpoint_offset: 0 });
+
+      if (result.error) {
+        log('error', 'session.idle_error', { error: result.error });
+        return; // don't advance checkpoint on error
+      }
+      if (result.citations?.length) log('info', 'lessons.cited', { citations: result.citations });
+      if (result.lessons_added?.length) {
+        log('info', 'lessons.added', { lessons: result.lessons_added });
+        mirrorAddedLessons(sid, result.lessons_added);
+      }
+      if (result.handoff_ops?.length) log('info', 'handoff.ops', { ops: result.handoff_ops });
+      checkpoints.set(sid, msgs.length);
+    } catch (e) {
+      log('debug', 'session.idle_failed', { error: String(e) });
+    } finally {
+      processing.delete(sid);
+    }
+  }
+
+  async function onSessionCompacted(sid: string): Promise<void> {
+    const s = state.get(sid);
+    if (!s) return;
+    log('info', 'compaction.end', { session_id: sid });
+    s.compactionOccurred = true;
+    try {
+      const res = await client.session.messages({ path: { id: sid } });
+      const recent = (res.data ?? []).filter(m => m.info.role === "assistant").slice(-5);
+      const indicators = ["completed", "finished", "done", "implemented", "ready for review", "successfully", "all tests pass"];
+      let hasCompletion = false;
+      for (const m of recent) {
+        const c = getText(m.parts).toLowerCase();
+        if (indicators.some(i => c.includes(i)) && !c.includes("not completed") && !c.includes("not finished") && !c.includes("not done")) { hasCompletion = true; break; }
+      }
+      const result = await execGo("post-compact", { cwd: projectDir, session_id: sid, handoff_id: "", phase: "", summary: "", completion_indicators: hasCompletion, all_todos_complete: false });
+      if (result.suggest_complete) log('info', 'handoff.completion_suggested', { session_id: sid });
+    } catch (e) {
+      log('debug', 'compaction.post_failed', { error: String(e) });
+    }
+  }
+
+  async function onTodoUpdated(sid: string, todos: Todo[]): Promise<void> {
+    const valid = (todos || []).filter(t => t?.content && t?.status);
+    if (!valid.length) return;
+    try {
+      const { stdout } = await execCli(["handoff", "sync-todos", JSON.stringify(valid), "--session-id", sid]);
+      if (stdout.trim()) log('info', 'handoff.sync_todos', { result: stdout.trim() });
+    } catch (e) {
+      log('debug', 'handoff.sync_failed', { error: String(e) });
+    }
+  }
+
+  return {
+    dispose: async () => {
+      clearInterval(cleanupInterval);
+    },
+
+    // All lifecycle events arrive through this single hook in 1.17.5.
+    event: async ({ event }) => {
+      try {
+        switch (event.type) {
+          case "session.created":
+            await ensureSession(event.properties.info.id);
+            break;
+          case "session.deleted":
+            // NOTE: OpenCode still has no session.end event (as of 1.17.5) and
+            // session.deleted carries no conversation state, so there is
+            // nothing useful to send to `recall opencode session-end` (the Go
+            // command exists for when an end event lands). Cleanup only.
+            cleanupSession(event.properties.info.id);
+            log('debug', 'session.cleanup', { session_id: event.properties.info.id });
+            break;
+          case "session.idle":
+            await onSessionIdle(event.properties.sessionID);
+            break;
+          case "session.compacted":
+            await onSessionCompacted(event.properties.sessionID);
+            break;
+          case "todo.updated":
+            await onTodoUpdated(event.properties.sessionID, event.properties.todos);
+            break;
+        }
+      } catch (e) {
+        log('error', 'event.handler_failed', { error: String(e), event_type: event.type });
       }
     },
 
-    "session.idle": async (input) => {
-      const sid = input.session.id;
-      touchSession(sid);
-      if (processing.has(sid)) return;
-      processing.add(sid);
-
+    // Session-start injection: system-prompt level, persists for the session.
+    "experimental.chat.system.transform": async (input, output) => {
+      if (!CONFIG.enabled) return;
+      const sid = input.sessionID;
+      if (!sid) return;
       try {
-        const msgs = await client.session.messages({ path: { id: sid } });
-        const cp = checkpoints.get(sid) ?? 0;
-        const arr = msgs.slice(cp).map(m => ({ role: m.info.role, content: m.parts.filter(p => p.type === "text").map((p: any) => p.text).join("") }));
-        const result = await execGo("session-idle", { cwd: process.cwd(), session_id: sid, messages: arr, checkpoint_offset: 0 });
+        await ensureSession(sid);
+        const ctx = systemContext.get(sid);
+        if (ctx && !output.system.includes(ctx)) {
+          output.system.push(ctx);
+          log('info', 'system.transform_injected', {
+            session_id: sid, bytes: ctx.length,
+            has_memory: ctx.includes('<claude-memory>'),
+            has_lessons: ctx.includes('<lessons-context>'),
+          });
+          log('debug', 'system.transform_content', { session_id: sid, content: ctx });
+        }
+      } catch (e) {
+        log('debug', 'system.transform_failed', { error: String(e) });
+      }
+    },
 
-        // Check for errors before advancing checkpoint
-        if (result.error) {
-          log('error', 'session.idle_error', { error: result.error });
-          return; // Don't advance checkpoint on error
+    // First-prompt relevance injection + periodic reminders, appended as
+    // synthetic parts on the incoming user message.
+    "chat.message": async (input, output) => {
+      if (!CONFIG.enabled) return;
+      const sid = input.sessionID;
+      try {
+        await ensureSession(sid);
+        touchSession(sid);
+        const s = state.get(sid)!;
+        const text = getText(output.parts);
+        if (!text) return;
+        const messageID = input.messageID ?? output.message.id;
+
+        if (s.isFirstPrompt) {
+          try {
+            const { stdout } = await execCli(["score-relevance", text, "--top", String(CONFIG.relevanceTopN)]);
+            if (stdout.trim()) {
+              const part = `<relevant-lessons>\n${stdout.trim()}\n</relevant-lessons>`;
+              output.parts.push(syntheticTextPart(sid, messageID, part));
+              log('info', 'chat.smart_injected', { session_id: sid, bytes: part.length });
+              log('debug', 'chat.smart_content', { session_id: sid, content: part });
+            }
+          } catch (e) { log('debug', 'injection.smart_failed', { error: String(e) }); }
+
+          // DEEP READ: rank the actual memory files against the prompt and
+          // inject the top matches in full (capped). The session-start
+          // injection only carries the MEMORY.md index (one-line pointers);
+          // overlapping pointers are fine - this adds the content behind
+          // them. One-time per session; failure-isolated like the rest.
+          if (CONFIG.memoryRelevance) {
+            try {
+              const t0 = Date.now();
+              const ranked = rankMemoryFiles(text, projectDir, homedir(), { topN: CONFIG.memoryRelevanceTopN });
+              if (ranked.length) {
+                const blocks = ranked.map(r => {
+                  const body = r.content.length > MEMORY_INJECT_FILE_CAP
+                    ? `${r.content.slice(0, MEMORY_INJECT_FILE_CAP).trimEnd()}\n[…truncated]`
+                    : r.content;
+                  return `### ${r.name}\n${body}`;
+                });
+                const part = `<relevant-memory>\n${blocks.join('\n\n')}\n</relevant-memory>`;
+                output.parts.push(syntheticTextPart(sid, messageID, part));
+                log('info', 'chat.memory_relevance_injected', {
+                  session_id: sid, bytes: part.length, ms: Date.now() - t0,
+                  files: ranked.map(r => ({ name: r.name, score: Math.round(r.score * 1000) / 1000 })),
+                });
+                log('debug', 'chat.memory_relevance_content', { session_id: sid, content: part });
+              } else {
+                log('debug', 'chat.memory_relevance_none', { session_id: sid, ms: Date.now() - t0 });
+              }
+            } catch (e) { log('debug', 'injection.memory_relevance_failed', { error: String(e) }); }
+          }
+          s.isFirstPrompt = false;
         }
 
-        // Log successful operations
-        if (result.citations?.length) log('info', 'lessons.cited', { citations: result.citations });
-        if (result.lessons_added?.length) log('info', 'lessons.added', { lessons: result.lessons_added });
-        if (result.handoff_ops?.length) log('info', 'handoff.ops', { ops: result.handoff_ops });
-
-        // Update checkpoint ONLY after successful processing
-        checkpoints.set(sid, msgs.length);
-      } catch (e) { log('debug', 'session.idle_failed', { error: String(e) }); }
-      finally { processing.delete(sid); }
+        s.promptCount++;
+        if (s.promptCount % CONFIG.remindEvery === 0) {
+          try {
+            const { stdout } = await execCli(["inject", String(CONFIG.topLessonsToShow)]);
+            if (stdout.trim()) {
+              const part = `<periodic-reminder>\n${stdout.trim()}\n</periodic-reminder>`;
+              output.parts.push(syntheticTextPart(sid, messageID, part));
+              log('info', 'chat.reminder_injected', { session_id: sid, bytes: part.length });
+            }
+          } catch (e) { log('debug', 'injection.periodic_failed', { error: String(e) }); }
+          s.promptCount = 0;
+        }
+      } catch (e) {
+        log('debug', 'chat.message_failed', { error: String(e) });
+      }
     },
 
-    "experimental.session.compacting": async (input) => {
-      const sid = input.session.id;
+    // Pre-compact: extra context strings for the compaction prompt.
+    "experimental.session.compacting": async (input, output) => {
+      if (!CONFIG.enabled) return;
+      const sid = input.sessionID;
       if (!state.has(sid)) return;
       log('info', 'compaction.start', { session_id: sid });
-
       try {
-        let hid = "";
-        try { const { stdout } = await $`${LEGACY_CLI} handoff list --json`; const hs = JSON.parse(stdout || "[]"); const a = hs.find((h: any) => h.status !== "completed"); if (a) hid = a.id; } catch { /* ignore */ }
-        const result = await execGo("pre-compact", { cwd: process.cwd(), session_id: sid, handoff_id: hid, files_modified: [], todos: [] });
-        if (result.context_to_inject) await client.session.prompt({ path: { id: sid }, body: { noReply: true, parts: [{ type: "text", text: result.context_to_inject }] } });
-      } catch (e) { log('debug', 'compaction.pre_failed', { error: String(e) }); }
-    },
-
-    "session.compacted": async (input) => {
-      const sid = input.session.id;
-      const s = state.get(sid);
-      if (!s) return;
-      log('info', 'compaction.end', { session_id: sid });
-      s.compactionOccurred = true;
-
-      try {
-        const msgs = await client.session.messages({ path: { id: sid } });
-        const recent = msgs.filter(m => m.info.role === "assistant").slice(-5);
-        const indicators = ["completed", "finished", "done", "implemented", "ready for review", "successfully", "all tests pass"];
-        let hasCompletion = false;
-        for (const m of recent) {
-          const c = m.parts.filter((p: any) => p.type === "text").map((p: any) => p.text).join(" ").toLowerCase();
-          if (indicators.some(i => c.includes(i)) && !c.includes("not completed") && !c.includes("not finished") && !c.includes("not done")) { hasCompletion = true; break; }
+        const handoffId = await findActiveHandoffId();
+        const result = await execGo("pre-compact", { cwd: projectDir, session_id: sid, handoff_id: handoffId, files_modified: [], todos: [] });
+        if (result.context_to_inject) {
+          output.context.push(result.context_to_inject);
+          log('info', 'compaction.context_injected', { session_id: sid, bytes: result.context_to_inject.length });
+          log('debug', 'compaction.context_content', { session_id: sid, content: result.context_to_inject });
         }
-        const result = await execGo("post-compact", { cwd: process.cwd(), session_id: sid, handoff_id: "", phase: "", summary: "", completion_indicators: hasCompletion, all_todos_complete: false });
-        if (result.suggest_complete) log('info', 'handoff.completion_suggested', { session_id: sid });
-      } catch (e) { log('debug', 'compaction.post_failed', { error: String(e) }); }
+        if (result.should_create_handoff) log('debug', 'compaction.handoff_suggested', { session_id: sid });
+      } catch (e) {
+        log('debug', 'compaction.pre_failed', { error: String(e) });
+      }
     },
   };
 };
-
-
