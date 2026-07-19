@@ -522,7 +522,22 @@ install_opencode() {
         log_info "Removed old Lessons System section from AGENTS.md"
     fi
 
-    local claude_recall_section='
+    # OpenCode also loads ~/.claude/CLAUDE.md. If that file already documents
+    # Claude Recall, write only a pointer into opencode's AGENTS.md so the
+    # usage block isn't injected twice per session; otherwise write the full
+    # block here as the single source.
+    local claude_md="$HOME/.claude/CLAUDE.md"
+    local claude_recall_section
+    if [[ -f "$claude_md" ]] && grep -q "^## Claude Recall$" "$claude_md" 2>/dev/null; then
+        claude_recall_section='
+## Claude Recall
+
+Usage instructions (lessons, handoffs, LESSON:/HANDOFF: patterns) live in
+~/.claude/CLAUDE.md, which opencode also loads — see the "Claude Recall"
+section there. Not duplicated here to avoid double injection.
+'
+    else
+        claude_recall_section='
 ## Claude Recall
 
 A learning system that tracks lessons and handoffs across sessions.
@@ -541,11 +556,16 @@ A learning system that tracks lessons and handoffs across sessions.
 - Complete: `HANDOFF COMPLETE H001`
 - View: `/handoffs` command
 '
-
-    if ! grep -q "^## Claude Recall$" "$agents_md" 2>/dev/null; then
-        echo "$claude_recall_section" >> "$agents_md"
-        log_success "Added Claude Recall section to AGENTS.md"
     fi
+
+    # Replace any existing Claude Recall section with the selected form
+    # (handles both the full-block and pointer forms from prior installs)
+    if grep -q "^## Claude Recall$" "$agents_md" 2>/dev/null; then
+        awk '/^## Claude Recall$/{skip=1; next} /^## /{if(skip)skip=0} !skip' "$agents_md" > "${agents_md}.tmp" \
+            && mv "${agents_md}.tmp" "$agents_md"
+    fi
+    echo "$claude_recall_section" >> "$agents_md"
+    log_success "Wrote Claude Recall section to AGENTS.md"
 
     install_cli
 
@@ -594,6 +614,14 @@ uninstall() {
     rm -f "$HOME/.config/opencode/plugin/lesson-reminder.ts"
     rm -f "$HOME/.config/opencode/command/lessons.md"
     rm -f "$HOME/.config/opencode/command/handoffs.md"
+
+    # Remove Claude Recall section from OpenCode global instructions
+    local agents_md="$HOME/.config/opencode/AGENTS.md"
+    if [[ -f "$agents_md" ]] && grep -q "^## Claude Recall$" "$agents_md" 2>/dev/null; then
+        awk '/^## Claude Recall$/{skip=1; next} /^## /{if(skip)skip=0} !skip' "$agents_md" > "${agents_md}.tmp" \
+            && mv "${agents_md}.tmp" "$agents_md"
+        log_info "Removed Claude Recall section from opencode AGENTS.md"
+    fi
 
     # Remove CLI
     rm -f "$HOME/.local/bin/claude-recall"

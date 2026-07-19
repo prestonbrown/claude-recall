@@ -77,13 +77,15 @@ Stop hook parses these from agent output:
 
 ## OpenCode Adapter
 
-Claude Recall is also available as an OpenCode plugin. Installation and configuration differ slightly:
+Claude Recall is also available as an OpenCode plugin (built against `@opencode-ai/plugin` 1.17.5 / OpenCode 1.18+). Installation and configuration differ slightly:
 
 - **Installation**: `./install.sh --opencode`
 - **Configuration**: `~/.config/claude-recall/config.json`
 - **Plugin source**: `adapters/opencode/plugin.ts` → installed to `~/.config/opencode/plugins/lessons.ts`
+- **Memory logic**: `adapters/opencode/lib/memory.ts` → installed to `~/.config/opencode/plugins/lib/memory.ts` (MEMORY.md read, lesson→memory write-bridge, TF-IDF relevance)
 - **CLI**: `claude-recall`
 - **Commands**: `/lessons`, `/handoffs`
+- **Tests**: `./run-tests.sh` (Python+structural), `./run-tests.sh bun` (TS unit tests, stock Node), `./run-tests.sh e2e` (live opencode sessions)
 
 **Development workflow:**
 ```bash
@@ -97,7 +99,7 @@ vim adapters/opencode/plugin.ts
 opencode
 ```
 
-The install copies `adapters/opencode/plugin.ts` → `~/.config/opencode/plugins/lessons.ts`. There's no TypeScript compilation step - OpenCode loads `.ts` files directly via its plugin system.
+The install copies `adapters/opencode/plugin.ts` → `~/.config/opencode/plugins/lessons.ts` and `adapters/opencode/lib/memory.ts` → `~/.config/opencode/plugins/lib/memory.ts`. There's no TypeScript compilation step - OpenCode loads `.ts` files directly via its plugin system. (`lib/` is a subdirectory because OpenCode auto-loads every top-level `plugins/*.ts` as a plugin entry; pure-logic modules must live below the top level.)
 
 **Gotchas:**
 - **Never block plugin initialization** - OpenCode plugins are async functions that must return quickly. Blocking calls (like `await client.provider.list()`) during init will hang the entire UI. Use fire-and-forget patterns (`.then()`) for slow operations.

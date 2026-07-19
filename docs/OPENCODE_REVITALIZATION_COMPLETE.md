@@ -1,5 +1,16 @@
 # OpenCode Adapter Revitalization - Complete
 
+> **⚠ SUPERSEDED (2026-07-19):** This document describes the adapter as built
+> for the OpenCode ~1.1.x plugin API. The adapter was later **rewritten for
+> `@opencode-ai/plugin` 1.17.5** (unified `event` hook, `chat.system.transform`
+> and `chat.message` injection, `experimental.session.compacting` with
+> `output.context`, native `command/*.md` commands) and extended with Claude
+> auto-memory integration (MEMORY.md read + lesson write-bridge + TF-IDF
+> relevance, in `adapters/opencode/lib/memory.ts`). TypeScript tests now run on
+> stock Node (`tsc` + `node --test`), not bun. See `README.md` and
+> `docs/DEPLOYMENT.md` for current behavior; this file is kept as a historical
+> record only.
+
 ## Status: ✅ COMPLETE
 
 All 7 phases of the OpenCode adapter revitalization plan have been successfully implemented, tested, and verified.

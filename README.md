@@ -73,7 +73,7 @@ You'll see lessons appear in your agent's context. Cite them to boost their rank
 
 ## OpenCode Adapter
 
-The OpenCode adapter provides the same learning capabilities as the Claude Code adapter, with ~95% feature parity.
+The OpenCode adapter provides the same learning capabilities as the Claude Code adapter, plus Claude auto-memory integration.
 
 ### Installation
 
@@ -81,11 +81,17 @@ The OpenCode adapter provides the same learning capabilities as the Claude Code 
 ./install.sh --opencode
 ```
 
+Installs `plugins/lessons.ts` + `plugins/lib/memory.ts`, the `/lessons` and `/handoffs` commands, and a Claude Recall section in `~/.config/opencode/AGENTS.md` (a one-line pointer instead if `~/.claude/CLAUDE.md` already documents usage, to avoid double injection). `./install.sh --uninstall` removes all of it.
+
 ### Features
 
 - [x] Lessons system (injection, capture, decay, reminders)
-- [x] Handoffs system (tracking, TodoWrite sync)
-- [x] Compaction support
+- [x] Handoffs system (tracking, todo sync via `todo.updated`)
+- [x] Compaction support (`experimental.session.compacting`)
+- [x] Claude auto-memory integration
+  - reads project `MEMORY.md` (+ global tier) at session start
+  - mirrors captured lessons to Claude memory files (`feedback_*.md` + MEMORY.md index, bridge-owned section)
+  - TF-IDF relevance over the full memory dir on first prompt
 - [x] Debug logging
 
 ### Configuration
@@ -99,8 +105,21 @@ Create or edit `~/.config/claude-recall/config.json`:
   "relevanceTopN": 5,
   "remindEvery": 12,
   "decayIntervalDays": 7,
-  "debugLevel": 1
+  "debugLevel": 1,
+  "mirrorMemory": true,
+  "mirrorMemoryMaxPerSession": 10,
+  "memoryRelevance": true,
+  "memoryRelevanceTopN": 2,
+  "memoryMaxBytes": 8192
 }
+```
+
+### Tests
+
+```bash
+./run-tests.sh        # Python + structural suite
+./run-tests.sh bun    # TypeScript unit tests (tsc + node --test; no bun needed)
+./run-tests.sh e2e    # live end-to-end against a real `opencode run`
 ```
 
 ### Usage

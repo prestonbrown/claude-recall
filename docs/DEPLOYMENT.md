@@ -90,9 +90,10 @@ Edit `~/.config/claude-recall/config.json` (shared across Claude Code and OpenCo
 
 This installs:
 - `~/.config/opencode/plugins/lessons.ts` - Plugin file
+- `~/.config/opencode/plugins/lib/memory.ts` - Pure MEMORY.md logic (read, write-bridge, relevance) imported by lessons.ts
 - `~/.config/opencode/command/lessons.md` - /lessons command
 - `~/.config/opencode/command/handoffs.md` - /handoffs command
-- `~/.config/opencode/AGENTS.md` - Global instructions
+- `~/.config/opencode/AGENTS.md` - Global instructions (one-line pointer instead if `~/.claude/CLAUDE.md` already documents Claude Recall, to avoid double injection)
 - `~/.local/bin/claude-recall` - CLI wrapper (ensure it is on your PATH)
 
 **Configuration:**
