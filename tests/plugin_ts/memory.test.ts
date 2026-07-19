@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: MIT
 // Unit tests for the pure MEMORY.md logic in adapters/opencode/lib/memory.ts.
 //
-// Run with: bun test tests/plugin_ts/
-// (bun resolves the relative TS import natively; no node_modules required.)
+// Run with: ./run-tests.sh bun   (tsc + node --test on stock Node)
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "./test-shim.js";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { memoryDir, readFileCapped, readMemoryContext, GLOBAL_TIER_MIN_BUDGET } from "../../adapters/opencode/lib/memory";
+import { memoryDir, readFileCapped, readMemoryContext, GLOBAL_TIER_MIN_BUDGET } from "../../adapters/opencode/lib/memory.js";
 import {
   slugify, memoryDescription, feedbackFileContent, upsertBridgeIndexEntry,
   parseLessonsFile, memoryDirOrCreate, mirrorLessonToMemory, mirrorLessonsBatch,
   listMemoryFiles, rankMemoryFiles,
   BRIDGE_SECTION_HEADER, MEMORY_FILE_READ_CAP,
-} from "../../adapters/opencode/lib/memory";
+} from "../../adapters/opencode/lib/memory.js";
 import { readFileSync, readdirSync, existsSync } from "fs";
 
 // Mirror of the plugin's hash: cwd with '/' and '.' replaced by '-'.

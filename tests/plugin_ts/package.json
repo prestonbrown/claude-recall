@@ -1,0 +1,12 @@
+{
+  "name": "claude-recall-plugin-ts-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsc && node -e \"require('fs').writeFileSync('out/package.json', JSON.stringify({type:'module'}))\" && node --test out/"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}

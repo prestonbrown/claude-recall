@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "outDir": "out",
+    "rootDir": "../..",
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "memory.test.ts",
+    "test-shim.ts",
+    "../../adapters/opencode/lib/memory.ts"
+  ]
+}

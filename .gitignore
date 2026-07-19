@@ -11,6 +11,11 @@ build/
 
 # Lock files
 *.lock
+!package-lock.json
+
+# Node / TypeScript test workspace
+node_modules/
+tests/plugin_ts/out/
 
 # Test/coverage
 .coverage

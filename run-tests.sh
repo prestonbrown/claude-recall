@@ -9,7 +9,7 @@
 #   tui         TUI tests only, parallel
 #   integration Integration tests only
 #   e2e         Live OpenCode adapter e2e (real model calls, NOT hermetic CI)
-#   bun         TypeScript unit tests only (tests/plugin_ts/, needs bun)
+#   bun         TypeScript unit tests only (tests/plugin_ts/, tsc + node)
 #
 # Examples:
 #   ./run-tests.sh              # Fast mode (unit tests)
@@ -38,27 +38,27 @@ if [[ "$SCRIPT_DIR/requirements-dev.txt" -nt "$VENV_DIR/.deps-installed" ]]; the
     touch "$VENV_DIR/.deps-installed"
 fi
 
-# Optional TypeScript unit tests (tests/plugin_ts/). Skips cleanly when no bun
-# is available; set RUN_TS_TESTS=0 to disable explicitly.
+# Optional TypeScript unit tests (tests/plugin_ts/). Runs on stock Node via
+# tsc + node --test (typescript fetched by npm on first run). Skips cleanly
+# when node/npm are unavailable; set RUN_TS_TESTS=0 to disable explicitly.
 run_ts_tests() {
     if [[ "${RUN_TS_TESTS:-1}" == "0" ]]; then
         echo "Skipping TypeScript tests (RUN_TS_TESTS=0)"
         return 0
     fi
-    local bun_bin=""
-    if [[ -n "${BUN:-}" && -x "${BUN:-}" ]]; then
-        bun_bin="$BUN"
-    elif command -v bun >/dev/null 2>&1; then
-        bun_bin="$(command -v bun)"
-    elif [[ -x /tmp/opencode/bun/bin/bun ]]; then
-        bun_bin="/tmp/opencode/bun/bin/bun"
-    fi
-    if [[ -z "$bun_bin" ]]; then
-        echo "Skipping TypeScript tests (bun not found; set BUN=/path/to/bun)"
+    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+        echo "Skipping TypeScript tests (node/npm not found)"
         return 0
     fi
-    echo "Running TypeScript unit tests ($bun_bin)..."
-    "$bun_bin" test "$SCRIPT_DIR/tests/plugin_ts/"
+    local ts_dir="$SCRIPT_DIR/tests/plugin_ts"
+    if [[ ! -f "$ts_dir/node_modules/.package-lock.json" ]]; then
+        (cd "$ts_dir" && npm install --no-audit --no-fund >/dev/null) || {
+            echo "Skipping TypeScript tests (npm install failed)"
+            return 0
+        }
+    fi
+    echo "Running TypeScript unit tests (node $(node --version))..."
+    (cd "$ts_dir" && npm test --silent)
 }
 
 # Parse mode argument. NOTE: bare `shift` under `set -e` kills the script when
