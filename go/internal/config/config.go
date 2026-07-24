@@ -22,9 +22,20 @@ type Config struct {
 	EventLogRetentionDays int   `json:"event_log_retention_days"` // Events older than this pruned during decay, default: 90
 	DigestEnabled         *bool `json:"digest_enabled"`           // Whether to auto-generate weekly digests, default: true
 
+	// FeedbackMinInjections/FeedbackMaxCiteRatio/FeedbackPenalty drove the retired
+	// binary injection penalty (ShouldPenalize). Still parsed for backward compatibility
+	// with existing config.json files, but no longer consulted by the score path.
 	FeedbackMinInjections int     `json:"feedbackMinInjections"` // Min injections before penalty eligible, default: 5
 	FeedbackMaxCiteRatio  float64 `json:"feedbackMaxCiteRatio"`  // Citation ratio below which penalty applies, default: 0.2
 	FeedbackPenalty       float64 `json:"feedbackPenalty"`       // Score multiplier applied to penalized lessons, default: 0.5
+
+	// Trust* parameterize the graduated per-lesson precision multiplier applied in the
+	// score path: multiplier = clamp(Trust/prior, TrustFloor, 1.0) once a lesson has at
+	// least TrustMinInjections injections, where Trust = (C+TrustAlpha)/(I+TrustAlpha+TrustBeta).
+	TrustAlpha         float64 `json:"trustAlpha"`         // Prior citation pseudo-count, default: 1.0
+	TrustBeta          float64 `json:"trustBeta"`          // Prior non-citation pseudo-count, default: 1.0
+	TrustFloor         float64 `json:"trustFloor"`         // Lowest multiplier a penalized lesson can reach, default: 0.2
+	TrustMinInjections int     `json:"trustMinInjections"` // Injections required before the multiplier engages, default: 3
 }
 
 // Load reads configuration from the given JSON file path,
@@ -93,6 +104,23 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.FeedbackPenalty == 0 {
 		cfg.FeedbackPenalty = 0.5
+	}
+	// Zero-sentinel defaulting (the convention used throughout this file): an explicit 0
+	// in config.json is indistinguishable from "unset" and is replaced by the default.
+	// For TrustFloor and TrustMinInjections, 0 is a semantically meaningful value
+	// (full suppression / no warm-up gate) that therefore cannot be set via config today;
+	// switch these to pointer fields if that tunability is ever needed.
+	if cfg.TrustAlpha == 0 {
+		cfg.TrustAlpha = 1.0
+	}
+	if cfg.TrustBeta == 0 {
+		cfg.TrustBeta = 1.0
+	}
+	if cfg.TrustFloor == 0 {
+		cfg.TrustFloor = 0.2
+	}
+	if cfg.TrustMinInjections == 0 {
+		cfg.TrustMinInjections = 3
 	}
 }
 

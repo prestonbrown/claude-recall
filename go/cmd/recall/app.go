@@ -1634,18 +1634,20 @@ func (a *App) runScoreLocal(args []string) int {
 	projectStats, _ := feedback.ReadStats(projectStatsPath)
 	systemStats, _ := feedback.ReadStats(systemStatsPath)
 
+	// Graduated per-lesson trust multiplier: chronically injected-but-uncited lessons
+	// are down-ranked toward TrustFloor; fresh lessons (below the injection gate) and
+	// well-cited ones stay at 1.0 (no-op). Project L### stats vs system S### stats are
+	// kept separate, matching where each lesson's injections are counted.
 	penalties := make(map[string]float64)
 	for _, r := range results {
 		id := r.Lesson.ID
-		var penalized bool
+		var stats feedback.LessonStats
 		if strings.HasPrefix(id, "L") {
-			penalized = feedback.ShouldPenalize(projectStats, id, a.cfg.FeedbackMinInjections, a.cfg.FeedbackMaxCiteRatio)
+			stats = projectStats[id]
 		} else {
-			penalized = feedback.ShouldPenalize(systemStats, id, a.cfg.FeedbackMinInjections, a.cfg.FeedbackMaxCiteRatio)
+			stats = systemStats[id]
 		}
-		if penalized {
-			penalties[id] = a.cfg.FeedbackPenalty
-		}
+		penalties[id] = feedback.TrustMultiplier(stats, a.cfg.TrustAlpha, a.cfg.TrustBeta, a.cfg.TrustFloor, a.cfg.TrustMinInjections)
 	}
 	if len(penalties) > 0 {
 		results = scoring.ApplyPenalties(results, penalties)

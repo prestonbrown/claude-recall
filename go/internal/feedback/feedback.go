@@ -84,6 +84,42 @@ func ShouldPenalize(stats map[string]LessonStats, lessonID string, minInjections
 	return ratio < maxCiteRatio
 }
 
+// Trust returns a smoothed precision estimate in [0,1] for a lesson:
+// (Citations + alpha) / (Injections + alpha + beta). With alpha=beta=1 and zero
+// stats it yields the neutral prior 0.5. It is monotonically increasing in
+// citations and decreasing in (uncited) injections. A degenerate prior mass
+// (alpha+beta <= 0) returns the neutral 0.5 rather than dividing by zero.
+func Trust(stats LessonStats, alpha, beta float64) float64 {
+	if alpha+beta <= 0 {
+		return 0.5
+	}
+	return (float64(stats.Citations) + alpha) / (float64(stats.Injections) + alpha + beta)
+}
+
+// TrustMultiplier maps a lesson's stats to a penalty-only ranking multiplier in
+// [floor, 1.0]. Below minInjections it returns 1.0 (a true no-op: gather evidence
+// first, robust to silent-application label noise and cold start). At or above the
+// gate it returns clamp(Trust(stats)/prior, floor, 1.0) where prior = alpha/(alpha+beta)
+// (0.5 by default). The result is capped at 1.0 — promotion stays on the existing
+// uses/velocity axis; trust only suppresses chronically-uncited lessons.
+func TrustMultiplier(stats LessonStats, alpha, beta, floor float64, minInjections int) float64 {
+	if stats.Injections < minInjections {
+		return 1.0
+	}
+	if alpha+beta <= 0 {
+		return 1.0
+	}
+	prior := alpha / (alpha + beta)
+	m := Trust(stats, alpha, beta) / prior
+	if m < floor {
+		return floor
+	}
+	if m > 1.0 {
+		return 1.0
+	}
+	return m
+}
+
 // ResetLesson removes lessonID from the stats file, clearing its counters.
 func ResetLesson(path, lessonID string) error {
 	stats, err := ReadStats(path)

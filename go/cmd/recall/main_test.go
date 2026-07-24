@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pbrown/claude-recall/internal/feedback"
 	"github.com/pbrown/claude-recall/internal/handoffs"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/models"
@@ -178,6 +179,112 @@ func Test_AddCommand_SystemLevel(t *testing.T) {
 	if !strings.HasPrefix(lessonList[0].ID, "S") {
 		t.Errorf("expected ID to start with 'S', got '%s'", lessonList[0].ID)
 	}
+}
+
+// Test_ScoreLocal_TrustMultiplierDownranksUncited verifies the live score path applies
+// the graduated trust multiplier: two lessons with identical BM25 relevance, where one is
+// chronically injected-but-never-cited (past the min-injections gate), must rank the
+// uncited lesson below the otherwise-equal fresh lesson.
+func Test_ScoreLocal_TrustMultiplierDownranksUncited(t *testing.T) {
+	tmpDir := t.TempDir()
+	projectRoot := filepath.Join(tmpDir, "project")
+	projectRecall := filepath.Join(projectRoot, ".claude-recall")
+	stateDir := filepath.Join(tmpDir, "state")
+	systemDir := filepath.Join(tmpDir, "system")
+	os.MkdirAll(projectRecall, 0755)
+	os.MkdirAll(stateDir, 0755)
+	os.MkdirAll(systemDir, 0755)
+
+	projectPath := filepath.Join(projectRecall, "LESSONS.md")
+	systemPath := filepath.Join(systemDir, "LESSONS.md")
+
+	// Two project lessons with identical, query-matching content -> equal BM25 score.
+	store := lessons.NewStore(projectPath, systemPath)
+	fresh, err := store.Add("project", "pattern", "Widget configuration guide",
+		"Always validate the widget configuration before deploy widget widget")
+	if err != nil {
+		t.Fatalf("failed to add fresh lesson: %v", err)
+	}
+	stale, err := store.Add("project", "pattern", "Widget configuration guide",
+		"Always validate the widget configuration before deploy widget widget")
+	if err != nil {
+		t.Fatalf("failed to add stale lesson: %v", err)
+	}
+
+	// Give the stale lesson a chronically-uncited history past the gate; fresh has none.
+	statsPath := feedback.StatsFilePath(projectRecall)
+	statsJSON := `{"` + stale.ID + `":{"injections":100,"citations":0}}`
+	if err := os.WriteFile(statsPath, []byte(statsJSON), 0644); err != nil {
+		t.Fatalf("failed to write injection-stats: %v", err)
+	}
+
+	// Point the score path at our temp project/state via env (initPaths reads these).
+	t.Setenv("PROJECT_DIR", projectRoot)
+	t.Setenv("CLAUDE_RECALL_STATE", stateDir)
+
+	var stdout bytes.Buffer
+	app := NewApp()
+	app.stdout = &stdout
+	// Set project/system paths but leave handoff paths empty so initPaths runs fully
+	// (loading cfg + trust defaults) rather than returning early with a nil cfg.
+	app.projectPath = projectPath
+	app.systemPath = systemPath
+
+	exitCode := app.Run([]string{"recall", "score-local", "widget configuration", "--top", "5", "--min-score", "1"})
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d; output:\n%s", exitCode, stdout.String())
+	}
+
+	out := stdout.String()
+	freshIdx := strings.Index(out, "["+fresh.ID+"]")
+	staleIdx := strings.Index(out, "["+stale.ID+"]")
+
+	freshScore, freshOK := relevanceScoreOf(out, fresh.ID)
+	if freshIdx == -1 || !freshOK {
+		t.Fatalf("expected fresh lesson %s in output, got:\n%s", fresh.ID, out)
+	}
+
+	// Assert on the NUMERIC score, not print order. The two lessons have identical
+	// content (equal BM25 score), so if the trust multiplier were a no-op both would
+	// print the same score and — because Go's small-slice sort never swaps ties — the
+	// fresh lesson (added first) would still print first. Ordering alone therefore can't
+	// catch a regression where the multiplier stops applying; a strictly lower score can.
+	// Chronically-uncited past the gate → multiplier 0.2 → stale score must drop below
+	// fresh (or be suppressed entirely below --min-score).
+	staleScore, staleOK := relevanceScoreOf(out, stale.ID)
+	if staleIdx != -1 && staleOK && staleScore >= freshScore {
+		t.Errorf("expected chronically-uncited lesson %s (score %d) to score below fresh %s (score %d); output:\n%s",
+			stale.ID, staleScore, fresh.ID, freshScore, out)
+	}
+}
+
+// relevanceScoreOf extracts the integer N from the "(relevance: N/10)" segment of the
+// score-local output line for the given lesson ID. Returns false if not found.
+func relevanceScoreOf(out, id string) (int, bool) {
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "["+id+"]") {
+			continue
+		}
+		marker := "(relevance: "
+		i := strings.Index(line, marker)
+		if i == -1 {
+			return 0, false
+		}
+		rest := line[i+len(marker):]
+		j := strings.Index(rest, "/10)")
+		if j == -1 {
+			return 0, false
+		}
+		n := 0
+		for _, c := range rest[:j] {
+			if c < '0' || c > '9' {
+				return 0, false
+			}
+			n = n*10 + int(c-'0')
+		}
+		return n, true
+	}
+	return 0, false
 }
 
 func Test_CiteCommand_IncrementsUses(t *testing.T) {

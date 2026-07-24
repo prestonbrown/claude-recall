@@ -360,6 +360,102 @@ func Test_LoadConfig_EventLogEnvOverrides(t *testing.T) {
 	}
 }
 
+func Test_LoadConfig_TrustDefaults(t *testing.T) {
+	nonExistentPath := filepath.Join(t.TempDir(), "does-not-exist.json")
+
+	cfg, err := Load(nonExistentPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if cfg.TrustAlpha != 1.0 {
+		t.Errorf("expected TrustAlpha=1.0, got %g", cfg.TrustAlpha)
+	}
+	if cfg.TrustBeta != 1.0 {
+		t.Errorf("expected TrustBeta=1.0, got %g", cfg.TrustBeta)
+	}
+	if cfg.TrustFloor != 0.2 {
+		t.Errorf("expected TrustFloor=0.2, got %g", cfg.TrustFloor)
+	}
+	if cfg.TrustMinInjections != 3 {
+		t.Errorf("expected TrustMinInjections=3, got %d", cfg.TrustMinInjections)
+	}
+}
+
+func Test_LoadConfig_TrustFromJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	configData := map[string]interface{}{
+		"trustAlpha":         2.0,
+		"trustBeta":          3.0,
+		"trustFloor":         0.1,
+		"trustMinInjections": 7,
+	}
+	data, _ := json.Marshal(configData)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if cfg.TrustAlpha != 2.0 {
+		t.Errorf("expected TrustAlpha=2.0, got %g", cfg.TrustAlpha)
+	}
+	if cfg.TrustBeta != 3.0 {
+		t.Errorf("expected TrustBeta=3.0, got %g", cfg.TrustBeta)
+	}
+	if cfg.TrustFloor != 0.1 {
+		t.Errorf("expected TrustFloor=0.1, got %g", cfg.TrustFloor)
+	}
+	if cfg.TrustMinInjections != 7 {
+		t.Errorf("expected TrustMinInjections=7, got %d", cfg.TrustMinInjections)
+	}
+}
+
+// A config.json that predates the trust model — containing ONLY the old feedback*
+// keys — must still load cleanly with the trust defaults applied (backward compat).
+func Test_LoadConfig_LegacyFeedbackOnly_AppliesTrustDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	configData := map[string]interface{}{
+		"feedbackMinInjections": 5,
+		"feedbackMaxCiteRatio":  0.2,
+		"feedbackPenalty":       0.5,
+	}
+	data, _ := json.Marshal(configData)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("expected legacy feedback-only config to load, got error: %v", err)
+	}
+
+	// Old keys preserved.
+	if cfg.FeedbackMinInjections != 5 {
+		t.Errorf("expected FeedbackMinInjections=5, got %d", cfg.FeedbackMinInjections)
+	}
+	if cfg.FeedbackPenalty != 0.5 {
+		t.Errorf("expected FeedbackPenalty=0.5, got %g", cfg.FeedbackPenalty)
+	}
+	// New trust keys defaulted.
+	if cfg.TrustAlpha != 1.0 || cfg.TrustBeta != 1.0 {
+		t.Errorf("expected trust alpha/beta defaults 1.0/1.0, got %g/%g", cfg.TrustAlpha, cfg.TrustBeta)
+	}
+	if cfg.TrustFloor != 0.2 {
+		t.Errorf("expected TrustFloor default 0.2, got %g", cfg.TrustFloor)
+	}
+	if cfg.TrustMinInjections != 3 {
+		t.Errorf("expected TrustMinInjections default 3, got %d", cfg.TrustMinInjections)
+	}
+}
+
 func Test_LoadConfig_ProjectDir_GitRootTakesPrecedence(t *testing.T) {
 	// Test that ProjectDir uses git root when running from a subdirectory
 	// (We're running tests from within the claude-recall repo)
