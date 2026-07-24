@@ -36,3 +36,7 @@ go/bin/
 
 # Local settings (not committed to git)
 .claude/settings.local.json
+
+# Trust experiment generated artifacts (regenerable, contain verbose transcript text)
+experiments/trust/data/
+experiments/trust/results/

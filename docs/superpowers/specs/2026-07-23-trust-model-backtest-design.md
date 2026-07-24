@@ -167,3 +167,39 @@ Running `python -m experiments.trust` over the real log prints a comparison in w
 each candidate is scored against the `always_one` and `binary_penalty` baselines, and we
 can point to one formula that suppresses the most uncited injections while losing ≤ a
 tolerable fraction of real citations.
+
+## Outcome (2026-07-24) — see `experiments/trust/FINDINGS.md`
+
+Backtest winner: **`smoothed_ratio(a=1,b=1)`** = (C+1)/(I+2), neutral 0.5 cold-start
+(AUC 0.67, ECE 0.027) — clearly beats both baselines; the current live `binary_penalty`
+is near-dead (AUC 0.54). Cold-start MUST be a neutral prior, not 0.
+
+Transcript relabeling (397 blind judgments) corrected an early overstatement: absence of
+citation is a ~95%-correct negative signal (only ~4.7% of uncited injections were
+silently applied), the citation *positive* signal is ~1/6–1/3 ritual noise, and the
+**dominant quality problem is off-topic injection (relevance), upstream of trust** (~94%
+of uncited and ~30% of cited injections were off-topic). The winning formula is robust to
+the judged label (AUC 0.670 → 0.677).
+
+## v1 productionization (approved 2026-07-24) — supersedes "Out of scope" above
+
+Wire the winner into the live Go ranker as a **per-lesson precision multiplier**,
+replacing `binary_penalty`:
+
+- `feedback.Trust(stats) = (Citations + trustAlpha) / (Injections + trustAlpha + trustBeta)`,
+  defaults `trustAlpha=trustBeta=1` → neutral prior 0.5.
+- `feedback.TrustMultiplier(stats, cfg)`: below `trustMinInjections` (default 3) return
+  1.0 (neutral — gather evidence, robust to the ~5% silent-application noise and cold
+  start); otherwise `clamp(Trust/0.5, trustFloor, 1.0)` (default `trustFloor=0.2`).
+  Penalty-only in v1 (cap 1.0) — promotion stays with the existing uses/velocity axis.
+- In the score path (`go/cmd/recall/app.go`), replace `ShouldPenalize`→`FeedbackPenalty`
+  with `penalties[id] = TrustMultiplier(...)` fed to the existing
+  `scoring.ApplyPenalties`. Only relevance-scored injections already increment
+  `Injections` (SessionStart exempt) — no change needed there.
+- Config: add the four `trust*` keys with defaults; leave old `feedback*` keys parsed but
+  unused for backward compatibility.
+- Test-first (Go): `Trust` cold-start=0.5, monotonic in cite ratio; `TrustMultiplier`
+  min-injections gate, floor clamp, graduated suppression; score-path integration.
+
+Deferred: (a) transcript-derived "applied" label captured at Stop time; (b) injection-time
+relevance/file-path filtering (the bigger lever).
