@@ -40,8 +40,8 @@
 - **Uses**: 1 | **Velocity**: 0 | **Learned**: 2026-01-09 | **Last**: 2026-01-09 | **Category**: pattern | **Type**: constraint
 > Always use self.state_reader.state_dir for state file paths rather than reimplementing path resolution inline. Duplicating env var checks leads to inconsistencies.
 
-### [L009] [*----|***--] Sync plugin.json version
-- **Uses**: 1 | **Velocity**: 1 | **Learned**: 2026-02-02 | **Last**: 2026-03-09 | **Category**: gotcha
+### [L009] [*----|****-] Sync plugin.json version
+- **Uses**: 2 | **Velocity**: 2 | **Learned**: 2026-02-02 | **Last**: 2026-07-24 | **Category**: gotcha
 > When bumping versions in claude-recall, update BOTH core/_version.py AND plugins/claude-recall/.claude-plugin/plugin.json. Claude Code uses the plugin.json version for cache paths.
 
 ### [L010] [*----|****-] Background commands must redirect both stdout and stderr
