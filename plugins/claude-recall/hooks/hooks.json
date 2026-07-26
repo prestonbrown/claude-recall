@@ -4,8 +4,8 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/inject-hook.sh\"", "timeout": 5000 },
-          { "type": "command", "command": "rm -f ~/.local/state/claude-recall/.reminder-state", "timeout": 1000 }
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/inject-hook.sh\"", "timeout": 5 },
+          { "type": "command", "command": "rm -f ~/.local/state/claude-recall/.reminder-state", "timeout": 1 }
         ]
       }
     ],
@@ -13,9 +13,17 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/capture-hook.sh\"", "timeout": 5000 },
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/smart-inject-hook.sh\"", "timeout": 5000 },
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lesson-reminder-hook.sh\"", "timeout": 2000 }
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/capture-hook.sh\"", "timeout": 5 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/smart-inject-hook.sh\"", "timeout": 5 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lesson-reminder-hook.sh\"", "timeout": 2 }
+        ]
+      }
+    ],
+
+    "PreCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/precompact-hook.sh\"", "timeout": 5 }
         ]
       }
     ],
@@ -23,7 +31,7 @@
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/subagent-stop-hook.sh\"", "timeout": 3000 }
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/subagent-stop-hook.sh\"", "timeout": 3 }
         ]
       }
     ],
@@ -31,7 +39,7 @@
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/stop-hook.sh\"", "timeout": 5000 }
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/stop-hook.sh\"", "timeout": 5 }
         ]
       }
     ]

@@ -6,8 +6,11 @@ A learning system for AI coding agents that captures lessons across sessions.
 
 | Component | Location |
 |-----------|----------|
-| Core Python | `core/cli.py` (entry), `core/lessons.py`, `core/handoffs.py`, `core/debug_logger.py` |
-| Claude hooks | `adapters/claude-code/inject-hook.sh`, `smart-inject-hook.sh` (BM25, every prompt), `subagent-stop-hook.sh`, `stop-hook.sh` |
+| CLI (Go) | `go/cmd/recall/` → `recall` binary; `go/cmd/recall-hook/` → hook helper; `go/internal/lessons/` (parser, store, decay) |
+| Core Python | `core/lessons.py`, `core/handoffs.py`, `core/debug_logger.py`, `core/tui/` (TUI only — the CLI is Go) |
+| TUI wrapper | `bin/claude-recall` (dispatches TUI to Python, everything else to the Go binary) |
+| Claude hooks | `plugins/claude-recall/hooks/scripts/` — `inject-hook.sh`, `smart-inject-hook.sh` (BM25, every prompt), `subagent-stop-hook.sh`, `stop-hook.sh`, `precompact-hook.sh`. `install.sh` installs from here; `adapters/claude-code/` is a stale duplicate. |
+| Hook wiring | `plugins/claude-recall/hooks/hooks.json` (timeouts in **seconds**) |
 | Tests | `tests/test_lessons_manager.py`, `tests/test_handoffs.py` |
 | Project lessons | `.claude-recall/LESSONS.md` (gitignored by default) |
 | System lessons | `~/.local/state/claude-recall/LESSONS.md` (XDG state) |
@@ -36,14 +39,22 @@ Stop hook → parses output, updates lessons, tracks citations
 ./run-tests.sh -v --tb=short      # With verbose output
 ./run-tests.sh tests/test_tui/    # TUI tests only
 
-# CLI usage
-python3 core/cli.py inject 5                          # Top 5 by stars
-python3 core/cli.py score-local "query" --top 5       # Top 5 by BM25 relevance (local)
-python3 core/cli.py score-relevance "query" --top 5   # Top 5 by relevance (requires API key)
-python3 core/cli.py add pattern "Title" "Content"
-python3 core/cli.py cite L001
-python3 core/cli.py handoff list
+# CLI usage (Go binary, installed to ~/.local/bin/recall)
+recall inject 5                          # Top 5 by stars
+recall score-local "query" --top 5       # Top 5 by BM25 relevance (local)
+recall score-relevance "query" --top 5   # Top 5 by relevance (requires API key)
+recall add pattern "Title" "Content"
+recall cite L001
+recall list / show <id> / edit <id> / delete <id>
+recall handoff list
+recall stats [--weekly] / digest
+
+# Build the Go binaries from source
+cd go && go build ./cmd/...
 ```
+
+Note: `score-local` and `score-relevance` are absent from `recall --help` but are the
+commands `smart-inject-hook.sh` actually calls.
 
 ## Writing Tests
 
