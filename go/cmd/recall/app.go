@@ -14,8 +14,8 @@ import (
 
 	"github.com/pbrown/claude-recall/internal/anthropic"
 	"github.com/pbrown/claude-recall/internal/config"
-	"github.com/pbrown/claude-recall/internal/eventlog"
 	"github.com/pbrown/claude-recall/internal/debuglog"
+	"github.com/pbrown/claude-recall/internal/eventlog"
 	"github.com/pbrown/claude-recall/internal/feedback"
 	"github.com/pbrown/claude-recall/internal/handoffs"
 	"github.com/pbrown/claude-recall/internal/lessons"
@@ -25,17 +25,17 @@ import (
 
 // App encapsulates CLI state and dependencies for testability
 type App struct {
-	stdin        io.Reader
-	stdout       io.Writer
-	stderr       io.Writer
-	projectPath  string // Path to project LESSONS.md
-	systemPath   string // Path to system LESSONS.md
-	handoffsPath string // Path to HANDOFFS.md
-	stealthPath  string // Path to HANDOFFS_LOCAL.md (stealth)
-	stateDir        string // Path to state directory
-	projectDir      string // Project root directory
-	debugLevel      int    // Debug level 0-3
-	eventLogEnabled bool   // Whether event logging is enabled
+	stdin           io.Reader
+	stdout          io.Writer
+	stderr          io.Writer
+	projectPath     string         // Path to project LESSONS.md
+	systemPath      string         // Path to system LESSONS.md
+	handoffsPath    string         // Path to HANDOFFS.md
+	stealthPath     string         // Path to HANDOFFS_LOCAL.md (stealth)
+	stateDir        string         // Path to state directory
+	projectDir      string         // Project root directory
+	debugLevel      int            // Debug level 0-3
+	eventLogEnabled bool           // Whether event logging is enabled
 	cfg             *config.Config // Loaded configuration
 }
 
@@ -89,7 +89,7 @@ func (a *App) initPaths() error {
 // Run parses arguments and dispatches to commands
 func (a *App) Run(args []string) int {
 	if len(args) < 2 {
-		a.printHelp()
+		a.printUsageTo(a.stderr)
 		return 1
 	}
 
@@ -150,13 +150,19 @@ func (a *App) Run(args []string) int {
 		return a.runDigest(cmdArgs)
 	default:
 		fmt.Fprintf(a.stderr, "unknown command: %s\n", cmd)
-		a.printHelp()
+		a.printUsageTo(a.stderr)
 		return 1
 	}
 }
 
 // printHelp prints the help message
 func (a *App) printHelp() {
+	a.printUsageTo(a.stdout)
+}
+
+// printUsageTo writes the usage text to w. Error paths pass stderr: hooks parse
+// this CLI's stdout as JSON, so usage text there corrupts the payload.
+func (a *App) printUsageTo(w io.Writer) {
 	help := `Claude Recall - AI coding agent memory system
 
 Usage: recall <command> [args...]
@@ -210,7 +216,7 @@ Commands:
 Options:
   help, --help, -h                 Show this help message
 `
-	fmt.Fprint(a.stdout, help)
+	fmt.Fprint(w, help)
 }
 
 // runInject outputs top n lessons
@@ -319,11 +325,39 @@ func (a *App) runCite(args []string) int {
 
 // runList lists all lessons
 func (a *App) runList(args []string) int {
+	// --search filters on ID, title and content, case-insensitively, so a
+	// partial ID ("L00") and a word from the body both work. Documented in
+	// commands/lessons.md.
+	search := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] != "--search" {
+			continue
+		}
+		if i+1 >= len(args) {
+			fmt.Fprintln(a.stderr, "usage: recall list [--search <term>]")
+			return 1
+		}
+		search = args[i+1]
+		i++
+	}
+
 	store := lessons.NewStore(a.projectPath, a.systemPath)
 	allLessons, err := store.List()
 	if err != nil {
 		fmt.Fprintf(a.stderr, "error listing lessons: %v\n", err)
 		return 1
+	}
+
+	if search != "" {
+		term := strings.ToLower(search)
+		matched := allLessons[:0:0]
+		for _, l := range allLessons {
+			haystack := strings.ToLower(l.ID + " " + l.Title + " " + l.Content)
+			if strings.Contains(haystack, term) {
+				matched = append(matched, l)
+			}
+		}
+		allLessons = matched
 	}
 
 	if len(allLessons) == 0 {
