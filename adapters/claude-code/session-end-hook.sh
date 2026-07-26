@@ -1,1 +1,0 @@
-../../plugins/claude-recall/hooks/scripts/session-end-hook.sh

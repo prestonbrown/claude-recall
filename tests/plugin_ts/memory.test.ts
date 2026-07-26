@@ -190,8 +190,11 @@ describe("readMemoryContext", () => {
     writeFileSync(join(dir, "MEMORY.md"), "q".repeat(10000));
     const ctx = readMemoryContext(cwd, home, 8192);
     expect(ctx).toContain("Read the full file");
-    // section header + capped body must stay within a sane bound
-    expect(ctx!.length).toBeLessThan(8600);
+    // The skip-note embeds an absolute path, so total length varies by platform
+    // (macOS tmpdir runs ~100 chars vs /tmp on Linux). Bound the injected body
+    // instead: everything before the note must stay within budget + header.
+    const body = ctx!.slice(0, ctx!.indexOf("[claude-recall:"));
+    expect(body.length).toBeLessThan(8192 + 400);
   });
 
   test("missing global MEMORY.md is silently skipped", () => {

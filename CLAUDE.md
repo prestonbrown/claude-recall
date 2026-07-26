@@ -53,8 +53,8 @@ recall stats [--weekly] / digest
 cd go && go build ./cmd/...
 ```
 
-Note: `score-local` and `score-relevance` are absent from `recall --help` but are the
-commands `smart-inject-hook.sh` actually calls.
+`score-local` is what `smart-inject-hook.sh` calls on every prompt; `score-relevance` is
+the Haiku-backed variant used when an API key is configured.
 
 ## Writing Tests
 

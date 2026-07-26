@@ -1,1 +1,0 @@
-../../plugins/claude-recall/hooks/scripts/post-todowrite-hook.sh
