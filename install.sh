@@ -262,6 +262,39 @@ cleanup_legacy_base() {
 # INSTALLATION
 # ============================================================
 
+# The marketplace entry's version is derived from plugin.json rather than
+# maintained by hand. Claude Code resolves the plugin's cache directory from the
+# version it sees at install time, so a stale entry installs into a directory
+# nothing else writes to - hooks land in one path while the runtime loads
+# another. plugin.json is the single source of truth; `claude plugin tag`
+# validates that the two agree, and tests/test_version_consistency.py is the CI
+# backstop.
+sync_marketplace_version() {
+    local plugin_json="$SCRIPT_DIR/plugins/claude-recall/.claude-plugin/plugin.json"
+    local marketplace_json="$SCRIPT_DIR/.claude-plugin/marketplace.json"
+
+    [[ -f "$plugin_json" && -f "$marketplace_json" ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+
+    local plugin_version marketplace_version
+    plugin_version=$(jq -r '.version // empty' "$plugin_json")
+    marketplace_version=$(jq -r '.plugins[] | select(.name == "claude-recall") | .version // empty' \
+        "$marketplace_json")
+
+    [[ -n "$plugin_version" ]] || return 0
+    [[ "$plugin_version" != "$marketplace_version" ]] || return 0
+
+    local tmp="${marketplace_json}.tmp"
+    if jq --arg v "$plugin_version" \
+        '(.plugins[] | select(.name == "claude-recall") | .version) = $v' \
+        "$marketplace_json" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$marketplace_json"
+        log_info "Synced marketplace version ${marketplace_version:-unset} -> $plugin_version"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 install_plugin() {
     log_info "Installing Claude Recall plugin via marketplace..."
 
@@ -270,6 +303,10 @@ install_plugin() {
         log_error "Claude CLI not found. Please install Claude Code first."
         exit 1
     fi
+
+    # Must run before the marketplace is added or updated, since that is when
+    # Claude Code reads the version.
+    sync_marketplace_version
 
     # Add this repo as a marketplace (idempotent)
     if ! claude plugin marketplace list 2>/dev/null | grep -q "claude-recall"; then
