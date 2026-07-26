@@ -1,27 +1,37 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
-# lessons-manager.sh - Thin wrapper for Python lessons manager
+# lessons-manager.sh - Thin wrapper for the Claude Recall CLI
 #
-# This script delegates to the Python implementation for unified behavior
-# across Claude Code and OpenCode. Debug logging is available via LESSONS_DEBUG.
+# Delegates to the Go `recall` binary for unified behavior across Claude Code
+# and OpenCode. Debug logging is available via CLAUDE_RECALL_DEBUG.
 #
 # Usage: lessons-manager.sh <command> [args...]
-# See: python3 lessons_manager.py --help
+# See: recall --help
+#
+# Resolution order lets a locally built binary win over an installed one, so
+# `cd go && go build ./cmd/...` is enough to test a change through this wrapper.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Find cli.py - check same directory first, then core/ subdirectory
-# (handles both development and installed layouts)
-if [[ -f "$SCRIPT_DIR/cli.py" ]]; then
-    PYTHON_MANAGER="$SCRIPT_DIR/cli.py"
-elif [[ -f "$SCRIPT_DIR/core/cli.py" ]]; then
-    PYTHON_MANAGER="$SCRIPT_DIR/core/cli.py"
-else
-    echo "Error: Python manager not found at $SCRIPT_DIR/cli.py or $SCRIPT_DIR/core/cli.py" >&2
-    exit 1
+for candidate in \
+    "${CLAUDE_RECALL_BIN:-}" \
+    "$REPO_ROOT/go/bin/recall" \
+    "$REPO_ROOT/go/recall" \
+    "$HOME/.local/bin/recall"
+do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+        exec "$candidate" "$@"
+    fi
+done
+
+if command -v recall >/dev/null 2>&1; then
+    exec recall "$@"
 fi
 
-# Pass through all arguments to Python
-exec python3 "$PYTHON_MANAGER" "$@"
+echo "Error: the 'recall' binary was not found." >&2
+echo "Build it with: cd \"$REPO_ROOT/go\" && go build -o bin/recall ./cmd/recall" >&2
+echo "Or set CLAUDE_RECALL_BIN to its path." >&2
+exit 1

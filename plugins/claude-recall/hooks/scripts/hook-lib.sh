@@ -81,15 +81,28 @@ load_debug_level() {
 }
 
 # Find Go binary at ~/.local/bin (the single canonical install location)
-# Sets GO_RECALL and GO_RECALL_HOOK binaries
+# Sets GO_RECALL and GO_RECALL_HOOK binaries.
+#
+# $HOME/.local/bin is the installed location and stays the only search path --
+# TestFindGoBinary pins that deliberately, including that no binary means empty.
+#
+# CLAUDE_RECALL_BIN / CLAUDE_RECALL_HOOK_BIN are explicit opt-in overrides for
+# harnesses. Tests override HOME, so without a way to point at a built binary
+# every hook silently degrades to "Go binary not found" and the shell suites end
+# up asserting against the skip path instead of real behavior.
 find_go_binary() {
     GO_RECALL=""
     GO_RECALL_HOOK=""
 
-    if [[ -x "$HOME/.local/bin/recall" ]]; then
+    if [[ -n "${CLAUDE_RECALL_BIN:-}" && -x "${CLAUDE_RECALL_BIN}" ]]; then
+        GO_RECALL="$CLAUDE_RECALL_BIN"
+    elif [[ -x "$HOME/.local/bin/recall" ]]; then
         GO_RECALL="$HOME/.local/bin/recall"
     fi
-    if [[ -x "$HOME/.local/bin/recall-hook" ]]; then
+
+    if [[ -n "${CLAUDE_RECALL_HOOK_BIN:-}" && -x "${CLAUDE_RECALL_HOOK_BIN}" ]]; then
+        GO_RECALL_HOOK="$CLAUDE_RECALL_HOOK_BIN"
+    elif [[ -x "$HOME/.local/bin/recall-hook" ]]; then
         GO_RECALL_HOOK="$HOME/.local/bin/recall-hook"
     fi
 
