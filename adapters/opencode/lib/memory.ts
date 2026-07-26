@@ -160,12 +160,17 @@ export function upsertBridgeIndexEntry(
 }
 
 // Parse the project LESSONS.md store into id -> { title, content }. Mirrors
-// the Go parser (go/internal/lessons/parser.go): header `### [L001] [*| ] Title`,
-// metadata line, content as `> `-prefixed lines. AI-source titles keep no
-// trailing robot emoji.
+// the Go parser (go/internal/lessons/parser.go): header, metadata line, content
+// as `> `-prefixed lines. AI-source titles keep no trailing robot emoji.
+//
+// The header rating is optional. It derives from counters that now live in the
+// stats.json sidecar and renders at display time, so current files read
+// `### [L001] Title` while pre-split ones read `### [L001] [***--|-----] Title`.
+// The optional group accepts only rating characters, so a title that starts
+// with '[' is not mistaken for a rating.
 export function parseLessonsFile(text: string): Map<string, { title: string; content: string }> {
   const out = new Map<string, { title: string; content: string }>();
-  const headerRe = /^### \[([LS]\d{3})\] \[[^\]]+\] (.*)$/;
+  const headerRe = /^### \[([LS]\d{3})\](?: \[[-*+|/ ]+\])? (.*)$/;
   const contentRe = /^> ?(.*)$/;
   let id: string | null = null;
   let title = '';

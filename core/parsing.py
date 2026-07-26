@@ -6,15 +6,25 @@ Parsing utilities for lesson markdown format.
 This module provides functions to parse and format lessons stored in markdown format.
 """
 
+import json
 import re
 from datetime import date
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
 
 # Handle both module import and direct script execution
 try:
     from core.models import (
         LESSON_HEADER_PATTERN_FLEXIBLE,
         METADATA_PATTERN,
+        META_CATEGORY_PATTERN,
+        META_LAST_PATTERN,
+        META_LEARNED_PATTERN,
+        META_SOURCE_PATTERN,
+        META_SUPERSEDED_PATTERN,
+        META_TYPE_PATTERN,
+        META_USES_PATTERN,
+        META_VELOCITY_PATTERN,
         CONTENT_PATTERN,
         ROBOT_EMOJI,
         Lesson,
@@ -24,11 +34,99 @@ except ImportError:
     from models import (
         LESSON_HEADER_PATTERN_FLEXIBLE,
         METADATA_PATTERN,
+        META_CATEGORY_PATTERN,
+        META_LAST_PATTERN,
+        META_LEARNED_PATTERN,
+        META_SOURCE_PATTERN,
+        META_SUPERSEDED_PATTERN,
+        META_TYPE_PATTERN,
+        META_USES_PATTERN,
+        META_VELOCITY_PATTERN,
         CONTENT_PATTERN,
         ROBOT_EMOJI,
         Lesson,
         LessonRating,
     )
+
+
+# =============================================================================
+# Stats sidecar
+# =============================================================================
+#
+# Uses/Velocity/Last change on every injection, so they live beside LESSONS.md
+# rather than inside it - otherwise the lessons file is permanently dirty in git
+# and counter bumps interleave with real edits. Mirrors
+# go/internal/lessons/stats.go; both implementations read and write the same
+# sidecar, so whichever one runs is irrelevant to the file's shape.
+
+STATS_FILENAME = "stats.json"
+
+
+def stats_path(lessons_path: Union[str, Path]) -> Path:
+    """Return the stats sidecar path for a given LESSONS.md path."""
+    return Path(lessons_path).parent / STATS_FILENAME
+
+
+def load_stats(path: Union[str, Path]) -> Dict[str, dict]:
+    """Read the sidecar.
+
+    A missing or unreadable sidecar is not an error: callers fall back to
+    whatever inline values the markdown still carries, which is what lets a
+    pre-split file load correctly.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def apply_stats(lessons: List[Lesson], stats: Dict[str, dict]) -> None:
+    """Overlay sidecar counters onto parsed lessons, in place.
+
+    Lessons absent from the sidecar keep whatever the markdown supplied, so a
+    half-migrated store - some entries moved, some still inline - resolves
+    correctly either way.
+    """
+    for lesson in lessons:
+        entry = stats.get(lesson.id)
+        if not isinstance(entry, dict):
+            continue
+        if isinstance(entry.get("uses"), (int, float)):
+            lesson.uses = int(entry["uses"])
+        if isinstance(entry.get("velocity"), (int, float)):
+            lesson.velocity = float(entry["velocity"])
+        last = entry.get("last")
+        if last:
+            try:
+                lesson.last_used = date.fromisoformat(last)
+            except (ValueError, TypeError):
+                pass
+
+
+def extract_stats(lessons: List[Lesson]) -> Dict[str, dict]:
+    """Pull volatile counters out of a lesson set for persisting."""
+    return {
+        lesson.id: {
+            "uses": lesson.uses,
+            "velocity": lesson.velocity,
+            "last": lesson.last_used.isoformat() if lesson.last_used else "",
+        }
+        for lesson in lessons
+    }
+
+
+def save_stats(path: Union[str, Path], stats: Dict[str, dict]) -> None:
+    """Write the sidecar atomically.
+
+    A crash mid-write must not leave a truncated file, which would silently
+    reset every counter to zero.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(stats, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 # Constraint signals - content keywords that indicate NEVER/ALWAYS rules
@@ -103,16 +201,6 @@ def frame_lesson_content(lesson: "Lesson") -> str:
         return content  # informational - as-is
 
 
-# Pattern for parsing old metadata format (without Velocity field)
-OLD_METADATA_PATTERN = re.compile(
-    r"^\s*-\s*\*\*Uses\*\*:\s*(\d+)"
-    r"\s*\|\s*\*\*Learned\*\*:\s*(\d{4}-\d{2}-\d{2})"
-    r"\s*\|\s*\*\*Last\*\*:\s*(\d{4}-\d{2}-\d{2})"
-    r"\s*\|\s*\*\*Category\*\*:\s*(\w+)"
-    r"(?:\s*\|\s*\*\*Source\*\*:\s*(\w+))?"
-)
-
-
 def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple[Lesson, int]]:
     """
     Parse a lesson from a list of lines starting at start_idx.
@@ -145,33 +233,50 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple
         return None
 
     meta_line = lines[start_idx + 1]
-    meta_match = METADATA_PATTERN.match(meta_line)
-    if not meta_match:
-        # Try to parse old format without Velocity
-        old_match = OLD_METADATA_PATTERN.match(meta_line)
-        if not old_match:
-            return None
+    if not METADATA_PATTERN.match(meta_line):
+        return None
+
+    # Fields are extracted individually rather than as one fixed sequence, so a
+    # current-format line (durable fields only) and a legacy line (counters
+    # inline) both parse. Learned and Category are written by every serializer;
+    # their absence means this is not a lesson metadata line.
+    learned_match = META_LEARNED_PATTERN.search(meta_line)
+    category_match = META_CATEGORY_PATTERN.search(meta_line)
+    if not learned_match or not category_match:
+        return None
+
+    try:
+        learned = date.fromisoformat(learned_match.group(1))
+    except ValueError:
+        return None  # Malformed date, skip this lesson
+
+    category = category_match.group(1)
+
+    # Volatile counters: present only in legacy files. When absent they default
+    # to zero here and the stats sidecar supplies the real values.
+    uses_match = META_USES_PATTERN.search(meta_line)
+    uses = int(uses_match.group(1)) if uses_match else 0
+
+    velocity_match = META_VELOCITY_PATTERN.search(meta_line)
+    velocity = float(velocity_match.group(1)) if velocity_match else 0.0
+
+    last_match = META_LAST_PATTERN.search(meta_line)
+    if last_match:
         try:
-            uses = int(old_match.group(1))
-            velocity = 0.0
-            learned = date.fromisoformat(old_match.group(2))
-            last_used = date.fromisoformat(old_match.group(3))
-            category = old_match.group(4)
-            source = old_match.group(5) or "human"
+            last_used = date.fromisoformat(last_match.group(1))
         except ValueError:
             return None  # Malformed date, skip this lesson
-        stored_type = ""
     else:
-        try:
-            uses = int(meta_match.group(1))
-            velocity = float(meta_match.group(2)) if meta_match.group(2) else 0.0
-            learned = date.fromisoformat(meta_match.group(3))
-            last_used = date.fromisoformat(meta_match.group(4))
-            category = meta_match.group(5)
-            source = meta_match.group(6) or "human"
-            stored_type = meta_match.group(7) or ""
-        except ValueError:
-            return None  # Malformed data, skip this lesson
+        last_used = learned
+
+    source_match = META_SOURCE_PATTERN.search(meta_line)
+    source = source_match.group(1) if source_match else "human"
+
+    type_match = META_TYPE_PATTERN.search(meta_line)
+    stored_type = type_match.group(1) if type_match else ""
+
+    superseded_match = META_SUPERSEDED_PATTERN.search(meta_line)
+    superseded = superseded_match.group(1) if superseded_match else ""
 
     # Check for promotable flag (defaults to True if not present)
     promotable = "**Promotable**: no" not in meta_line
@@ -213,6 +318,7 @@ def parse_lesson(lines: List[str], start_idx: int, level: str) -> Optional[Tuple
         promotable=promotable,
         lesson_type=lesson_type,
         triggers=triggers,
+        superseded=superseded,
     )
 
     return (lesson, end_idx)
@@ -228,22 +334,21 @@ def format_lesson(lesson: Lesson) -> str:
     Returns:
         Formatted markdown string for the lesson
     """
-    # Use legacy ASCII format for file storage (parseable by regex)
-    rating = LessonRating(lesson.uses, lesson.velocity).format_legacy()
-
     # Add robot emoji for AI lessons
     title_display = f"{ROBOT_EMOJI} {lesson.title}" if lesson.source == "ai" else lesson.title
 
-    header = f"### [{lesson.id}] {rating} {title_display}"
+    # The rating is derived from Uses/Velocity and rendered at display time, so
+    # it is not stored - writing it here would reintroduce exactly the churn the
+    # stats sidecar exists to remove.
+    header = f"### [{lesson.id}] {title_display}"
 
-    # Build metadata line
+    # Metadata line: durable fields only. Uses/Velocity/Last live in stats.json.
     meta_parts = [
-        f"**Uses**: {lesson.uses}",
-        f"**Velocity**: {lesson.velocity}",
         f"**Learned**: {lesson.learned.isoformat()}",
-        f"**Last**: {lesson.last_used.isoformat()}",
         f"**Category**: {lesson.category}",
     ]
+    if lesson.superseded:
+        meta_parts.append(f"**Superseded**: {lesson.superseded}")
     if lesson.source == "ai":
         meta_parts.append("**Source**: ai")
     if not lesson.promotable:

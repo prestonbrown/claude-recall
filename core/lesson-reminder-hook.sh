@@ -68,13 +68,34 @@ if [[ -z "$LESSONS_FILE" ]] && [[ -f "$CLAUDE_RECALL_BASE/LESSONS.md" ]]; then
   LESSONS_FILE="$CLAUDE_RECALL_BASE/LESSONS.md"
 fi
 
-if [[ -z "$LESSONS_FILE" ]]; then
-  exit 0  # No lessons file found, exit silently
+# Installed location of the Go CLI (mirrors find_go_binary in hook-lib.sh,
+# which is not shipped alongside this copy).
+GO_RECALL=""
+if [[ -n "${CLAUDE_RECALL_BIN:-}" && -x "${CLAUDE_RECALL_BIN}" ]]; then
+  GO_RECALL="$CLAUDE_RECALL_BIN"
+elif [[ -x "$HOME/.local/bin/recall" ]]; then
+  GO_RECALL="$HOME/.local/bin/recall"
 fi
 
-# Extract lessons with 3+ stars (pattern: ### [L###] [***...])
-# The star pattern in lessons is like [*****/-----] or [***--/-----]
-HIGH_STAR=$(grep -E '^###\s*\[[LS][0-9]+\].*\[\*{3,}' "$LESSONS_FILE" 2>/dev/null | head -3)
+if [[ -z "$LESSONS_FILE" && -z "$GO_RECALL" ]]; then
+  exit 0  # Nothing to read lessons from, exit silently
+fi
+
+# Extract lessons with 3+ stars.
+#
+# The rating derives from counters that live in the stats.json sidecar and is
+# rendered at display time, so LESSONS.md no longer contains stars to grep for.
+# `recall list` renders them - `L001 [***--|****-] Title (pattern)`.
+HIGH_STAR=""
+if [[ -n "$GO_RECALL" ]]; then
+  HIGH_STAR=$(PROJECT_DIR="${PROJECT_ROOT:-$PWD}" "$GO_RECALL" list 2>/dev/null \
+    | grep -E '^[LS][0-9]+ \[\*{3,}' | head -3 || true)
+fi
+
+# Fall back to grepping a pre-split file when the binary is unavailable.
+if [[ -z "$HIGH_STAR" && -n "$LESSONS_FILE" ]]; then
+  HIGH_STAR=$(grep -E '^###\s*\[[LS][0-9]+\].*\[\*{3,}' "$LESSONS_FILE" 2>/dev/null | head -3 || true)
+fi
 
 if [[ -n "$HIGH_STAR" ]]; then
   echo "📚 LESSON CHECK - High-priority lessons to keep in mind:"
@@ -84,7 +105,9 @@ if [[ -n "$HIGH_STAR" ]]; then
   # Log reminded lessons for effectiveness tracking (if debug enabled)
   if [[ "${CLAUDE_RECALL_DEBUG:-0}" -ge 1 ]]; then
     DEBUG_LOG="$CLAUDE_RECALL_BASE/debug.log"
-    LESSON_IDS=$(echo "$HIGH_STAR" | grep -oE '\[[LS][0-9]+\]' | tr -d '[]' | tr '\n' ',' | sed 's/,$//')
+    # Matches both shapes: bare `L001 [***` from the CLI and `### [L001]` from
+    # the file fallback.
+    LESSON_IDS=$(echo "$HIGH_STAR" | grep -oE '\b[LS][0-9]{3}\b' | tr '\n' ',' | sed 's/,$//')
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     echo "{\"timestamp\":\"$TIMESTAMP\",\"event\":\"reminder\",\"lesson_ids\":\"$LESSON_IDS\",\"prompt_count\":$COUNT}" >> "$DEBUG_LOG"
   fi

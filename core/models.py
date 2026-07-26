@@ -49,20 +49,42 @@ APPROACH_COMPLETED_ARCHIVE_DAYS = HANDOFF_COMPLETED_ARCHIVE_DAYS
 SCORE_RELEVANCE_TIMEOUT = 30  # 30 seconds is enough for Haiku to score ~100 lessons
 SCORE_RELEVANCE_MAX_QUERY_LEN = 5000  # Truncate query to prevent huge prompts
 
-# Regex patterns for parsing lessons
-# Support both old format (/) and new format (|)
+# Regex patterns for parsing lessons.
+#
+# Two on-disk shapes are supported, matching go/internal/lessons/parser.go:
+#
+#   current: ### [L001] Title
+#            - **Learned**: 2026-01-01 | **Category**: pattern
+#   legacy:  ### [L001] [***--|****-] Title
+#            - **Uses**: 12 | **Velocity**: 3.6 | **Learned**: ... | **Last**: ... | **Category**: pattern
+#
+# The rating is derived from Uses/Velocity and now renders at display time, and
+# the volatile counters live in the stats.json sidecar, so current files carry
+# neither. Both are optional here so either shape loads. The star-rating group
+# only accepts rating characters, so a title starting with '[' is not mistaken
+# for a rating.
 LESSON_HEADER_PATTERN_FLEXIBLE = re.compile(
-    r"^###\s*\[([LS]\d{3})\]\s*\[([*+\-|/\ ]+)\]\s*(.*)$"
+    r"^###\s*\[([LS]\d{3})\]\s*(?:\[([*+\-|/\ ]+)\]\s*)?(.*)$"
 )
-METADATA_PATTERN = re.compile(
-    r"^\s*-\s*\*\*Uses\*\*:\s*(\d+)"
-    r"(?:\s*\|\s*\*\*Velocity\*\*:\s*([\d.]+))?"
-    r"\s*\|\s*\*\*Learned\*\*:\s*(\d{4}-\d{2}-\d{2})"
-    r"\s*\|\s*\*\*Last\*\*:\s*(\d{4}-\d{2}-\d{2})"
-    r"\s*\|\s*\*\*Category\*\*:\s*(\w+)"
-    r"(?:\s*\|\s*\*\*Source\*\*:\s*(\w+))?"
-    r"(?:\s*\|\s*\*\*Type\*\*:\s*(\w+))?"
-)
+
+# A lesson metadata line, identified by shape rather than by a fixed field
+# order. Fields are pulled out individually below, so a line carrying only
+# durable fields parses the same as a legacy line that still has counters.
+METADATA_PATTERN = re.compile(r"^\s*-\s*\*\*\w+\*\*:")
+
+# Individual metadata fields. Uses/Velocity/Last appear only in legacy files.
+META_USES_PATTERN = re.compile(r"\*\*Uses\*\*:\s*(\d+)")
+META_VELOCITY_PATTERN = re.compile(r"\*\*Velocity\*\*:\s*([\d.]+)")
+META_LEARNED_PATTERN = re.compile(r"\*\*Learned\*\*:\s*(\d{4}-\d{2}-\d{2})")
+META_LAST_PATTERN = re.compile(r"\*\*Last\*\*:\s*(\d{4}-\d{2}-\d{2})")
+META_CATEGORY_PATTERN = re.compile(r"\*\*Category\*\*:\s*(\w+)")
+META_SOURCE_PATTERN = re.compile(r"\*\*Source\*\*:\s*(\w+)")
+META_TYPE_PATTERN = re.compile(r"\*\*Type\*\*:\s*(\w+)")
+
+# Retired-lesson marker: a replacement ID, or "deleted". A tombstoned lesson
+# keeps its ID so existing [L###] citations in source still resolve.
+META_SUPERSEDED_PATTERN = re.compile(r"\*\*Superseded\*\*:\s*(\S+)")
+
 CONTENT_PATTERN = re.compile(r"^>\s*(.*)$")
 
 
@@ -129,6 +151,16 @@ class Lesson:
     promotable: bool = True  # False = never promote to system level
     lesson_type: str = ""  # constraint|informational|preference (empty = auto-classify)
     triggers: List[str] = field(default_factory=list)  # Keywords for matching relevance
+    superseded: str = ""  # Replacement ID, or "deleted"; empty = active
+
+    @property
+    def is_tombstone(self) -> bool:
+        """True when the lesson has been retired.
+
+        Retired lessons keep their ID so existing [L###] citations resolve to a
+        redirect, but they are excluded from listing, injection, and scoring.
+        """
+        return bool(self.superseded)
 
     @property
     def tokens(self) -> int:

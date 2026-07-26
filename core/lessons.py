@@ -20,7 +20,15 @@ from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 # Handle both module import and direct script execution
 try:
     from core.debug_logger import get_logger
-    from core.parsing import parse_lesson, format_lesson
+    from core.parsing import (
+        parse_lesson,
+        format_lesson,
+        apply_stats,
+        extract_stats,
+        load_stats,
+        save_stats,
+        stats_path,
+    )
     from core.file_lock import FileLock
     from core.models import (
         # Constants
@@ -41,7 +49,15 @@ try:
     )
 except ImportError:
     from debug_logger import get_logger
-    from parsing import parse_lesson, format_lesson
+    from parsing import (
+        parse_lesson,
+        format_lesson,
+        apply_stats,
+        extract_stats,
+        load_stats,
+        save_stats,
+        stats_path,
+    )
     from file_lock import FileLock
     from models import (
         # Constants
@@ -422,10 +438,13 @@ class LessonsMixin:
                 triggers=triggers,
             )
 
-            # Append to file
+            # Append to file. The markdown carries durable fields only, so the
+            # new lesson's starting counters have to be recorded in the sidecar
+            # or it would read back with zero uses.
             formatted = format_lesson(lesson)
             with open(file_path, "a") as f:
                 f.write("\n" + formatted + "\n")
+            self._merge_stats(file_path, [lesson])
 
         # Log lesson added
         logger = get_logger()
@@ -1581,10 +1600,30 @@ Output ONLY the ID: keywords line, nothing else."""
             else:
                 idx += 1
 
+        # Overlay volatile counters from the sidecar. Lessons missing there keep
+        # the inline values the markdown supplied, which is how pre-split files
+        # load correctly.
+        apply_stats(lessons, load_stats(stats_path(file_path)))
+
         return lessons
 
+    def _merge_stats(self, file_path: Path, lessons: List[Lesson]) -> None:
+        """Fold the given lessons' counters into the sidecar beside file_path.
+
+        Merging rather than replacing keeps entries for lessons this caller did
+        not load - notably the other level when both share a directory.
+        """
+        sidecar = stats_path(file_path)
+        merged = load_stats(sidecar)
+        merged.update(extract_stats(lessons))
+        save_stats(sidecar, merged)
+
     def _write_lessons_file(self, file_path: Path, lessons: List[Lesson], level: str) -> None:
-        """Write lessons back to file."""
+        """Write durable content to the markdown file and counters to the sidecar.
+
+        Splitting them is what keeps a stats-only update - the common case, since
+        every citation bumps a counter - from dirtying the lessons file.
+        """
         # Sort lessons by numerical ID for consistent ordering
         def lesson_sort_key(lesson: Lesson) -> int:
             try:
@@ -1617,6 +1656,10 @@ Output ONLY the ID: keywords line, nothing else."""
 
 ## Active Lessons
 """
+
+        # Persist counters first, so a failure writing the markdown cannot leave
+        # the sidecar behind.
+        self._merge_stats(file_path, lessons)
 
         # Build new content
         parts = [header]

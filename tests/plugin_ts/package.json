@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "tsc && node -e \"require('fs').writeFileSync('out/package.json', JSON.stringify({type:'module'}))\" && node --test \"out/**/*.test.js\""
+    "test": "tsc && node -e \"require('fs').writeFileSync('out/package.json', JSON.stringify({type:'module'}))\" && node --test $(find out -name '*.test.js')"
   },
   "devDependencies": {
     "@types/node": "^20",

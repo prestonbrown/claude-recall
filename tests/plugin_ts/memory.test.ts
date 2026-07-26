@@ -356,9 +356,32 @@ describe("parseLessonsFile", () => {
     expect(m.get("S001")).toEqual({ title: "System Lesson", content: "System content" });
   });
 
+  test("parses the current format, where the header carries no rating", () => {
+    // Ratings render at display time and the counters live in stats.json, so
+    // headers written by the Go CLI are bare.
+    const text = `## Active Lessons
+
+### [L001] First Lesson
+- **Learned**: 2026-01-01 | **Category**: pattern
+> Content line one
+> content line two
+
+### [S001] System Lesson
+- **Learned**: 2026-01-01 | **Category**: gotcha | **Superseded**: S002
+> System content
+`;
+    const m = parseLessonsFile(text);
+    expect(m.get("L001")).toEqual({ title: "First Lesson", content: "Content line one\ncontent line two" });
+    expect(m.get("S001")).toEqual({ title: "System Lesson", content: "System content" });
+  });
+
   test("strips the AI-source robot emoji from titles", () => {
     const text = "### [L002] [**---|-----] AI Lesson 🤖\n> body\n";
     expect(parseLessonsFile(text).get("L002")!.title).toBe("AI Lesson");
+  });
+
+  test("strips the robot emoji in the current format too", () => {
+    expect(parseLessonsFile("### [L002] AI Lesson 🤖\n> body\n").get("L002")!.title).toBe("AI Lesson");
   });
 
   test("empty input yields an empty map", () => {

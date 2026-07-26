@@ -45,6 +45,25 @@ except ImportError:
         TriedStep,
     )
 
+# Lesson parsing is shared with the manager so this reader cannot drift from
+# the on-disk format again.
+try:
+    from core.models import (
+        LESSON_HEADER_PATTERN_FLEXIBLE,
+        METADATA_PATTERN as LESSON_METADATA_PATTERN,
+        META_USES_PATTERN,
+        META_VELOCITY_PATTERN,
+    )
+    from core.parsing import load_stats, stats_path
+except ImportError:  # pragma: no cover - direct-script execution fallback
+    from models import (
+        LESSON_HEADER_PATTERN_FLEXIBLE,
+        METADATA_PATTERN as LESSON_METADATA_PATTERN,
+        META_USES_PATTERN,
+        META_VELOCITY_PATTERN,
+    )
+    from parsing import load_stats, stats_path
+
 
 def get_state_dir() -> Path:
     """
@@ -124,14 +143,11 @@ class StateReader:
         project_root: Path to project root (for project lessons/handoffs)
     """
 
-    # Regex patterns for parsing lessons (from core/models.py)
-    LESSON_HEADER_PATTERN = re.compile(
-        r"^###\s*\[([LS]\d{3})\]\s*\[([*+\-|/\ ]+)\]\s*(.*)$"
-    )
-    METADATA_PATTERN = re.compile(
-        r"^\s*-\s*\*\*Uses\*\*:\s*(\d+)"
-        r"(?:\s*\|\s*\*\*Velocity\*\*:\s*([\d.]+))?"
-    )
+    # Lesson patterns are imported rather than restated: keeping a private copy
+    # here is what let this reader fall behind the on-disk format when the
+    # rating moved out of the header and the counters moved to stats.json.
+    LESSON_HEADER_PATTERN = LESSON_HEADER_PATTERN_FLEXIBLE
+    METADATA_PATTERN = LESSON_METADATA_PATTERN
 
     # Regex patterns for parsing handoffs
     # Match both legacy format (A001) and new format (hf-xxxxxxx with any alphanumeric)
@@ -307,13 +323,18 @@ class StateReader:
                 idx += 1
                 continue
 
-            meta_match = self.METADATA_PATTERN.match(lines[idx + 1])
-            if meta_match:
-                uses = int(meta_match.group(1))
-                velocity = float(meta_match.group(2)) if meta_match.group(2) else 0.0
-            else:
-                uses = 0
-                velocity = 0.0
+            # Counters are inline only in pre-split files; current files carry
+            # them in the stats sidecar, applied below.
+            uses = 0
+            velocity = 0.0
+            meta_line = lines[idx + 1]
+            if self.METADATA_PATTERN.match(meta_line):
+                uses_match = META_USES_PATTERN.search(meta_line)
+                if uses_match:
+                    uses = int(uses_match.group(1))
+                velocity_match = META_VELOCITY_PATTERN.search(meta_line)
+                if velocity_match:
+                    velocity = float(velocity_match.group(1))
 
             lessons.append(LessonSummary(
                 id=lesson_id,
@@ -324,6 +345,18 @@ class StateReader:
             ))
 
             idx += 1
+
+        # Overlay sidecar counters; lessons absent from it keep their inline
+        # values, so a half-migrated store reads correctly either way.
+        stats = load_stats(stats_path(file_path))
+        for lesson in lessons:
+            entry = stats.get(lesson.id)
+            if not isinstance(entry, dict):
+                continue
+            if isinstance(entry.get("uses"), (int, float)):
+                lesson.uses = int(entry["uses"])
+            if isinstance(entry.get("velocity"), (int, float)):
+                lesson.velocity = float(entry["velocity"])
 
         return lessons
 
