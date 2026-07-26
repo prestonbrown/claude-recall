@@ -124,6 +124,8 @@ func (a *App) Run(args []string) int {
 		return a.runDelete(cmdArgs)
 	case "supersede":
 		return a.runSupersede(cmdArgs)
+	case "validate":
+		return a.runValidate(cmdArgs)
 	case "decay":
 		return a.runDecay(cmdArgs)
 	case "handoff":
@@ -170,6 +172,8 @@ Commands:
   decay [--force]                  Run velocity decay cycle
   dismiss <id>                     Dismiss a lesson as noise for this session
   supersede <old> <new>            Retire <old>, redirecting it to <new>
+  validate [--strict]              Check lessons against the current project tree
+  validate --dismiss <id> <token>  Record a reviewed reference as fine
 
   handoff list                     List active handoffs
   handoff add <title> [opts]       Add new handoff (--desc D, --stealth)
