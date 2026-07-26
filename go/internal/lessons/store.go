@@ -27,8 +27,25 @@ func NewStore(projectPath, systemPath string) *Store {
 	}
 }
 
-// List returns all lessons (project + system) sorted by ID
+// List returns active lessons (project + system) sorted by ID. Tombstones are
+// excluded so retired lessons cannot reach injection, scoring, or promotion.
+// Use ListAll when you need retired entries too.
 func (s *Store) List() ([]*models.Lesson, error) {
+	all, err := s.ListAll()
+	if err != nil {
+		return nil, err
+	}
+	active := make([]*models.Lesson, 0, len(all))
+	for _, l := range all {
+		if !l.IsTombstone() {
+			active = append(active, l)
+		}
+	}
+	return active, nil
+}
+
+// ListAll returns every lesson including tombstones, sorted by ID.
+func (s *Store) ListAll() ([]*models.Lesson, error) {
 	var all []*models.Lesson
 
 	// Load project lessons (NotExist is handled in loadLessons)
@@ -53,9 +70,11 @@ func (s *Store) List() ([]*models.Lesson, error) {
 	return all, nil
 }
 
-// Get returns a lesson by ID (searches both project and system)
+// Get returns a lesson by ID (searches both project and system). Tombstones
+// resolve, so a stale `[L084]` in a source comment gets a redirect rather than
+// "not found".
 func (s *Store) Get(id string) (*models.Lesson, error) {
-	lessons, err := s.List()
+	lessons, err := s.ListAll()
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +233,8 @@ func (s *Store) Edit(id string, updates map[string]interface{}) error {
 }
 
 // Delete removes a lesson by ID
-func (s *Store) Delete(id string) error {
+// retire marks a lesson superseded. replacement == "" means deleted outright.
+func (s *Store) retire(id, replacement string) error {
 	// Find the lesson and its file
 	path, level, err := s.findLessonFile(id)
 	if err != nil {
@@ -235,14 +255,18 @@ func (s *Store) Delete(id string) error {
 		return err
 	}
 
-	// Filter out the deleted lesson
-	var remaining []*models.Lesson
+	// Retire in place rather than removing the entry: the ID stays resolvable
+	// so existing `[L###]` references in source degrade to a redirect, and the
+	// allocator can see the number is spoken for.
 	found := false
 	for _, l := range lessons {
 		if l.ID == id {
 			found = true
-		} else {
-			remaining = append(remaining, l)
+			if replacement == "" {
+				l.Superseded = models.TombstoneDeleted
+			} else {
+				l.Superseded = replacement
+			}
 		}
 	}
 
@@ -250,19 +274,47 @@ func (s *Store) Delete(id string) error {
 		return fmt.Errorf("lesson %s not found", id)
 	}
 
-	// Write back
-	return s.writeLessons(path, remaining, level)
+	return s.writeLessons(path, lessons, level)
 }
 
-// NextID returns the next available ID for a level ("L" or "S")
+// Delete retires a lesson with no replacement.
+func (s *Store) Delete(id string) error {
+	return s.retire(id, "")
+}
+
+// Supersede retires a lesson and points it at the lesson that replaced it, so
+// `recall show <old>` explains where the content went.
+func (s *Store) Supersede(id, replacement string) error {
+	if replacement == "" {
+		return fmt.Errorf("supersede requires a replacement ID; use delete instead")
+	}
+	if id == replacement {
+		return fmt.Errorf("cannot supersede %s with itself", id)
+	}
+	if _, err := s.Get(replacement); err != nil {
+		return fmt.Errorf("replacement %s does not exist: %w", replacement, err)
+	}
+	return s.retire(id, replacement)
+}
+
+// NextID returns the next available ID for a level ("L" or "S").
+//
+// Two things make a number unavailable beyond simply being in use:
+//   - tombstones, because their ID may still be cited in source comments
+//   - numbers the project already uses for its own labels (see ReservedIDs)
+//
+// Both are skipped rather than merely counted past, so a gap left by an early
+// reservation does not get handed out later.
 func (s *Store) NextID(prefix string) (string, error) {
-	lessons, err := s.List()
+	lessons, err := s.ListAll()
 	if err != nil {
 		return "", err
 	}
 
+	taken := make(map[string]bool, len(lessons))
 	maxNum := 0
 	for _, l := range lessons {
+		taken[l.ID] = true
 		if strings.HasPrefix(l.ID, prefix) {
 			numStr := strings.TrimPrefix(l.ID, prefix)
 			if num, err := strconv.Atoi(numStr); err == nil && num > maxNum {
@@ -271,7 +323,15 @@ func (s *Store) NextID(prefix string) (string, error) {
 		}
 	}
 
-	return fmt.Sprintf("%s%03d", prefix, maxNum+1), nil
+	reserved := ReservedIDs(projectRoot(s.projectPath), taken)
+
+	for num := maxNum + 1; num < 1000; num++ {
+		candidate := fmt.Sprintf("%s%03d", prefix, num)
+		if !taken[candidate] && !reserved[candidate] {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no available %s IDs below 1000", prefix)
 }
 
 // loadLessons reads lessons from a file

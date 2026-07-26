@@ -31,6 +31,9 @@ var (
 	lastPattern     = regexp.MustCompile(`\*\*Last\*\*: (\d{4}-\d{2}-\d{2})`)
 	categoryPattern = regexp.MustCompile(`\*\*Category\*\*: (\w+)`)
 
+	// Retired-lesson marker: a replacement ID, or "deleted".
+	supersededPattern = regexp.MustCompile(`\*\*Superseded\*\*: (\S+)`)
+
 	// Optional field patterns
 	typePattern       = regexp.MustCompile(`\*\*Type\*\*: (\w+)`)
 	sourcePattern     = regexp.MustCompile(`\*\*Source\*\*: (\w+)`)
@@ -114,6 +117,9 @@ func Parse(r io.Reader) ([]*models.Lesson, error) {
 				}
 				if m := categoryPattern.FindStringSubmatch(line); m != nil {
 					current.Category = m[1]
+				}
+				if m := supersededPattern.FindStringSubmatch(line); m != nil {
+					current.Superseded = m[1]
 				}
 
 				// Parse optional fields from the rest of the line
@@ -209,6 +215,10 @@ func SerializeLesson(l *models.Lesson) string {
 		l.Learned.Format("2006-01-02"),
 		l.Category,
 	))
+
+	if l.Superseded != "" {
+		sb.WriteString(fmt.Sprintf(" | **Superseded**: %s", l.Superseded))
+	}
 
 	// Optional fields
 	if l.LessonType != "" {

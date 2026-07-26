@@ -423,10 +423,25 @@ func Test_Store_Delete_RemovesLesson(t *testing.T) {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	// Verify L001 is gone
-	_, err = store.Get("L001")
-	if err == nil {
-		t.Error("Expected error for deleted lesson, got nil")
+	// L001 is retired, not erased: the ID still resolves so existing `[L001]`
+	// references in source get a redirect instead of a dead end.
+	retired, err := store.Get("L001")
+	if err != nil {
+		t.Fatalf("deleted lesson should still resolve as a tombstone: %v", err)
+	}
+	if !retired.IsTombstone() {
+		t.Errorf("L001 should be a tombstone, Superseded=%q", retired.Superseded)
+	}
+
+	// ...but it must not appear among active lessons.
+	active, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range active {
+		if l.ID == "L001" {
+			t.Error("deleted lesson leaked into List()")
+		}
 	}
 
 	// Verify L002 still exists
@@ -438,10 +453,10 @@ func Test_Store_Delete_RemovesLesson(t *testing.T) {
 		t.Errorf("Expected ID 'L002', got '%s'", lesson.ID)
 	}
 
-	// Verify file content
+	// Verify file content: the entry stays, marked retired.
 	content := readFile(t, projectPath)
-	if strings.Contains(content, "[L001]") {
-		t.Error("Expected file to not contain '[L001]' after delete")
+	if !strings.Contains(content, "**Superseded**") {
+		t.Errorf("Expected a tombstone marker after delete:\n%s", content)
 	}
 	if !strings.Contains(content, "[L002]") {
 		t.Error("Expected file to still contain '[L002]'")

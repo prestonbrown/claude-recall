@@ -122,6 +122,8 @@ func (a *App) Run(args []string) int {
 		return a.runEdit(cmdArgs)
 	case "delete":
 		return a.runDelete(cmdArgs)
+	case "supersede":
+		return a.runSupersede(cmdArgs)
 	case "decay":
 		return a.runDecay(cmdArgs)
 	case "handoff":
@@ -167,6 +169,7 @@ Commands:
   delete <id>                      Delete a lesson
   decay [--force]                  Run velocity decay cycle
   dismiss <id>                     Dismiss a lesson as noise for this session
+  supersede <old> <new>            Retire <old>, redirecting it to <new>
 
   handoff list                     List active handoffs
   handoff add <title> [opts]       Add new handoff (--desc D, --stealth)
@@ -347,6 +350,17 @@ func (a *App) runShow(args []string) int {
 		return 1
 	}
 
+	// A retired lesson still resolves so that a stale `[L###]` in a source
+	// comment gets an answer. Lead with where the content went.
+	if lesson.IsTombstone() {
+		if lesson.Superseded == models.TombstoneDeleted {
+			fmt.Fprintf(a.stdout, "RETIRED: %s was deleted and has no replacement.\n\n", lesson.ID)
+		} else {
+			fmt.Fprintf(a.stdout, "RETIRED: %s was superseded by %s - see that lesson instead.\n\n",
+				lesson.ID, lesson.Superseded)
+		}
+	}
+
 	fmt.Fprintf(a.stdout, "ID: %s\n", lesson.ID)
 	fmt.Fprintf(a.stdout, "Title: %s\n", lesson.Title)
 	fmt.Fprintf(a.stdout, "Category: %s\n", lesson.Category)
@@ -431,7 +445,26 @@ func (a *App) runDelete(args []string) int {
 		return 1
 	}
 
-	fmt.Fprintf(a.stdout, "Deleted lesson %s\n", id)
+	fmt.Fprintf(a.stdout, "Retired lesson %s (ID kept so existing [%s] references still resolve)\n", id, id)
+	return 0
+}
+
+// runSupersede retires a lesson and points it at its replacement.
+func (a *App) runSupersede(args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(a.stderr, "usage: recall supersede <old-id> <new-id>")
+		return 1
+	}
+
+	oldID, newID := args[0], args[1]
+	store := lessons.NewStore(a.projectPath, a.systemPath)
+
+	if err := store.Supersede(oldID, newID); err != nil {
+		fmt.Fprintf(a.stderr, "error: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(a.stdout, "Superseded %s by %s - `recall show %s` now redirects\n", oldID, newID, oldID)
 	return 0
 }
 

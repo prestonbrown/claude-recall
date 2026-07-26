@@ -506,10 +506,25 @@ func Test_DeleteCommand_DeletesLesson(t *testing.T) {
 		t.Errorf("expected exit code 0, got %d", exitCode)
 	}
 
-	// Verify lesson was deleted
-	_, err := store.Get(lesson.ID)
-	if err == nil {
-		t.Error("expected lesson to be deleted, but it still exists")
+	// Deleting retires the lesson rather than erasing it: the ID keeps
+	// resolving so cited references degrade to a redirect, but it drops out of
+	// the active set that feeds injection and scoring.
+	retired, err := store.Get(lesson.ID)
+	if err != nil {
+		t.Fatalf("deleted lesson should still resolve as a tombstone: %v", err)
+	}
+	if !retired.IsTombstone() {
+		t.Errorf("expected a tombstone, Superseded=%q", retired.Superseded)
+	}
+
+	active, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range active {
+		if l.ID == lesson.ID {
+			t.Error("deleted lesson still appears among active lessons")
+		}
 	}
 }
 

@@ -29,6 +29,23 @@ type Lesson struct {
 	Promotable bool      // false = never auto-promote (default: true)
 	LessonType string    // constraint|informational|preference (auto-classified if empty)
 	Triggers   []string  // Keywords for relevance matching
+
+	// Superseded marks a retired lesson. Empty means active; a lesson ID means
+	// "merged into that lesson"; TombstoneDeleted means retired with no
+	// replacement. Retired lessons keep their ID and stay in the file because
+	// IDs get written into source comments ("// see [L084]") - dropping the
+	// entry turns every such reference into a dead end, and reusing the number
+	// silently repoints them at an unrelated lesson.
+	Superseded string
+}
+
+// TombstoneDeleted marks a lesson retired without a replacement.
+const TombstoneDeleted = "deleted"
+
+// IsTombstone reports whether this lesson has been retired. Tombstones resolve
+// by ID but are excluded from injection, scoring, and promotion.
+func (l *Lesson) IsTombstone() bool {
+	return l.Superseded != ""
 }
 
 // NewLesson creates a new Lesson with default values
