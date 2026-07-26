@@ -86,18 +86,28 @@ func decayLessonsInFile(path, level string) (int, error) {
 	}
 	defer fl.Release()
 
-	// Parse lessons
+	// Parse lessons, then overlay the sidecar: decay operates on Velocity, which
+	// no longer lives in the markdown, so reading without the overlay would
+	// decay zeros and write the real counters away.
 	lessons, err := ParseFile(path)
 	if err != nil {
 		return 0, err
 	}
+	statsPath := StatsPath(path)
+	LoadStats(statsPath).Apply(lessons)
 
 	// Apply decay to each lesson
 	for _, l := range lessons {
 		DecayLesson(l)
 	}
 
-	// Write back
+	// Decay only changes volatile counters, so the sidecar is the real write.
+	// The markdown is rewritten too, to normalize a pre-split file on first run.
+	merged := ExtractStats(lessons).MergeInto(LoadStats(statsPath))
+	if err := merged.Save(statsPath); err != nil {
+		return 0, err
+	}
+
 	content := Serialize(lessons, level)
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return 0, err

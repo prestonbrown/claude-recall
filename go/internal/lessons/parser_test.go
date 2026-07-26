@@ -254,12 +254,9 @@ func TestSerialize_RoundTrip(t *testing.T) {
 		if p.Content != original.Content {
 			t.Errorf("Lesson %d: Expected Content '%s', got '%s'", i, original.Content, p.Content)
 		}
-		if p.Uses != original.Uses {
-			t.Errorf("Lesson %d: Expected Uses %d, got %d", i, original.Uses, p.Uses)
-		}
-		if p.Velocity != original.Velocity {
-			t.Errorf("Lesson %d: Expected Velocity %f, got %f", i, original.Velocity, p.Velocity)
-		}
+		// Uses/Velocity/Last deliberately do NOT survive a Serialize->Parse
+		// round trip: they live in stats.json, and the Store overlays them on
+		// load. Their round trip is covered in stats_test.go.
 		if p.Category != original.Category {
 			t.Errorf("Lesson %d: Expected Category '%s', got '%s'", i, original.Category, p.Category)
 		}
@@ -294,17 +291,15 @@ func TestSerializeLesson_AllFields(t *testing.T) {
 	if !strings.Contains(serialized, "Complete Lesson") {
 		t.Error("Expected serialized to contain 'Complete Lesson'")
 	}
-	if !strings.Contains(serialized, "**Uses**: 10") {
-		t.Error("Expected serialized to contain '**Uses**: 10'")
-	}
-	if !strings.Contains(serialized, "**Velocity**: 1") {
-		t.Error("Expected serialized to contain '**Velocity**: 1'")
+	// Volatile counters must NOT be serialized - they live in stats.json, and
+	// writing them here is exactly the git churn the split removes.
+	for _, banned := range []string{"**Uses**", "**Velocity**", "**Last**"} {
+		if strings.Contains(serialized, banned) {
+			t.Errorf("serialized output still carries volatile field %s", banned)
+		}
 	}
 	if !strings.Contains(serialized, "**Learned**: 2025-12-27") {
 		t.Error("Expected serialized to contain '**Learned**: 2025-12-27'")
-	}
-	if !strings.Contains(serialized, "**Last**: 2026-01-18") {
-		t.Error("Expected serialized to contain '**Last**: 2026-01-18'")
 	}
 	if !strings.Contains(serialized, "**Category**: pattern") {
 		t.Error("Expected serialized to contain '**Category**: pattern'")

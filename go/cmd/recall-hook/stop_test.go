@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pbrown/claude-recall/internal/lessons"
 )
 
 
@@ -541,17 +543,27 @@ func Test_StopHook_ProcessesCitations(t *testing.T) {
 		t.Errorf("citations_processed = %d, want 1", result.CitationsProcessed)
 	}
 
-	// Verify uses/velocity were incremented in the file
+	// Uses/Velocity live in the stats sidecar, not in LESSONS.md - a citation
+	// must not touch the markdown at all.
+	stats := lessons.LoadStats(lessons.StatsPath(lessonsPath))
+	entry, ok := stats["L001"]
+	if !ok {
+		t.Fatalf("L001 missing from stats sidecar at %s", lessons.StatsPath(lessonsPath))
+	}
+	if entry.Uses != 6 {
+		t.Errorf("Uses = %d, want 6", entry.Uses)
+	}
+	if entry.Velocity != 3.0 {
+		t.Errorf("Velocity = %v, want 3.0", entry.Velocity)
+	}
+
 	updatedContent, err := os.ReadFile(lessonsPath)
 	if err != nil {
 		t.Fatalf("failed to read updated lessons: %v", err)
 	}
-
-	// Uses should now be 6 (was 5), Velocity should be 3.0 (was 2.0)
-	if !strings.Contains(string(updatedContent), "**Uses**: 6") {
-		t.Errorf("expected Uses to be incremented to 6, got: %s", string(updatedContent))
-	}
-	if !strings.Contains(string(updatedContent), "**Velocity**: 3") {
-		t.Errorf("expected Velocity to be incremented to 3.0, got: %s", string(updatedContent))
+	for _, banned := range []string{"**Uses**", "**Velocity**", "**Last**"} {
+		if strings.Contains(string(updatedContent), banned) {
+			t.Errorf("citation wrote volatile field %s into LESSONS.md:\n%s", banned, updatedContent)
+		}
 	}
 }

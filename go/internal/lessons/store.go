@@ -289,11 +289,23 @@ func (s *Store) loadLessons(path, level string) ([]*models.Lesson, error) {
 		l.Level = level
 	}
 
+	// Overlay volatile counters from the sidecar. Lessons missing there keep the
+	// inline values the markdown supplied, which is how pre-split files load.
+	LoadStats(StatsPath(path)).Apply(lessons)
+
 	return lessons, nil
 }
 
-// writeLessons writes lessons to a file
+// writeLessons writes durable content to the markdown file and volatile counters
+// to the sidecar. Splitting them is what keeps a stats-only update - the common
+// case, since every injection bumps a counter - from dirtying the lessons file.
 func (s *Store) writeLessons(path string, lessons []*models.Lesson, level string) error {
+	statsPath := StatsPath(path)
+	merged := ExtractStats(lessons).MergeInto(LoadStats(statsPath))
+	if err := merged.Save(statsPath); err != nil {
+		return err
+	}
+
 	content := Serialize(lessons, level)
 	return os.WriteFile(path, []byte(content), 0644)
 }

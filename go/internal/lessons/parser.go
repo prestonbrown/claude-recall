@@ -14,11 +14,22 @@ import (
 )
 
 var (
-	// Header pattern: ### [L001] [***--|-----] Lesson Title
-	headerPattern = regexp.MustCompile(`^### \[([LS]\d{3})\] \[([*+\-| ]+)\] (.*)$`)
+	// Header pattern. The rating is derived from stats, which now live in the
+	// sidecar, so current files omit it: `### [L001] Title`. Pre-split files
+	// carry it inline (`### [L001] [***--|-----] Title`) and must still parse.
+	headerPattern = regexp.MustCompile(`^### \[([LS]\d{3})\](?: \[([*+\-| ]+)\])? (.*)$`)
 
-	// Metadata pattern: - **Uses**: 7 | **Velocity**: 0.01 | **Learned**: 2025-12-27 | **Last**: 2026-01-18 | **Category**: pattern
-	metadataPattern = regexp.MustCompile(`^\- \*\*Uses\*\*: (\d+) \| \*\*Velocity\*\*: ([\d.]+) \| \*\*Learned\*\*: (\d{4}-\d{2}-\d{2}) \| \*\*Last\*\*: (\d{4}-\d{2}-\d{2}) \| \*\*Category\*\*: (\w+)`)
+	// Any lesson metadata line. Fields are extracted individually below, so a
+	// line carrying only durable fields parses the same as a legacy line that
+	// still has Uses/Velocity/Last inline.
+	metadataPattern = regexp.MustCompile(`^\- \*\*\w+\*\*:`)
+
+	// Field patterns. Uses/Velocity/Last appear only in pre-split files.
+	usesPattern     = regexp.MustCompile(`\*\*Uses\*\*: (\d+)`)
+	velocityPattern = regexp.MustCompile(`\*\*Velocity\*\*: ([\d.]+)`)
+	learnedPattern  = regexp.MustCompile(`\*\*Learned\*\*: (\d{4}-\d{2}-\d{2})`)
+	lastPattern     = regexp.MustCompile(`\*\*Last\*\*: (\d{4}-\d{2}-\d{2})`)
+	categoryPattern = regexp.MustCompile(`\*\*Category\*\*: (\w+)`)
 
 	// Optional field patterns
 	typePattern       = regexp.MustCompile(`\*\*Type\*\*: (\w+)`)
@@ -84,12 +95,26 @@ func Parse(r io.Reader) ([]*models.Lesson, error) {
 
 		// Try to parse metadata (only if we have a current lesson)
 		if current != nil {
-			if matches := metadataPattern.FindStringSubmatch(line); matches != nil {
-				current.Uses, _ = strconv.Atoi(matches[1])
-				current.Velocity, _ = strconv.ParseFloat(matches[2], 64)
-				current.Learned, _ = time.Parse("2006-01-02", matches[3])
-				current.LastUsed, _ = time.Parse("2006-01-02", matches[4])
-				current.Category = matches[5]
+			if metadataPattern.MatchString(line) {
+				// Volatile fields: present only in pre-split files. The stats
+				// sidecar overrides whatever is found here.
+				if m := usesPattern.FindStringSubmatch(line); m != nil {
+					current.Uses, _ = strconv.Atoi(m[1])
+				}
+				if m := velocityPattern.FindStringSubmatch(line); m != nil {
+					current.Velocity, _ = strconv.ParseFloat(m[1], 64)
+				}
+				if m := lastPattern.FindStringSubmatch(line); m != nil {
+					current.LastUsed, _ = time.Parse("2006-01-02", m[1])
+				}
+
+				// Durable fields.
+				if m := learnedPattern.FindStringSubmatch(line); m != nil {
+					current.Learned, _ = time.Parse("2006-01-02", m[1])
+				}
+				if m := categoryPattern.FindStringSubmatch(line); m != nil {
+					current.Category = m[1]
+				}
 
 				// Parse optional fields from the rest of the line
 				if typeMatch := typePattern.FindStringSubmatch(line); typeMatch != nil {
@@ -174,14 +199,14 @@ func SerializeLesson(l *models.Lesson) string {
 	if l.Source == "ai" {
 		title += " 🤖"
 	}
-	sb.WriteString(fmt.Sprintf("### [%s] %s %s\n", l.ID, l.Rating(), title))
+	// The rating is derived from Uses/Velocity, so it is rendered at display and
+	// injection time rather than stored - writing it here would reintroduce the
+	// churn the stats sidecar exists to remove.
+	sb.WriteString(fmt.Sprintf("### [%s] %s\n", l.ID, title))
 
-	// Metadata line
-	sb.WriteString(fmt.Sprintf("- **Uses**: %d | **Velocity**: %g | **Learned**: %s | **Last**: %s | **Category**: %s",
-		l.Uses,
-		l.Velocity,
+	// Metadata line: durable fields only. Uses/Velocity/Last live in stats.json.
+	sb.WriteString(fmt.Sprintf("- **Learned**: %s | **Category**: %s",
 		l.Learned.Format("2006-01-02"),
-		l.LastUsed.Format("2006-01-02"),
 		l.Category,
 	))
 
