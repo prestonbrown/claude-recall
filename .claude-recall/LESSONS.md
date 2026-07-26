@@ -24,8 +24,8 @@
 - **Uses**: 5 | **Velocity**: 3.01 | **Learned**: 2026-01-06 | **Last**: 2026-07-26 | **Category**: pattern | **Type**: constraint
 > Always log errors before returning from hooks, especially external hooks like inject-hook.sh. Silent failures make debugging impossible - we had session_start not logging because inject_context() returned early before logging, and inject-hook.sh swallowed python errors. Add error logging paths that write to debug log even on failure.
 
-### [L005] [*----|****-] Commit LESSONS.md periodically
-- **Uses**: 4 | **Velocity**: 2.01 | **Learned**: 2026-01-07 | **Last**: 2026-07-26 | **Category**: pattern | **Type**: informational
+### [L005] [**---|****-] Commit LESSONS.md periodically
+- **Uses**: 5 | **Velocity**: 3.01 | **Learned**: 2026-01-07 | **Last**: 2026-07-26 | **Category**: pattern | **Type**: informational
 > LESSONS.md is shared across checkouts of claude-recall for common project understanding. Commit it periodically to sync lessons between machines/sessions.
 
 ### [L006] [*----|-----] OptionList for popup navigation
