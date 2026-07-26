@@ -26,6 +26,32 @@ pytestmark = pytest.mark.integration
 
 
 # =============================================================================
+# Repo structure invariants
+# =============================================================================
+
+
+def test_adapter_hook_symlinks_resolve():
+    """Every hook symlink in adapters/claude-code points at an existing script.
+
+    The adapter directory is a set of symlinks into
+    plugins/claude-recall/hooks/scripts. Deleting a plugin script without
+    deleting its adapter symlink leaves a dangling link, which breaks the
+    integration fixture (and install.sh) with an opaque FileNotFoundError.
+    """
+    adapters_dir = Path(__file__).parent.parent / "adapters" / "claude-code"
+
+    dangling = sorted(
+        p.name for p in adapters_dir.glob("*.sh") if not p.resolve().exists()
+    )
+
+    assert not dangling, (
+        f"Dangling hook symlinks in adapters/claude-code: {dangling}. "
+        f"Their targets under plugins/claude-recall/hooks/scripts were removed; "
+        f"delete the symlinks too."
+    )
+
+
+# =============================================================================
 # Fixtures
 # =============================================================================
 
