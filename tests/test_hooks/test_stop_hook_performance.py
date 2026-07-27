@@ -87,7 +87,7 @@ class TestStopHookIntegration:
         self, tmp_path, stop_hook_path, temp_claude_home, temp_state_dir, temp_project_root
     ):
         """Stop hook should complete in under 2 seconds with realistic data."""
-        # Create a mock transcript with handoff patterns
+        # Create a mock transcript
         project_encoded = "-Users-test-code-project"
         project_dir = temp_claude_home / "projects" / project_encoded
         project_dir.mkdir(parents=True)
@@ -109,7 +109,7 @@ class TestStopHookIntegration:
             "message": {"role": "user", "content": "Help me with this task"}
         })
 
-        # Assistant with handoff pattern
+        # Assistant turn
         messages.append({
             "type": "assistant",
             "uuid": "msg-asst-001",
@@ -117,7 +117,7 @@ class TestStopHookIntegration:
             "sessionId": session_id,
             "message": {
                 "role": "assistant",
-                "content": [{"type": "text", "text": "HANDOFF: Test task for performance"}],
+                "content": [{"type": "text", "text": "Working through the task"}],
                 "usage": {"input_tokens": 1000, "output_tokens": 200}
             }
         })

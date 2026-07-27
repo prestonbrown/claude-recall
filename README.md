@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="Platform">
 </p>
 
-**Your AI coding agent learns from every session.** Claude Recall captures patterns, corrections, and gotchas so you never repeat the same mistakes. It tracks multi-step work across sessions with handoffs, ensuring continuity when context resets.
+**Your AI coding agent learns from every session.** Claude Recall captures patterns, corrections, and gotchas so you never repeat the same mistakes.
 
 Works with **Claude Code**, **OpenCode**, and other AI coding tools.
 
@@ -38,10 +38,10 @@ That's it. The installer configures hooks automatically.
 
 Once installed, Claude Recall works automatically:
 
-1. **Session start**: Top lessons and active handoffs inject into context
+1. **Session start**: Top lessons inject into context
 2. **First prompt**: Haiku scores all lessons for relevance, injects the most useful ones
 3. **During work**: Agent cites lessons (`[L001]`) when applying them - citations boost lesson rankings
-4. **Session end**: New lessons captured from `LESSON:` commands, handoffs synced from TodoWrite
+4. **Session end**: New lessons captured from `LESSON:` commands
 5. **Weekly**: Unused lessons decay in ranking, keeping your knowledge base fresh
 
 You'll see lessons appear in your agent's context. Cite them to boost their ranking, or let unused ones fade naturally.
@@ -57,17 +57,8 @@ You'll see lessons appear in your agent's context. Cite them to boost their rank
 - **AI-generated lessons**: Agent can propose lessons (marked with robot emoji)
 - **Token tracking**: Warns when context injection is heavy (>2000 tokens)
 
-### Handoffs System
-- **TodoWrite sync**: Use TodoWrite naturally - todos auto-sync to HANDOFFS.md for persistence
-- **Work tracking**: Track ongoing tasks with tried steps and next steps
-- **Phases**: `research` → `planning` → `implementing` → `review`
-- **Session continuity**: Handoffs restore as TodoWrite suggestions on next session
-- **Completion workflow**: Extract lessons when finishing work
-- **Command patterns**: `HANDOFF:`, `HANDOFF UPDATE`, `HANDOFF COMPLETE`
-
 ### Performance & Monitoring
 - **Go performance layer**: Citation processing uses Go binaries for ~10x faster hook execution
-- **TUI monitoring**: `claude-recall watch` for real-time debug log monitoring
 - **Alerting system**: `claude-recall alerts check` and `alerts digest` for system health
 - **Debug logging**: Structured JSON logs with configurable verbosity levels
 
@@ -81,12 +72,11 @@ The OpenCode adapter provides the same learning capabilities as the Claude Code 
 ./install.sh --opencode
 ```
 
-Installs `plugins/lessons.ts` + `plugins/lib/memory.ts`, the `/lessons` and `/handoffs` commands, and a Claude Recall section in `~/.config/opencode/AGENTS.md` (a one-line pointer instead if `~/.claude/CLAUDE.md` already documents usage, to avoid double injection). `./install.sh --uninstall` removes all of it.
+Installs `plugins/lessons.ts` + `plugins/lib/memory.ts`, the `/lessons` command, and a Claude Recall section in `~/.config/opencode/AGENTS.md` (a one-line pointer instead if `~/.claude/CLAUDE.md` already documents usage, to avoid double injection). `./install.sh --uninstall` removes all of it.
 
 ### Features
 
 - [x] Lessons system (injection, capture, decay, reminders)
-- [x] Handoffs system (tracking, todo sync via `todo.updated`)
 - [x] Compaction support (`experimental.session.compacting`)
 - [x] Claude auto-memory integration
   - reads project `MEMORY.md` (+ global tier) at session start
@@ -124,7 +114,7 @@ Create or edit `~/.config/claude-recall/config.json`:
 
 ### Usage
 
-See `/lessons` and `/handoffs` commands in OpenCode for more details.
+See the `/lessons` command in OpenCode for more details.
 
 ## Migrating from coding-agent-lessons
 
@@ -158,40 +148,6 @@ Format: `LESSON: [category:] title - content`
 
 **Categories:** `pattern`, `correction`, `decision`, `gotcha`, `preference`
 
-### Tracking Handoffs
-
-For multi-step work, **just use TodoWrite** - it auto-syncs to HANDOFFS.md:
-
-```
-[Agent uses TodoWrite naturally]
-→ stop-hook captures todos to HANDOFFS.md
-→ Next session: inject-hook restores as continuation prompt
-```
-
-Your todos map to handoff fields:
-- `completed` todos → `tried` entries (success)
-- `in_progress` todo → checkpoint (current focus)
-- `pending` todos → next steps
-
-**Manual handoff commands** (for explicit control):
-
-```
-HANDOFF: Implement WebSocket reconnection
-HANDOFF UPDATE hf-abc1234: tried fail - Simple setTimeout retry races with disconnect
-HANDOFF UPDATE hf-abc1234: tried success - Event-based with AbortController
-HANDOFF COMPLETE hf-abc1234
-```
-
-### Plan Mode Integration
-
-When entering plan mode, create a tracked handoff:
-
-```
-PLAN MODE: Implement user authentication
-```
-
-This creates a handoff with `phase=research` and `agent=plan`.
-
 ### Viewing & Managing
 
 Use the `/lessons` slash command:
@@ -209,7 +165,7 @@ Use the `/lessons` slash command:
 
 ### Lessons Lifecycle
 
-1. **Session Start**: Top 3 lessons by stars + handoffs injected as context
+1. **Session Start**: Top 3 lessons by stars injected as context
 2. **First Prompt**: Smart injection scores all lessons against query via Haiku, injects most relevant
 3. **Citation**: Agent cites `[L001]` when applying → uses/velocity increase
 4. **Decay**: Weekly decay reduces velocity; stale lessons lose uses
@@ -227,30 +183,6 @@ Use the `/lessons` slash command:
 Left side: Total uses (logarithmic scale)
 Right side: Recent velocity (decays over time)
 
-### Handoffs Lifecycle
-
-**Via TodoWrite (recommended)**:
-1. **Use TodoWrite**: Agent uses TodoWrite naturally with reminders
-2. **Auto-sync**: stop-hook captures final todo state to HANDOFFS.md
-3. **Restore**: Next session, inject-hook formats handoff as TodoWrite continuation
-
-**Via manual commands**:
-1. **Create**: `HANDOFF: title` or `PLAN MODE: title`
-2. **Track**: Update status, phase, tried steps, next steps
-3. **Complete**: `HANDOFF COMPLETE hf-abc1234` triggers lesson extraction prompt
-4. **Archive**: Completed handoffs move to archive, recent ones stay visible
-
-### Phase Detection
-
-The system can infer phases from tool usage:
-
-| Tools Used | Inferred Phase |
-|------------|----------------|
-| Read, Grep, Glob | research |
-| Write to .md, AskUserQuestion | planning |
-| Edit, Write to code files | implementing |
-| Bash (test/build commands) | review |
-
 ## File Locations
 
 ```
@@ -266,7 +198,6 @@ The system can infer phases from tool usage:
 
 <project>/.claude-recall/
 ├── LESSONS.md                  # Project-specific lessons
-└── HANDOFFS.md                 # Active work tracking
 ```
 
 ### Core Implementation
@@ -294,13 +225,6 @@ python3 core/cli.py cite L001
 python3 core/cli.py list [--project|--system] [--category X]
 python3 core/cli.py inject 5                    # Top 5 by stars
 python3 core/cli.py score-relevance "query"     # Relevance scoring via Haiku
-
-# Handoffs (work tracking)
-python3 core/cli.py handoff add "Title" [--phase X]
-python3 core/cli.py handoff update A001 --status in_progress
-python3 core/cli.py handoff list
-python3 core/cli.py handoff inject              # For context injection
-```
 
 ## Hook Patterns
 
@@ -360,12 +284,10 @@ When installed as a plugin, hooks are automatically configured via `plugins/clau
 
 | Hook | Scripts | Purpose |
 |------|---------|---------|
-| `SessionStart` | inject-hook.sh | Inject lessons + handoffs |
+| `SessionStart` | inject-hook.sh | Inject lessons |
 | `UserPromptSubmit` | capture-hook.sh, smart-inject-hook.sh, lesson-reminder-hook.sh | Capture prompt, relevance scoring, reminders |
-| `Stop` | stop-hook.sh, session-end-hook.sh | Extract citations, sync handoffs |
+| `Stop` | stop-hook.sh | Extract citations, capture lessons |
 | `PreCompact` | precompact-hook.sh | Preserve session progress |
-| `PostToolUse:ExitPlanMode` | post-exitplanmode-hook.sh | Create handoff from plan |
-| `PostToolUse:TodoWrite` | post-todowrite-hook.sh | Sync todos to handoffs |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full hook registration format.
 
@@ -386,20 +308,15 @@ When working with you, the agent will:
 
 1. **CITE** lessons when applying: *"Applying [L001]: using XML event_cb..."*
 2. **PROPOSE** lessons when corrected or discovering patterns
-3. **TRACK** handoffs for multi-step work
-4. **UPDATE** phase and status as work progresses
-5. **EXTRACT** lessons when completing handoffs
 
 ## Testing
 
 ```bash
-# Run all tests (1900+ tests)
+# Run all tests
 ./run-tests.sh
 
 # Run specific test files
 ./run-tests.sh tests/test_lessons_manager.py -v  # Lesson tests
-./run-tests.sh tests/test_handoffs.py -v         # Handoff tests
-./run-tests.sh tests/test_tui/ -v                # TUI tests
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) for detailed testing guide.

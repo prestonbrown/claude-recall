@@ -92,7 +92,6 @@ This installs:
 - `~/.config/opencode/plugins/lessons.ts` - Plugin file
 - `~/.config/opencode/plugins/lib/memory.ts` - Pure MEMORY.md logic (read, write-bridge, relevance) imported by lessons.ts
 - `~/.config/opencode/command/lessons.md` - /lessons command
-- `~/.config/opencode/command/handoffs.md` - /handoffs command
 - `~/.config/opencode/AGENTS.md` - Global instructions (one-line pointer instead if `~/.claude/CLAUDE.md` already documents Claude Recall, to avoid double injection)
 - `~/.local/bin/claude-recall` - CLI wrapper (ensure it is on your PATH)
 
@@ -116,7 +115,7 @@ You can also override `debugLevel` via `CLAUDE_RECALL_DEBUG`, `RECALL_DEBUG`, or
 
 **Slash command handling:**
 
-- The plugin intercepts `/lessons` and `/handoffs` command executions, runs the CLI directly, and injects only the CLI output so the prompt text is not echoed.
+- The plugin intercepts `/lessons` command executions, runs the CLI directly, and injects only the CLI output so the prompt text is not echoed.
 
 **Troubleshooting:**
 
@@ -129,9 +128,6 @@ You can also override `debugLevel` via `CLAUDE_RECALL_DEBUG`, `RECALL_DEBUG`, or
   - Check debug logs: View `~/.local/state/claude-recall/debug.log`
   - Increase `debugLevel` or set `CLAUDE_RECALL_DEBUG=2` for detailed logging
 
-- **Handoffs not syncing:**
-  - Verify active handoff exists: Run `/handoffs list --active-only`
-  - Check TodoWrite sync: Enable debugLevel 2 and look for "todowrite.sync" events
 
 **Manual installation (for development):**
 
@@ -145,7 +141,6 @@ mkdir -p ~/.config/opencode/command
 ```bash
 cp adapters/opencode/plugin/lessons.ts ~/.config/opencode/plugins/
 cp adapters/opencode/command/lessons.md ~/.config/opencode/command/
-cp adapters/opencode/command/handoffs.md ~/.config/opencode/command/
 ```
 
 ## File Locations
@@ -166,8 +161,6 @@ cp adapters/opencode/command/handoffs.md ~/.config/opencode/command/
 |----------|---------|
 | `~/.claude/hooks/inject-hook.sh` | SessionStart hook |
 | `~/.claude/hooks/stop-hook.sh` | Stop hook - citation tracking |
-| `~/.claude/hooks/session-end-hook.sh` | Stop hook - captures handoff context |
-| `~/.claude/hooks/precompact-hook.sh` | PreCompact hook - saves handoff context before compaction |
 | `~/.claude/commands/lessons.md` | `/lessons` - manage lessons |
 | `~/.claude/commands/implement.md` | `/implement` - implementation protocol |
 | `~/.claude/commands/delegate.md` | `/delegate` - agent delegation rules |
@@ -181,7 +174,6 @@ cp adapters/opencode/command/handoffs.md ~/.config/opencode/command/
 |----------|---------|
 | `$PROJECT/.claude-recall/` | Project lessons directory |
 | `$PROJECT/.claude-recall/LESSONS.md` | Project-specific lessons |
-| `$PROJECT/.claude-recall/HANDOFFS.md` | Active work tracking |
 
 ### Repository vs Installed
 
@@ -275,7 +267,6 @@ echo '{"cwd":"/tmp"}' | ~/.claude/hooks/inject-hook.sh
 
 # Test manager directly
 claude-recall list
-claude-recall handoff list
 ```
 
 ### Verify in Session
@@ -284,7 +275,6 @@ Start a new Claude Code session. You should see:
 - "LESSONS ACTIVE: X system (S###), Y project (L###)"
 - Top lessons with star ratings
 - "LESSON DUTY" reminder
-- "HANDOFF TRACKING" instructions
 
 ## Troubleshooting
 
@@ -333,18 +323,6 @@ Start a new Claude Code session. You should see:
    python3 --version
    ```
 
-### Handoffs Not Showing
-
-1. **Check handoffs file:**
-   ```bash
-   cat $PROJECT/.claude-recall/HANDOFFS.md
-   ```
-
-2. **Test handoffs injection:**
-   ```bash
-   PROJECT_DIR=$PWD claude-recall handoff inject
-   ```
-
 ### Decay Not Running
 
 1. **Check decay state:**
@@ -365,9 +343,8 @@ Start a new Claude Code session. You should see:
 # Backup system lessons
 cp ~/.config/claude-recall/LESSONS.md ~/lessons-backup-$(date +%Y%m%d).md
 
-# Backup project lessons and handoffs
+# Backup project lessons
 cp .claude-recall/LESSONS.md ~/project-lessons-$(date +%Y%m%d).md
-cp .claude-recall/HANDOFFS.md ~/handoffs-$(date +%Y%m%d).md
 ```
 
 ### Migrate to New Machine

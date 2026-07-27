@@ -4,8 +4,8 @@
 Integration tests for Claude Recall hook pipeline.
 
 These tests verify end-to-end behavior of the hook system:
-- Inject hook loads lessons and handoffs
-- Stop hook parses LESSON:/HANDOFF: commands
+- Inject hook loads lessons
+- Stop hook parses LESSON: commands
 - Debug logging captures events across projects
 - Full session lifecycle works correctly
 """

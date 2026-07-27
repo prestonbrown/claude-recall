@@ -132,7 +132,7 @@ func Test_StopHook_ExtractsCitations(t *testing.T) {
 	// Create transcript with citations
 	transcriptPath := filepath.Join(tmpDir, "transcript.jsonl")
 	transcript := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Using [L001] and [S002] for this task"}]}}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Also referencing [H001] handoff and [L001] again"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Also referencing [L001] again"}]}}
 `
 	if err := os.WriteFile(transcriptPath, []byte(transcript), 0644); err != nil {
 		t.Fatalf("failed to write transcript: %v", err)

@@ -12,7 +12,7 @@ Hermetic strategy:
     shredded on teardown).
   - Fixture project (tmp): git repo with a .gitignore ("*") so nothing leaks;
     .claude-recall/LESSONS.md holds a lesson whose title carries a UNIQUE
-    marker; an active handoff (created via the recall CLI) carries another.
+    marker.
   - Fixture MEMORY.md at ~/.claude/projects/<hash>/memory/MEMORY.md where
     <hash> = cwd with '/' and '.' replaced by '-' (mirrors lib/memory.ts);
     plus a deep-read memory file (marker NOT in the index) and a decoy.
@@ -64,7 +64,6 @@ REAL_PACKAGE_JSON = _REAL_CONFIG_HOME / "opencode" / "package.json"
 # Unique markers per test session - collisions with real data are impossible.
 LESSON_MARKER = f"E2ELESSON-{uuid.uuid4().hex[:12].upper()}"
 MEMORY_MARKER = f"E2EMEMORY-{uuid.uuid4().hex[:12].upper()}"
-HANDOFF_MARKER = f"E2EHANDOFF-{uuid.uuid4().hex[:12].upper()}"
 # Deep-read / write-bridge markers are DASH-FREE on purpose: the Go lesson
 # regex splits `LESSON: <title> - <content>` at the first ' - ', and the
 # write-bridge slugifier turns non-alnum runs into dashes - a dashed marker
@@ -171,7 +170,7 @@ until the gauge reads zero. Never recalibrate a hot zorblaxflange.
                  oc / "plugins" / "lessons.ts")
     shutil.copy2(PROJECT_ROOT / "adapters" / "opencode" / "lib" / "memory.ts",
                  oc / "plugins" / "lib" / "memory.ts")
-    for cmd in ("lessons.md", "handoffs.md"):
+    for cmd in ("lessons.md",):
         shutil.copy2(PROJECT_ROOT / "adapters" / "opencode" / "command" / cmd,
                      oc / "command" / cmd)
     if REAL_PACKAGE_JSON.exists():
@@ -212,14 +211,6 @@ until the gauge reads zero. Never recalibrate a hot zorblaxflange.
         "CLAUDE_RECALL_STATE": str(state),
     }
 
-    # --- fixture handoff via the recall CLI (exercises the real writer) ---
-    handoff_env = {**env, "PROJECT_DIR": str(proj)}
-    hr = subprocess.run(
-        [RECALL, "handoff", "add", f"E2E Handoff {HANDOFF_MARKER}",
-         "--desc", f"handoff description marker {HANDOFF_MARKER}"],
-        env=handoff_env, capture_output=True, text=True, timeout=30)
-    if hr.returncode != 0:
-        pytest.skip(f"could not create fixture handoff: {hr.stderr.strip()}")
 
     # --- model availability (with the fixture's copied auth) ---
     mr = subprocess.run([OPENCODE, "models"], env=env, cwd=proj,
@@ -447,8 +438,6 @@ def test_compaction_hooks_fire(fx):
             "pre-compact context was never pushed to output.context"
         content = "\n".join(e.get("content", "")
                             for e in by.get("compaction.context_content", []))
-        assert HANDOFF_MARKER in content, \
-            "active handoff marker absent from pre-compact context"
         assert "compaction.end" in by, \
             "session.compacted event never fired post-compact handler"
     finally:

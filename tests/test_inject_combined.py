@@ -5,8 +5,6 @@ Test suite for inject-combined CLI command.
 
 This command combines the output of:
 1. inject (lessons)
-2. handoff inject (active handoffs)
-3. handoff inject-todos (todo continuation prompt)
 
 into a single JSON response to reduce subprocess overhead (~300ms -> ~100ms).
 
@@ -70,17 +68,6 @@ def manager_with_lessons(manager):
         content="Watch out for this.",
     )
     return manager
-
-
-@pytest.fixture
-def manager_with_handoffs(manager_with_lessons):
-    """Create a manager with lessons and active handoffs."""
-    manager_with_lessons.handoff_add(
-        title="Test feature implementation",
-        desc="Implementing a test feature",
-        phase="implementing",
-    )
-    return manager_with_lessons
 
 
 # =============================================================================

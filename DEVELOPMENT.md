@@ -47,7 +47,6 @@ Architecture, internals, and contributing guide for the Claude Recall system.
 │                                                              │
 │  $PROJECT/.claude-recall/                                    │
 │  ├── LESSONS.md           # Project-specific lessons         │
-│  └── HANDOFFS.md          # Active work tracking             │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -55,7 +54,6 @@ Architecture, internals, and contributing guide for the Claude Recall system.
 │                    TUI / Alerting                            │
 │  ┌─────────────────────┐    ┌─────────────────────┐         │
 │  │   Debug TUI         │    │    Alerting         │         │
-│  │   - Log viewer      │    │    - Stale handoffs │         │
 │  │   - Session stats   │    │    - Latency spikes │         │
 │  │   - Real-time       │    │    - Error rates    │         │
 │  └─────────────────────┘    └─────────────────────┘         │
@@ -90,25 +88,6 @@ class Lesson:
     @property
     def tokens(self) -> int: # Estimated from title + content
 
-@dataclass
-class Handoff:
-    id: str              # hf-abc1234 (hash-based for multi-agent safety)
-    title: str
-    status: str          # not_started, in_progress, blocked, completed
-    created: date
-    updated: date
-    description: str = ""
-    next_steps: str = ""
-    phase: str = "research"      # research, planning, implementing, review
-    agent: str = "user"          # explore, general-purpose, plan, review, user
-    refs: List[str] = []         # file:line refs (e.g., "core/main.py:50")
-    tried: List[TriedStep] = []
-    checkpoint: str = ""         # Progress summary
-    last_session: Optional[date] = None
-    handoff: Optional[HandoffContext] = None  # Rich context
-    blocked_by: List[str] = []   # IDs of blocking handoffs
-    stealth: bool = False        # If True, stored in HANDOFFS_LOCAL.md
-    sessions: List[str] = []     # Linked session IDs
 ```
 
 #### Key Functions
@@ -124,10 +103,6 @@ class Handoff:
 | `inject(count)` | Generate top N lessons for context |
 | `decay(days)` | Reduce velocity for stale lessons |
 | `promote(lesson_id)` | Move project lesson to system |
-| `handoff_add(title, phase, agent)` | Create new handoff |
-| `handoff_update(id, **kwargs)` | Update handoff fields |
-| `handoff_complete(id)` | Mark complete, prompt for lessons |
-| `handoff_inject()` | Generate handoff context |
 
 #### Rating System
 
@@ -172,14 +147,14 @@ During injection, total tokens are summed and warnings shown:
 
 High-performance citation processing for the hot path:
 - `go/cmd/recall-hook/` - CLI for stop hook
-- `go/internal/stores/` - Lesson/handoff stores
+- `go/internal/lessons/` - Lesson store, parser, decay
 - `go/internal/transcript/` - Transcript parsing
 
 The Go binary handles citation extraction and processing in ~100ms vs ~2-3s for Python.
 
 **When Go is used:**
 - Citation extraction from transcripts
-- Store reads/writes for lessons and handoffs
+- Store reads/writes for lessons
 - Quick validation and parsing
 
 **When Python is used:**
@@ -197,7 +172,6 @@ Real-time monitoring with `claude-recall watch`:
 ### Alerting System (core/alerts.py)
 
 System health monitoring:
-- Stale handoff detection
 - Latency spike alerts
 - Error rate monitoring
 
@@ -247,35 +221,6 @@ Lessons can become stale. The decay system addresses this:
 - `.decay-last-run`: Unix timestamp of last decay
 - Checkpoint file modification times indicate session activity
 
-### Handoffs System
-
-Handoffs track multi-step work with rich metadata:
-
-**Phases:**
-| Phase | Description |
-|-------|-------------|
-| `research` | Reading, searching, understanding codebase |
-| `planning` | Creating plan, designing solution |
-| `implementing` | Writing code |
-| `review` | Checking work, running tests |
-
-**Agents:**
-| Agent | Description |
-|-------|-------------|
-| `explore` | Codebase exploration |
-| `general-purpose` | Implementation work |
-| `plan` | Design/planning |
-| `review` | Code review |
-| `user` | Direct user work (default) |
-
-**Visibility Rules:**
-```python
-HANDOFF_MAX_COMPLETED = 3   # Keep last N completed
-HANDOFF_MAX_AGE_DAYS = 7    # Or within N days
-```
-
-Completed handoffs remain visible if they match EITHER criterion.
-
 ## Adapters
 
 ### Claude Code Adapter
@@ -284,18 +229,14 @@ Two shell scripts hook into Claude Code's event system:
 
 **inject-hook.sh** (SessionStart):
 - Calls `lessons_manager.py inject` for top lessons
-- Calls `lessons_manager.py handoff inject` for active handoffs
-- Adds "LESSON DUTY" and "HANDOFF TRACKING" reminders
+- Adds the "LESSON DUTY" reminder
 - Triggers weekly decay check in background
 
 **stop-hook.sh** (Stop):
 - Parses assistant output for patterns:
   - `LESSON: category: title - content`
   - `AI LESSON: category: title - content`
-  - `HANDOFF: title`
   - `PLAN MODE: title`
-  - `HANDOFF UPDATE hf-xxx: field value`
-  - `HANDOFF COMPLETE hf-xxx`
   - `[L###]: Applied...` (citations)
 - Uses incremental checkpointing
 - Cleans orphaned checkpoints opportunistically
@@ -332,55 +273,21 @@ A TypeScript plugin that hooks into OpenCode events:
 ```markdown
 # Project Lessons
 
-### [L001] [**---|+----] pattern: Always validate JSON
-- **Uses**: 5 | **Velocity**: 1.2 | **Tokens**: 45 | **Learned**: 2025-12-28 | **Last**: 2025-12-29 | **Source**: user
-- Parse JSON in try/except block, never assume valid input
+### [L001] Always validate JSON
+- **Learned**: 2025-12-28 | **Category**: pattern
+> Parse JSON in try/except block, never assume valid input
 
-### [L002] [*----|-----] gotcha: Race condition in async handlers
-- **Uses**: 1 | **Velocity**: 0.0 | **Tokens**: 62 | **Learned**: 2025-12-29 | **Last**: 2025-12-29 | **Source**: ai 🤖
-- Use locks or queues when multiple handlers modify shared state
+### [L002] Race condition in async handlers 🤖
+- **Learned**: 2025-12-29 | **Category**: gotcha | **Source**: ai
+> Use locks or queues when multiple handlers modify shared state
 ```
 
-### Handoffs File (HANDOFFS.md)
-
-```markdown
-# Active Handoffs
-
-### [hf-abc1234] Implementing WebSocket reconnection
-- **Status**: in_progress | **Phase**: implementing | **Agent**: general-purpose
-- **Created**: 2025-12-28 | **Updated**: 2025-12-29
-- **Files**: src/websocket.ts, src/connection-manager.ts
-- **Description**: Add automatic reconnection with exponential backoff
-
-**Code**:
-```typescript
-export async function reconnect(delay: number = 1000): Promise<void> {
-  await sleep(delay);
-  return connect({ retry: true });
-}
-```
-
-**Tried**:
-1. [fail] Simple setTimeout retry - races with manual disconnect
-2. [success] Event-based with AbortController
-
-**Next**: Write integration tests
-
----
-
-# Completed Handoffs
-
-### [hf-def5678] Initial setup
-- **Status**: completed | **Phase**: review | **Agent**: user
-- **Created**: 2025-12-27 | **Updated**: 2025-12-27
-- ...
-```
 
 ## Development Workflow
 
 ### Making Changes
 
-1. **Edit core logic**: Modify `core/lessons_manager.py`
+1. **Edit core logic**: Modify `go/internal/lessons/` (CLI) or `core/` (Python library)
 2. **Edit hooks**: Modify files in `adapters/claude-code/`
 3. **Run tests**: `python3 -m pytest tests/ -v`
 4. **Install hooks**: `./install.sh`
@@ -408,11 +315,9 @@ export async function reconnect(delay: number = 1000): Promise<void> {
 
 # Run specific test file
 python3 -m pytest tests/test_lessons_manager.py -v
-python3 -m pytest tests/test_handoffs.py -v
 python3 -m pytest tests/test_debug_logger.py -v
 
 # Run specific test
-python3 -m pytest tests/test_handoffs.py::TestPhaseDetectionFromTools -v
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) for detailed testing guide.
@@ -432,9 +337,6 @@ set -x
 ```bash
 # View lessons
 python3 core/lessons_manager.py list
-
-# View handoffs
-python3 core/lessons_manager.py handoff list
 
 # Test injection
 python3 core/lessons_manager.py inject 5
@@ -478,10 +380,6 @@ cat ~/.config/claude-recall/.decay-last-run
 # Velocity decay
 VELOCITY_DECAY_FACTOR = 0.5   # 50% half-life per decay cycle
 VELOCITY_EPSILON = 0.01       # Values below round to zero
-
-# Handoff visibility
-HANDOFF_MAX_COMPLETED = 3    # Keep last N completed handoffs
-HANDOFF_MAX_AGE_DAYS = 7     # Or within N days
 
 # Token thresholds
 TOKEN_HEAVY_THRESHOLD = 2000  # Warn when injection exceeds this

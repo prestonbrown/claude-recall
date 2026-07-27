@@ -113,7 +113,7 @@ def sample_transcript(tmp_path: Path) -> Path:
             "timestamp": "2024-01-01T10:01:00Z",
             "message": {
                 "content": [
-                    {"type": "text", "text": "HANDOFF: Test feature implementation"}
+                    {"type": "text", "text": "Implementing the feature now"}
                 ]
             }
         },

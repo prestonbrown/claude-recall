@@ -9,7 +9,6 @@ The test suite uses **pytest** with Python's standard library. Tests are organiz
 ```
 tests/
 ├── test_lessons_manager.py   # Core lessons + CLI tests
-├── test_handoffs.py          # Handoffs system tests
 └── test_debug_logger.py      # Debug logger tests
 ```
 
@@ -26,14 +25,10 @@ Use `./run-tests.sh` - it automatically creates a venv and installs dependencies
 
 # Run specific test file
 ./run-tests.sh tests/test_lessons_manager.py -v
-./run-tests.sh tests/test_handoffs.py -v
-./run-tests.sh tests/test_tui/ -v
 
 # Run specific test class
-./run-tests.sh tests/test_handoffs.py::TestPhaseDetectionFromTools -v
 
 # Run specific test
-./run-tests.sh tests/test_handoffs.py::TestPhaseDetectionFromTools::test_bash_pytest_is_review -v
 
 # Run tests matching a pattern
 ./run-tests.sh -v -k "phase"
@@ -42,7 +37,6 @@ Use `./run-tests.sh` - it automatically creates a venv and installs dependencies
 ./run-tests.sh --cov=core --cov-report=term-missing
 ```
 
-**Note:** TUI tests require `textual` (included in dev deps). If you run `pytest` directly without the wrapper, TUI tests will skip gracefully if textual is not installed.
 
 ## Test Categories
 
@@ -57,23 +51,6 @@ Use `./run-tests.sh` - it automatically creates a venv and installs dependencies
 | Promotion | 6 | Project → system promotion |
 | Rating | 10 | Dual-dimension [uses\|velocity] format |
 | Tokens | 8 | Token estimation and heavy warnings |
-
-### Handoffs Tests (test_handoffs.py)
-
-| Category | Tests | Description |
-|----------|-------|-------------|
-| Basic CRUD | 15 | Add, update, complete, list handoffs |
-| Status | 8 | Status transitions, validation |
-| Tried/Next | 12 | Record attempts, set next steps |
-| Code Snippets | 10 | Attach/parse code blocks |
-| Phases | 18 | Phase values, transitions |
-| Agents | 12 | Agent tracking per handoff |
-| Phase Detection | 14 | Infer phase from tool usage |
-| Plan Mode | 8 | PLAN MODE: integration |
-| Injection | 12 | Handoff context generation |
-| Visibility | 10 | Completed handoff decay rules |
-| Archive | 8 | Archive and recent completions |
-| Hook Patterns | 12 | Stop-hook pattern matching |
 
 ## Test Environment
 
@@ -95,7 +72,6 @@ def temp_env(tmp_path):
         "project_dir": str(project_dir),
         "lessons_base": str(lessons_base),
         "project_lessons": project_dir / ".claude-recall" / "LESSONS.md",
-        "handoffs_file": project_dir / ".claude-recall" / "HANDOFFS.md",
         "system_lessons": lessons_base / "LESSONS.md",
     }
 ```
@@ -124,73 +100,28 @@ def test_add_lesson(temp_env):
     assert lessons[0].content == "Test content"
 ```
 
-### Testing Handoffs
-
-```python
-def test_handoff_phase_transition(temp_env):
-    """Test updating handoff phase."""
-    manager = LessonsManager(
-        project_dir=temp_env["project_dir"],
-        lessons_base=temp_env["lessons_base"]
-    )
-
-    # Create handoff
-    result = manager.handoff_add("Test task", phase="research")
-    handoff_id = result.split()[0]  # Extract hf-abc1234
-
-    # Update phase
-    manager.handoff_update(handoff_id, phase="implementing")
-
-    # Verify
-    handoffs = manager.handoff_list()
-    assert handoffs[0].phase == "implementing"
-```
-
 ### Testing CLI Integration
 
+The CLI is the Go binary, so drive it as a subprocess. Build it first with
+`cd go && go build -o bin/recall ./cmd/recall`.
+
 ```python
-def test_cli_handoff_add(temp_env):
-    """Test CLI command for adding handoff."""
+def test_cli_list_filters_by_search(temp_env):
+    """`recall list --search` filters on ID, title and content."""
     import subprocess
-    import sys
 
     result = subprocess.run(
-        [sys.executable, "core/lessons_manager.py", "handoff", "add",
-         "--phase", "research", "--agent", "plan", "--", "Test handoff"],
+        ["go/bin/recall", "list", "--search", "delimiter"],
         capture_output=True,
         text=True,
         env={
             "PROJECT_DIR": temp_env["project_dir"],
-            "CLAUDE_RECALL_BASE": temp_env["lessons_base"],
+            "CLAUDE_RECALL_STATE": temp_env["state_dir"],
         }
     )
 
     assert result.returncode == 0
-    assert "hf-" in result.stdout
-```
-
-### Testing Hook Patterns
-
-```python
-def test_plan_mode_pattern(temp_env):
-    """Test PLAN MODE: pattern creates handoff correctly."""
-    manager = LessonsManager(
-        project_dir=temp_env["project_dir"],
-        lessons_base=temp_env["lessons_base"]
-    )
-
-    # Simulate hook pattern: PLAN MODE: Implement feature
-    result = manager.handoff_add(
-        "Implement feature",
-        phase="research",
-        agent="plan"
-    )
-
-    handoff_id = result.split()[0]
-    handoffs = manager.handoff_list()
-
-    assert handoffs[0].phase == "research"
-    assert handoffs[0].agent == "plan"
+    assert "L001" in result.stdout
 ```
 
 ## Test Fixtures
@@ -212,11 +143,6 @@ def sample_lesson(manager):
     manager.add("pattern", "Sample Title", "Sample content")
     return manager.list_lessons(scope="project")[0]
 
-@pytest.fixture
-def sample_handoff(manager):
-    """Create a sample handoff for testing."""
-    manager.handoff_add("Sample task")
-    return manager.handoff_list()[0]
 ```
 
 ### File Content Fixtures
@@ -224,12 +150,12 @@ def sample_handoff(manager):
 ```python
 @pytest.fixture
 def lessons_with_velocity(temp_env):
-    """Create lessons file with velocity data."""
+    """Create a lessons file; counters live in the stats.json sidecar."""
     content = """# Project Lessons
 
-### [L001] [**---|++---] pattern: Test lesson
-- **Uses**: 5 | **Velocity**: 2.5 | **Tokens**: 30 | **Learned**: 2025-12-01 | **Last**: 2025-12-28 | **Source**: user
-- Test content
+### [L001] Test lesson
+- **Learned**: 2025-12-01 | **Category**: pattern
+> Test content
 """
     (temp_env["project_dir"] / ".claude-recall" / "LESSONS.md").write_text(content)
     return temp_env
@@ -243,10 +169,6 @@ def lessons_with_velocity(temp_env):
 # Check lesson exists
 assert any(l.id == "L001" for l in manager.list_lessons())
 
-# Check handoff status
-handoff = manager.handoff_list()[0]
-assert handoff.status == "in_progress"
-
 # Check injection output
 output = manager.inject(5)
 assert "L001" in output
@@ -255,15 +177,6 @@ assert "TOP LESSONS:" in output
 # Check token warning
 output = manager.inject(100)  # Many lessons
 assert "CONTEXT HEAVY" in output or total_tokens < 2000
-```
-
-### Handoff-Specific
-
-```python
-# Check tried handoff recorded
-handoff = manager.handoff_list()[0]
-assert len(handoff.tried) == 1
-assert handoff.tried[0].outcome == "fail"
 ```
 
 ## Mocking
@@ -379,7 +292,7 @@ def test_internal_example(temp_env):
 ```
 
 - Returns a dict with string paths
-- Keys: `project_dir`, `lessons_base`, `project_lessons`, `handoffs_file`, `system_lessons`
+- Keys: `project_dir`, `lessons_base`, `project_lessons`, `system_lessons`
 
 ### `add_lesson` Method Signature
 
@@ -490,8 +403,8 @@ open htmlcov/index.html
 
 ## Adding New Tests
 
-1. **Identify the component**: lessons, handoffs, hooks, CLI
-2. **Choose the test file**: `test_lessons_manager.py` or `test_handoffs.py`
+1. **Identify the component**: lessons, hooks, CLI
+2. **Choose the test file**: `test_lessons_manager.py` or `test_format_compat.py`
 3. **Find related tests**: Group with similar functionality
 4. **Write the test**: Follow AAA pattern (Arrange, Act, Assert)
 5. **Run the test**: Verify it passes

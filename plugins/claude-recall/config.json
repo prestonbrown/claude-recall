@@ -10,7 +10,6 @@
   "claudeRecall": {
     "alerts": {
       "enabled": false,
-      "staleHandoffDays": 7,
       "latencySpikeMultiplier": 2.0,
       "errorRateThreshold": 0.1,
       "effectivenessThreshold": 0.3,

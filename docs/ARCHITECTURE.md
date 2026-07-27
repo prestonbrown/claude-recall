@@ -4,7 +4,7 @@ Deep dive into Claude Recall's internal architecture for contributors.
 
 ## System Overview
 
-Claude Recall is a learning system for AI coding agents that captures lessons across sessions and tracks multi-step work via handoffs. The system uses a dual-language architecture: Go for performance-critical hot paths and Python for complex logic and AI operations.
+Claude Recall is a learning system for AI coding agents that captures lessons across sessions. The CLI and hooks are Go; `core/` is a Python library kept for parity and exercised by the test suite.
 
 ```
                            ┌─────────────────────────────────────────────────────────────────────────┐
@@ -34,16 +34,13 @@ Claude Recall is a learning system for AI coding agents that captures lessons ac
 │       go/cmd/recall-hook/         │       │                  core/                       │
 │                                   │       │                                             │
 │  • Citation extraction            │       │  • Lesson management (add, edit, delete)    │
-│  • Transcript parsing             │       │  • Handoff tracking                         │
 │  • Checkpoint management          │       │  • AI operations (Haiku scoring)            │
 │  • File locking                   │       │  • Decay and promotion                      │
 │  • Target: <100ms                 │       │  • Context extraction                       │
 │                                   │       │  • Complex business logic                   │
 │  go/internal/                     │       │                                             │
 │  ├── citations/  (extraction)    │       │  • lessons.py    (LessonsMixin)             │
-│  ├── transcript/ (JSONL parser)  │       │  • handoffs.py   (HandoffsMixin)            │
 │  ├── lessons/    (store, decay)  │       │  • manager.py    (LessonsManager)           │
-│  ├── handoffs/   (store, parser) │       │  • cli.py        (argparse entry)           │
 │  ├── checkpoint/ (byte offsets)  │       │  • commands.py   (command registry)         │
 │  ├── lock/       (flock wrapper) │       │  • models.py     (dataclasses)              │
 │  └── config/     (env + json)    │       │  • parsing.py    (markdown format)          │
@@ -57,8 +54,6 @@ Claude Recall is a learning system for AI coding agents that captures lessons ac
 │                                                                                          │
 │  Project Data (.claude-recall/)           State Data (~/.local/state/claude-recall/)    │
 │  ├── LESSONS.md      (project lessons)    ├── LESSONS.md    (system lessons)            │
-│  ├── HANDOFFS.md     (active handoffs)    ├── checkpoints.txt (Go byte offsets)        │
-│  └── HANDOFFS_LOCAL.md (stealth mode)     ├── effectiveness.json                       │
 │                                           ├── relevance-cache.json                      │
 │                                           ├── decay-state.json                          │
 │                                           └── transcript_offsets.json                   │
@@ -131,7 +126,6 @@ Python CLI                             Python CLI
     ├─▶ inject-combined                    └─▶ score-relevance
     │   ├─▶ List all lessons                   ├─▶ List all lessons
     │   ├─▶ Sort by weighted score             ├─▶ Build Haiku prompt
-    │   ├─▶ Get active handoffs                ├─▶ Call Claude API (Haiku)
     │   └─▶ Format JSON output                 ├─▶ Parse scores
     │                                          └─▶ Cache results
     └─▶ decay (weekly, background)
@@ -146,7 +140,6 @@ core/
 ├── commands.py         Command registry pattern
 ├── manager.py          LessonsManager (combines mixins)
 ├── lessons.py          LessonsMixin - all lesson operations
-├── handoffs.py         HandoffsMixin - handoff tracking
 ├── models.py           Dataclasses and constants
 ├── parsing.py          Markdown format serialization
 ├── file_lock.py        fcntl.flock context manager
@@ -173,8 +166,6 @@ core/
 │        ├─▶ Python: inject-combined 5                                     │
 │        │       ├─▶ Load project + system lessons                        │
 │        │       ├─▶ Sort by (uses * 0.7 + velocity * 0.3)               │
-│        │       ├─▶ Load active handoffs                                  │
-│        │       └─▶ Return JSON {lessons, handoffs, todos}               │
 │        │                                                                 │
 │        ├─▶ Run decay if due (weekly, background)                        │
 │        │                                                                 │
@@ -215,7 +206,6 @@ core/
 │        │       • Extract assistant texts                                 │
 │        │       • Extract citations [L###], [S###]                       │
 │        │       • Extract AI LESSON: patterns                             │
-│        │       • Extract HANDOFF: patterns                               │
 │        │                                                                 │
 │        ├─▶ TRY: Go binary (hot path)                                    │
 │        │       ├─▶ Load checkpoint (byte offset)                        │
@@ -226,8 +216,6 @@ core/
 │        │                                                                 │
 │        └─▶ FALLBACK: Python batch processing                            │
 │                ├─▶ Process citations                                     │
-│                ├─▶ Process handoff commands                              │
-│                ├─▶ Sync TodoWrite to handoffs                            │
 │                └─▶ Add AI-generated lessons                              │
 └──────────────────────────────────────────────────────────────────────────┘
 
@@ -239,17 +227,12 @@ core/
 │        ▼ stdin: {"transcript_path": ..., "trigger": "auto"}             │
 │    precompact-hook.sh                                                    │
 │        │                                                                 │
-│        ├─▶ Find most recent active handoff                              │
 │        │                                                                 │
-│        ├─▶ If no handoff: detect major work                             │
-│        │       ├─▶ 4+ file edits? → auto-create handoff                 │
-│        │       ├─▶ 3+ TodoWrite calls? → auto-create handoff            │
 │        │       └─▶ Minor work? → save session snapshot                  │
 │        │                                                                 │
 │        └─▶ Python: extract-context + set-context                        │
 │                ├─▶ Read transcript (tool_use, thinking blocks)          │
 │                ├─▶ Call Haiku: summarize progress                        │
-│                └─▶ Update handoff with structured context                │
 │                                                                          │
 │    Context preserved for post-compaction continuation                    │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -297,69 +280,6 @@ core/
   - Incremented by 1 on each citation
   - Floored to 0 when below 0.01
 
-### Handoff Lifecycle
-
-```
-    ┌──────────────────────────────────────────────────────────────────────┐
-    │                              CREATE                                   │
-    │                                                                       │
-    │  Claude outputs: "HANDOFF: Implement auth refresh"                   │
-    │  Or: TodoWrite creates tasks → auto-creates handoff                  │
-    │  Or: precompact-hook detects major work → auto-creates               │
-    └──────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-    ┌──────────────────────────────────────────────────────────────────────┐
-    │                           HANDOFFS.md                                 │
-    │                                                                       │
-    │  ### [hf-a1b2c3d] Implement auth refresh                             │
-    │  - **Status**: in_progress | **Phase**: implementing | **Agent**: gp │
-    │  - **Created**: 2024-01-15 | **Updated**: 2024-01-15                 │
-    │  - **Description**: Add token refresh for expired sessions           │
-    │                                                                       │
-    │  **Tried**:                                                          │
-    │  1. [success] Added refresh endpoint to auth.py                      │
-    │  2. [fail] Tried caching tokens in memory - race condition           │
-    │  3. [partial] Redis cache works but needs TTL tuning                 │
-    │                                                                       │
-    │  **Next**: Configure Redis TTL based on token expiry                 │
-    │                                                                       │
-    │  **Checkpoint**: Working on Redis integration, tests passing         │
-    └──────────────────────────────────────────────────────────────────────┘
-                                       │
-           ┌───────────────────────────┼───────────────────────────┐
-           │                           │                           │
-           ▼                           ▼                           ▼
-        UPDATE                     COMPLETE                    ARCHIVE
-           │                           │                           │
-           │  HANDOFF UPDATE:          │  HANDOFF COMPLETE         │  After 3 days
-           │  tried success - ...      │  or git commit            │  or 7 days stale
-           │  next: ...                │                           │
-           │  checkpoint: ...          │  Extract lessons:         │
-           │  phase: review            │  "Any patterns to         │
-           │                           │   record?"                │
-           ▼                           ▼                           ▼
-    ┌─────────────────────────────────────────────────────────────────────┐
-    │                       HANDOFFS_ARCHIVE.md                            │
-    │                                                                       │
-    │  Completed handoffs preserved for reference                          │
-    │  Can extract lessons retroactively                                   │
-    └─────────────────────────────────────────────────────────────────────┘
-```
-
-**Handoff Phases:**
-- `research` - Investigating the problem
-- `planning` - Designing the solution
-- `implementing` - Writing code
-- `review` - Testing and code review
-
-**Handoff Statuses:**
-- `not_started` - Created but not begun
-- `in_progress` - Actively working
-- `blocked` - Waiting on dependencies
-- `ready_for_review` - Work complete, needs review
-- `completed` - Done (triggers lesson extraction prompt)
-
 ## Storage Layer
 
 ### Markdown Files
@@ -380,31 +300,6 @@ core/
 - **Uses**: 12 | **Velocity**: 1.5 | **Learned**: 2024-01-15 | **Last**: 2024-01-20 | **Category**: pattern
 > Lesson content goes here. Can span multiple lines.
 > Each line is prefixed with `> `.
-```
-
-**Format Specification (HANDOFFS.md):**
-```markdown
-# HANDOFFS.md - Active Work Tracking
-
-> Track ongoing work with tried steps and next steps.
-> When completed, review for lessons to extract.
-
-## Active Handoffs
-
-### [hf-a1b2c3d] Handoff Title
-- **Status**: in_progress | **Phase**: implementing | **Agent**: general-purpose
-- **Created**: 2024-01-15 | **Updated**: 2024-01-20
-- **Refs**: src/auth.py:45-60 | tests/test_auth.py:20
-- **Description**: What this work is about
-
-**Tried**:
-1. [success] Description of successful attempt
-2. [fail] Description of failed attempt
-3. [partial] Description of partially successful attempt
-
-**Next**: What to do next
-
-**Checkpoint**: Progress summary for session handoff
 ```
 
 **Locking Strategy:**
@@ -441,7 +336,6 @@ Located in `~/.local/state/claude-recall/`:
 | `decay-state.json` | Last decay timestamp | `{"last_decay": "..."}` |
 | `effectiveness.json` | Citation success rates | `{"L001": {...}}` |
 | `relevance-cache.json` | Haiku score cache | `{"entries": {...}}` |
-| `session-handoffs.json` | Session-to-handoff mapping | `{"session_id": {...}}` |
 
 **Checkpoint Files:**
 
@@ -468,12 +362,10 @@ Claude Recall uses four hooks provided by Claude Code:
 
 | Hook | Trigger | Purpose | Target Latency |
 |------|---------|---------|----------------|
-| `SessionStart` | Session begins | Inject lessons + handoffs | <500ms |
+| `SessionStart` | Session begins | Inject lessons | <500ms |
 | `UserPromptSubmit` | User sends message | Capture prompt, relevance scoring, reminders | <2s (Haiku) |
-| `Stop` | Assistant turn complete | Extract citations + patterns, sync handoffs | <100ms (Go) |
+| `Stop` | Assistant turn complete | Extract citations + patterns | <100ms (Go) |
 | `PreCompact` | Before context compaction | Preserve session progress | <3s (Haiku) |
-| `PostToolUse:ExitPlanMode` | After ExitPlanMode | Create handoff from plan | <500ms |
-| `PostToolUse:TodoWrite` | After TodoWrite | Sync todos to handoffs | <500ms |
 
 **Hook Registration (hooks/hooks.json):**
 ```json
@@ -558,7 +450,6 @@ Shell: tail -c +$((offset + 1)) | tail -n +2
 # Instead of N separate Python calls:
 # python cli.py cite L001
 # python cli.py cite L002
-# python cli.py handoff update ...
 
 # Single batch call:
 echo "$TRANSCRIPT_CACHE" | python cli.py stop-hook-batch \

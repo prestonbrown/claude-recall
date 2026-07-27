@@ -295,25 +295,6 @@ class DebugLogger:
             }
         )
 
-    def handoff_completed(
-        self,
-        handoff_id: str,
-        tried_count: int,
-        duration_days: Optional[int] = None,
-    ) -> None:
-        """Log handoff completion."""
-        if self._level < 1:
-            return
-        self._write(
-            {
-                "event": "handoff_completed",
-                "level": "info",
-                "handoff_id": handoff_id,
-                "tried_count": tried_count,
-                "duration_days": duration_days,
-            }
-        )
-
     def error(self, operation: str, error: str, context: Optional[Dict] = None) -> None:
         """Log errors - level 1 (always shown when debug enabled)."""
         if self._level < 1:
@@ -498,7 +479,6 @@ class DebugLogger:
         self,
         total_tokens: int,
         lessons_tokens: int,
-        handoffs_tokens: int,
         duties_tokens: int,
     ) -> None:
         """Log context injection token budget breakdown.
@@ -506,7 +486,6 @@ class DebugLogger:
         Args:
             total_tokens: Total tokens injected
             lessons_tokens: Tokens from lessons component
-            handoffs_tokens: Tokens from handoffs component
             duties_tokens: Tokens from duty reminders
         """
         if self._level < 1:
@@ -517,7 +496,6 @@ class DebugLogger:
                 "level": "info",
                 "total_tokens": total_tokens,
                 "lessons_tokens": lessons_tokens,
-                "handoffs_tokens": handoffs_tokens,
                 "duties_tokens": duties_tokens,
             }
         )
