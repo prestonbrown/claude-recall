@@ -8,7 +8,7 @@ A learning system for AI coding agents that captures lessons across sessions.
 |-----------|----------|
 | CLI (Go) | `go/cmd/recall/` → `recall` binary; `go/cmd/recall-hook/` → hook helper; `go/internal/lessons/` (parser, store, decay) |
 | Core Python | `core/lessons.py`, `core/parsing.py`, `core/debug_logger.py` — library only; the CLI and hooks are Go |
-| Claude hooks | `plugins/claude-recall/hooks/scripts/` — `inject-hook.sh`, `smart-inject-hook.sh` (BM25, every prompt), `subagent-stop-hook.sh`, `stop-hook.sh`. `install.sh` installs from here; `adapters/claude-code/` is a stale duplicate. |
+| Claude hooks | `plugins/claude-recall/hooks/scripts/` — `inject-hook.sh`, `smart-inject-hook.sh` (BM25, every prompt), `subagent-stop-hook.sh`, `stop-hook.sh`. `install.sh` installs from here. `adapters/claude-code/` is a symlink shim into this directory, not a copy — deleting a script here leaves a dangling link there, which `tests/test_integration.py` guards against. |
 | Hook wiring | `plugins/claude-recall/hooks/hooks.json` (timeouts in **seconds**) |
 | Tests | `tests/test_lessons_manager.py`, `tests/test_format_compat.py` |
 | Project lessons | `.claude-recall/LESSONS.md` (gitignored by default) |
