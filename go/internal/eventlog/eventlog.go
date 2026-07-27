@@ -3,7 +3,10 @@ package eventlog
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"time"
 )
@@ -57,8 +60,16 @@ type Filter struct {
 	Type    string
 }
 
+// maxLineBytes caps a single event line. bufio.Scanner defaults to 64KB, and
+// injection events embed the user's query verbatim, so a long prompt produced
+// lines past that limit - which aborted the whole read and silently killed
+// `recall stats` and `recall digest`. A line beyond even this cap is skipped
+// rather than fatal: one unreadable event must not cost every event after it.
+const maxLineBytes = 4 * 1024 * 1024
+
 // Read returns all events from the log file.
-// Returns nil, nil for missing or empty files. Malformed lines are skipped.
+// Returns nil, nil for missing or empty files. Malformed and oversized lines
+// are skipped.
 func (l *Log) Read() ([]Event, error) {
 	f, err := os.Open(l.path)
 	if err != nil {
@@ -70,21 +81,29 @@ func (l *Log) Read() ([]Event, error) {
 	defer f.Close()
 
 	var events []Event
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+	r := bufio.NewReaderSize(f, 64*1024)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 {
+			// A line past the cap is dropped on its own; bufio.Scanner used to
+			// abort here, which cost every event after it.
+			if len(line) <= maxLineBytes {
+				trimmed := bytes.TrimRight(line, "\r\n")
+				if len(trimmed) > 0 {
+					var ev Event
+					if jsonErr := json.Unmarshal(trimmed, &ev); jsonErr == nil {
+						events = append(events, ev)
+					}
+					// Malformed lines are skipped.
+				}
+			}
 		}
-		var ev Event
-		if err := json.Unmarshal(line, &ev); err != nil {
-			// Skip malformed lines
-			continue
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return events, err
 		}
-		events = append(events, ev)
-	}
-	if err := scanner.Err(); err != nil {
-		return events, err
 	}
 	return events, nil
 }
