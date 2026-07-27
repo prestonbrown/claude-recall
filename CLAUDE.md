@@ -14,6 +14,7 @@ A learning system for AI coding agents that captures lessons across sessions.
 | Project lessons | `.claude-recall/LESSONS.md` (gitignored by default) |
 | System lessons | `~/.local/state/claude-recall/LESSONS.md` (XDG state) |
 | State files | `~/.local/state/claude-recall/` (decay, citation state, session dedup, logs) |
+| Docs | `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/TESTING.md`. `docs/archive/` is shipped plans and specs — history, not current behaviour |
 
 ## How It Works
 

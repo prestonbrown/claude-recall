@@ -5,5 +5,5 @@ Replays the historical injection->citation log through several candidate
 READ-ONLY: it only reads ``session-log.jsonl`` and never modifies LESSONS.md,
 injection-stats.json, runtime state, or any Go code.
 
-See ``docs/superpowers/specs/2026-07-23-trust-model-backtest-design.md``.
+See ``docs/archive/superpowers/specs/2026-07-23-trust-model-backtest-design.md``.
 """
