@@ -1,6 +1,5 @@
 {
   "enabled": true,
-  "handoffsEnabled": false,
   "maxLessons": 30,
   "topLessonsToShow": 5,
   "relevanceTopN": 5,
@@ -13,8 +12,8 @@
       "enabled": false,
       "staleHandoffDays": 7,
       "latencySpikeMultiplier": 2.0,
-      "errorRateThreshold": 0.10,
-      "effectivenessThreshold": 0.30,
+      "errorRateThreshold": 0.1,
+      "effectivenessThreshold": 0.3,
       "webhookUrl": null
     }
   }

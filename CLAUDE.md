@@ -7,14 +7,12 @@ A learning system for AI coding agents that captures lessons across sessions.
 | Component | Location |
 |-----------|----------|
 | CLI (Go) | `go/cmd/recall/` → `recall` binary; `go/cmd/recall-hook/` → hook helper; `go/internal/lessons/` (parser, store, decay) |
-| Core Python | `core/lessons.py`, `core/handoffs.py`, `core/debug_logger.py`, `core/tui/` (TUI only — the CLI is Go) |
-| TUI wrapper | `bin/claude-recall` (dispatches TUI to Python, everything else to the Go binary) |
-| Claude hooks | `plugins/claude-recall/hooks/scripts/` — `inject-hook.sh`, `smart-inject-hook.sh` (BM25, every prompt), `subagent-stop-hook.sh`, `stop-hook.sh`, `precompact-hook.sh`. `install.sh` installs from here; `adapters/claude-code/` is a stale duplicate. |
+| Core Python | `core/lessons.py`, `core/parsing.py`, `core/debug_logger.py` — library only; the CLI and hooks are Go |
+| Claude hooks | `plugins/claude-recall/hooks/scripts/` — `inject-hook.sh`, `smart-inject-hook.sh` (BM25, every prompt), `subagent-stop-hook.sh`, `stop-hook.sh`. `install.sh` installs from here; `adapters/claude-code/` is a stale duplicate. |
 | Hook wiring | `plugins/claude-recall/hooks/hooks.json` (timeouts in **seconds**) |
-| Tests | `tests/test_lessons_manager.py`, `tests/test_handoffs.py` |
+| Tests | `tests/test_lessons_manager.py`, `tests/test_format_compat.py` |
 | Project lessons | `.claude-recall/LESSONS.md` (gitignored by default) |
 | System lessons | `~/.local/state/claude-recall/LESSONS.md` (XDG state) |
-| Handoffs | `.claude-recall/HANDOFFS.md` (library exists, hooks removed) |
 | State files | `~/.local/state/claude-recall/` (decay, citation state, session dedup, logs) |
 
 ## How It Works
@@ -37,7 +35,6 @@ Stop hook → parses output, updates lessons, tracks citations
 # Run tests (auto-manages venv and dependencies)
 ./run-tests.sh                    # All tests
 ./run-tests.sh -v --tb=short      # With verbose output
-./run-tests.sh tests/test_tui/    # TUI tests only
 
 # CLI usage (Go binary, installed to ~/.local/bin/recall)
 recall inject 5                          # Top 5 by stars
@@ -46,7 +43,6 @@ recall score-relevance "query" --top 5   # Top 5 by relevance (requires API key)
 recall add pattern "Title" "Content"
 recall cite L001
 recall list / show <id> / edit <id> / delete <id>
-recall handoff list
 recall stats [--weekly] / digest
 
 # Build the Go binaries from source
@@ -65,7 +61,6 @@ Key gotchas:
 - `add_lesson()` requires **keyword args**: `level=`, `category=`, `title=`, `content=`
 - CLI subprocess tests need `env={**os.environ, "CLAUDE_RECALL_BASE": ..., "CLAUDE_RECALL_STATE": ..., "PROJECT_DIR": ...}`
 - Dev paths (`core/...`) differ from installed paths (`~/.config/claude-recall/...`)
-- TUI tests require `textual` (included in dev deps) - they skip gracefully if missing
 
 ## Environment
 
@@ -95,7 +90,7 @@ Claude Recall is also available as an OpenCode plugin (built against `@opencode-
 - **Plugin source**: `adapters/opencode/plugin.ts` → installed to `~/.config/opencode/plugins/lessons.ts`
 - **Memory logic**: `adapters/opencode/lib/memory.ts` → installed to `~/.config/opencode/plugins/lib/memory.ts` (MEMORY.md read, lesson→memory write-bridge, TF-IDF relevance)
 - **CLI**: `claude-recall`
-- **Commands**: `/lessons`, `/handoffs`
+- **Commands**: `/lessons`
 - **Tests**: `./run-tests.sh` (Python+structural), `./run-tests.sh bun` (TS unit tests, stock Node), `./run-tests.sh e2e` (live opencode sessions)
 
 **Development workflow:**

@@ -16,7 +16,7 @@ const (
 
 // Lesson represents a learned lesson from coding sessions
 type Lesson struct {
-	ID         string    // "L001" or "S001"
+	ID         string // "L001" or "S001"
 	Title      string
 	Content    string
 	Uses       int       // Total citations (capped at 100)

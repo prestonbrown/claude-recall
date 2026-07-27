@@ -5,16 +5,11 @@
 //   - Lifecycle arrives via the single `event` hook (Event union from the SDK);
 //     the old top-level "session.created"/"session.idle"/"message.created"/
 //     "session.compacted"/"command.executed" hooks no longer exist.
-//   - Session-start context (lessons + handoffs + todos + duty reminders +
+//   - Session-start context (lessons + duty reminders +
 //     MEMORY.md) is injected via experimental.chat.system.transform.
 //   - First-prompt relevance + periodic reminders append synthetic parts in
 //     chat.message instead of client.session.prompt({ noReply: true }).
-//   - Pre-compact context is pushed to experimental.session.compacting's
-//     output.context instead of a synthetic prompt.
-//   - Todo sync uses the native todo.updated event: OpenCode's todo tool is
-//     `todowrite` and the SDK delivers the full todo list, so the old
-//     tool.execute.after hook (coupled to Claude Code's tool naming) is gone.
-//   - /lessons and /handoffs are native OpenCode commands (command/*.md): the
+//   - /lessons is a native OpenCode command (command/*.md): the
 //     agent runs the claude-recall CLI itself. The command.executed +
 //     client.session.revert interception hack is deleted.
 //   - WRITE BRIDGE: lessons captured by `recall opencode session-idle` are
@@ -25,7 +20,7 @@
 //     <relevant-memory> synthetic part.
 
 import type { Plugin } from "@opencode-ai/plugin"
-import type { Part, TextPart, Todo } from "@opencode-ai/sdk"
+import type { Part, TextPart } from "@opencode-ai/sdk"
 import { readFileSync, existsSync, appendFileSync, mkdirSync, readdirSync, accessSync, constants } from 'fs';
 import { join, delimiter, dirname } from 'path';
 import { homedir } from 'os';
@@ -72,7 +67,7 @@ function log(level: LogLevel, event: string, data?: Record<string, any>): void {
 }
 
 // CLI detection. The `recall` Go binary handles everything this adapter needs
-// (`opencode <sub>`, `score-relevance`, `inject`, `handoff ...`). The
+// (`opencode <sub>`, `score-relevance`, `inject`). The
 // `claude-recall` wrapper is NOT a fallback: it routes unknown commands to the
 // Python TUI, which would hang on `opencode <sub>`.
 const isExec = (p: string) => { try { accessSync(p, constants.X_OK); return true; } catch { return false; } };
@@ -105,8 +100,8 @@ try { RECALL_BINARY = findRecallBinary(); } catch { /* handled in execRecall */ 
 
 // Whitelists for subprocess calls (defense-in-depth; args are passed as an
 // argv array to spawn, never through a shell).
-const ALLOWED_GO_COMMANDS = new Set(['session-start', 'session-idle', 'pre-compact', 'post-compact', 'session-end']);
-const ALLOWED_CLI_COMMANDS = new Set(['score-relevance', 'inject', 'handoff']);
+const ALLOWED_GO_COMMANDS = new Set(['session-start', 'session-idle']);
+const ALLOWED_CLI_COMMANDS = new Set(['score-relevance', 'inject']);
 
 // Claude Code auto-memory (MEMORY.md): memoryDir / readFileCapped /
 // readMemoryContext are imported from ./lib/memory (pure, unit-tested in
@@ -234,8 +229,6 @@ export const LessonsPlugin: Plugin = async ({ client, directory }) => {
     try {
       const result = await execGo("session-start", { cwd: projectDir, top_n: CONFIG.topLessonsToShow, include_duties: true, include_todos: true });
       if (result.lessons_context) { parts.push(`<lessons-context>\n${result.lessons_context}\n</lessons-context>`); sections.push('lessons'); }
-      if (result.handoffs_context) { parts.push(`<handoffs-context>\n${result.handoffs_context}\n</handoffs-context>`); sections.push('handoffs'); }
-      if (result.todos_prompt) { parts.push(`<todos-prompt>\n${result.todos_prompt}\n</todos-prompt>`); sections.push('todos'); }
       if (result.duty_reminders) { parts.push(result.duty_reminders); sections.push('duties'); }
     } catch (e) {
       log('error', 'session.injection_failed', { error: String(e), session_id: sid });
@@ -274,18 +267,6 @@ export const LessonsPlugin: Plugin = async ({ client, directory }) => {
     lastActivity.delete(sid);
     mirrorCounts.delete(sid);
   };
-
-  // `recall handoff list` has no --json mode; parse the "ID [status] title" lines.
-  async function findActiveHandoffId(): Promise<string> {
-    try {
-      const { stdout } = await execCli(["handoff", "list"]);
-      for (const line of stdout.split('\n')) {
-        const m = line.match(/^(\S+) \[([^\]]+)\]/);
-        if (m && m[2] !== "completed") return m[1];
-      }
-    } catch { /* no handoffs or CLI failure */ }
-    return "";
-  }
 
   // WRITE BRIDGE: mirror newly captured project lessons into Claude Code
   // auto-memory (feedback_<slug>.md + a bridge-owned MEMORY.md section), so
@@ -377,44 +358,11 @@ export const LessonsPlugin: Plugin = async ({ client, directory }) => {
         log('info', 'lessons.added', { lessons: result.lessons_added });
         mirrorAddedLessons(sid, result.lessons_added);
       }
-      if (result.handoff_ops?.length) log('info', 'handoff.ops', { ops: result.handoff_ops });
       checkpoints.set(sid, msgs.length);
     } catch (e) {
       log('debug', 'session.idle_failed', { error: String(e) });
     } finally {
       processing.delete(sid);
-    }
-  }
-
-  async function onSessionCompacted(sid: string): Promise<void> {
-    const s = state.get(sid);
-    if (!s) return;
-    log('info', 'compaction.end', { session_id: sid });
-    s.compactionOccurred = true;
-    try {
-      const res = await client.session.messages({ path: { id: sid } });
-      const recent = (res.data ?? []).filter(m => m.info.role === "assistant").slice(-5);
-      const indicators = ["completed", "finished", "done", "implemented", "ready for review", "successfully", "all tests pass"];
-      let hasCompletion = false;
-      for (const m of recent) {
-        const c = getText(m.parts).toLowerCase();
-        if (indicators.some(i => c.includes(i)) && !c.includes("not completed") && !c.includes("not finished") && !c.includes("not done")) { hasCompletion = true; break; }
-      }
-      const result = await execGo("post-compact", { cwd: projectDir, session_id: sid, handoff_id: "", phase: "", summary: "", completion_indicators: hasCompletion, all_todos_complete: false });
-      if (result.suggest_complete) log('info', 'handoff.completion_suggested', { session_id: sid });
-    } catch (e) {
-      log('debug', 'compaction.post_failed', { error: String(e) });
-    }
-  }
-
-  async function onTodoUpdated(sid: string, todos: Todo[]): Promise<void> {
-    const valid = (todos || []).filter(t => t?.content && t?.status);
-    if (!valid.length) return;
-    try {
-      const { stdout } = await execCli(["handoff", "sync-todos", JSON.stringify(valid), "--session-id", sid]);
-      if (stdout.trim()) log('info', 'handoff.sync_todos', { result: stdout.trim() });
-    } catch (e) {
-      log('debug', 'handoff.sync_failed', { error: String(e) });
     }
   }
 
@@ -431,21 +379,13 @@ export const LessonsPlugin: Plugin = async ({ client, directory }) => {
             await ensureSession(event.properties.info.id);
             break;
           case "session.deleted":
-            // NOTE: OpenCode still has no session.end event (as of 1.17.5) and
-            // session.deleted carries no conversation state, so there is
-            // nothing useful to send to `recall opencode session-end` (the Go
-            // command exists for when an end event lands). Cleanup only.
+            // OpenCode still has no session.end event (as of 1.17.5), and
+            // session.deleted carries no conversation state. Cleanup only.
             cleanupSession(event.properties.info.id);
             log('debug', 'session.cleanup', { session_id: event.properties.info.id });
             break;
           case "session.idle":
             await onSessionIdle(event.properties.sessionID);
-            break;
-          case "session.compacted":
-            await onSessionCompacted(event.properties.sessionID);
-            break;
-          case "todo.updated":
-            await onTodoUpdated(event.properties.sessionID, event.properties.todos);
             break;
         }
       } catch (e) {
@@ -547,24 +487,5 @@ export const LessonsPlugin: Plugin = async ({ client, directory }) => {
       }
     },
 
-    // Pre-compact: extra context strings for the compaction prompt.
-    "experimental.session.compacting": async (input, output) => {
-      if (!CONFIG.enabled) return;
-      const sid = input.sessionID;
-      if (!state.has(sid)) return;
-      log('info', 'compaction.start', { session_id: sid });
-      try {
-        const handoffId = await findActiveHandoffId();
-        const result = await execGo("pre-compact", { cwd: projectDir, session_id: sid, handoff_id: handoffId, files_modified: [], todos: [] });
-        if (result.context_to_inject) {
-          output.context.push(result.context_to_inject);
-          log('info', 'compaction.context_injected', { session_id: sid, bytes: result.context_to_inject.length });
-          log('debug', 'compaction.context_content', { session_id: sid, content: result.context_to_inject });
-        }
-        if (result.should_create_handoff) log('debug', 'compaction.handoff_suggested', { session_id: sid });
-      } catch (e) {
-        log('debug', 'compaction.pre_failed', { error: String(e) });
-      }
-    },
   };
 };

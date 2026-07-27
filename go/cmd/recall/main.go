@@ -1,4 +1,4 @@
-// Package main provides the recall CLI for managing lessons and handoffs.
+// Package main provides the recall CLI for managing lessons.
 package main
 
 import (

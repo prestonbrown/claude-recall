@@ -27,23 +27,9 @@ ROBOT_EMOJI = "\U0001f916"  # Robot emoji for AI lessons
 VELOCITY_DECAY_FACTOR = 0.5  # 50% half-life per decay cycle
 VELOCITY_EPSILON = 0.01  # Below this, treat velocity as zero
 
-# Handoff visibility constants
-HANDOFF_MAX_COMPLETED = 3  # Keep last N completed handoffs visible
-HANDOFF_MAX_AGE_DAYS = 7  # Or completed within N days
-HANDOFF_STALE_DAYS = 7  # Auto-archive active handoffs untouched for N days
-HANDOFF_COMPLETED_ARCHIVE_DAYS = 3  # Archive completed handoffs after N days
-HANDOFF_ORPHAN_DAYS = 1  # Auto-complete ready_for_review handoffs with all success after N days
-HANDOFF_COMPLETED_CAP_MULTIPLIER = 3  # Hard cap completed at N * HANDOFF_MAX_COMPLETED
-
 # Injection display constants
 INJECTION_REMAINING_CAP = 10  # Max remaining lessons to show titles for
 INJECTION_TITLE_TRUNCATE = 30  # Truncate lesson titles in remaining list
-
-# DEPRECATED (remove after 2025-06-01): Use HANDOFF_* constants instead
-APPROACH_MAX_COMPLETED = HANDOFF_MAX_COMPLETED
-APPROACH_MAX_AGE_DAYS = HANDOFF_MAX_AGE_DAYS
-APPROACH_STALE_DAYS = HANDOFF_STALE_DAYS
-APPROACH_COMPLETED_ARCHIVE_DAYS = HANDOFF_COMPLETED_ARCHIVE_DAYS
 
 # Relevance scoring constants
 SCORE_RELEVANCE_TIMEOUT = 30  # 30 seconds is enough for Haiku to score ~100 lessons
@@ -381,125 +367,6 @@ class DecayResult(FormattableResult):
 
 
 @dataclass
-class TriedStep:
-    """A single tried step within a Handoff.
-
-    Attributes:
-        description: What was attempted
-        outcome: 'success', 'fail', or 'partial'
-    """
-    outcome: str  # success|fail|partial
-    description: str
-
-
-# DEPRECATED (remove after 2025-06-01): Use TriedStep instead
-TriedApproach = TriedStep
-
-
-@dataclass
-class Handoff:
-    """Represents an active handoff being tracked (formerly called Approach)."""
-    id: str
-    title: str
-    status: str  # not_started|in_progress|blocked|completed
-    created: date
-    updated: date
-    description: str = ""
-    next_steps: str = ""
-    phase: str = "research"  # research|planning|implementing|review
-    agent: str = "user"  # explore|general-purpose|plan|review|user
-    refs: List[str] = field(default_factory=list)  # file:line refs (e.g., "core/main.py:50")
-    tried: List[TriedStep] = field(default_factory=list)
-    checkpoint: str = ""  # Progress summary from PreCompact hook (legacy, use handoff instead)
-    last_session: Optional[date] = None  # When checkpoint was last updated
-    handoff: Optional["HandoffContext"] = None  # Rich context for session handoffs
-    blocked_by: List[str] = field(default_factory=list)  # IDs of blocking handoffs
-    stealth: bool = False  # If True, stored in HANDOFFS_LOCAL.md (not committed to git)
-    sessions: List[str] = field(default_factory=list)  # Session IDs linked to this handoff
-
-    # Backward compatibility: 'files' is an alias for 'refs'
-    @property
-    def files(self) -> List[str]:
-        """Backward compatibility alias for refs."""
-        return self.refs
-
-    @files.setter
-    def files(self, value: List[str]) -> None:
-        """Backward compatibility setter for refs."""
-        self.refs = value
-
-
-# DEPRECATED (remove after 2025-06-01): Use Handoff instead
-Approach = Handoff
-
-
-@dataclass
-class LessonSuggestion:
-    """A suggested lesson to extract from a completed handoff.
-
-    Attributes:
-        category: Lesson category (pattern, gotcha, decision, correction, preference)
-        title: Suggested lesson title
-        content: Suggested lesson content
-        source: Where this suggestion came from (success_pattern, blocker, etc.)
-        confidence: How confident we are in this suggestion (low, medium, high)
-    """
-    category: str
-    title: str
-    content: str
-    source: str = "manual"  # success_pattern|blocker|failure_pattern|manual
-    confidence: str = "medium"  # low|medium|high
-
-
-@dataclass
-class HandoffCompleteResult(FormattableResult):
-    """Result of completing a handoff."""
-    handoff: Handoff
-    extraction_prompt: str
-    suggested_lessons: List[LessonSuggestion] = field(default_factory=list)
-
-    # Backward compatibility property
-    @property
-    def approach(self) -> Handoff:
-        """Backward compatibility alias for handoff."""
-        return self.handoff
-
-    def format(self) -> str:
-        """Format handoff completion result for display."""
-        lines = [
-            f"Completed [{self.handoff.id}] {self.handoff.title}",
-            "",
-            "Extraction prompt for lessons:",
-            self.extraction_prompt
-        ]
-
-        if self.suggested_lessons:
-            lines.append("")
-            lines.append("Suggested lessons to extract:")
-            for i, suggestion in enumerate(self.suggested_lessons, 1):
-                conf_indicator = {"low": "-", "medium": "", "high": "+"}.get(suggestion.confidence, "?")
-                lines.append(f"  {i}. [{suggestion.category}]{conf_indicator} {suggestion.title}")
-                lines.append(f"     {suggestion.content}")
-
-        return "\n".join(lines)
-
-
-# DEPRECATED (remove after 2025-06-01): Use HandoffCompleteResult instead
-ApproachCompleteResult = HandoffCompleteResult
-
-
-@dataclass
-class HandoffContext:
-    """Rich context for session handoffs."""
-    summary: str                    # 1-2 sentence progress summary
-    critical_files: List[str]       # 2-3 most important file:line refs
-    recent_changes: List[str]       # What was modified this session
-    learnings: List[str]            # Discoveries/patterns found
-    blockers: List[str]             # What's blocking progress
-    git_ref: str                    # Commit hash at handoff time
-
-
-@dataclass
 class ScoredLesson:
     """A lesson with a relevance score."""
     lesson: Lesson
@@ -541,9 +408,9 @@ class RelevanceResult(FormattableResult):
 
 @dataclass
 class ValidationResult(FormattableResult):
-    """Result of handoff resume validation."""
+    """Result of a validation pass, as a list of warnings and hard errors."""
     valid: bool
-    warnings: List[str] = field(default_factory=list)  # e.g., "Codebase changed since handoff"
+    warnings: List[str] = field(default_factory=list)  # e.g., "Codebase changed"
     errors: List[str] = field(default_factory=list)    # e.g., "File no longer exists: foo.py"
 
     def format(self) -> str:
@@ -563,36 +430,4 @@ class ValidationResult(FormattableResult):
 
         status = "INVALID" if not self.valid else "VALID (with warnings)"
         lines.insert(0, f"Validation: {status}")
-        return "\n".join(lines)
-
-
-@dataclass
-class HandoffResumeResult(FormattableResult):
-    """Result of resuming a handoff."""
-    handoff: Handoff
-    validation: ValidationResult
-    context: Optional[HandoffContext] = None
-
-    def format(self) -> str:
-        """Format resume result for display."""
-        lines = [
-            f"### [{self.handoff.id}] {self.handoff.title}",
-            f"- **Status**: {self.handoff.status} | **Phase**: {self.handoff.phase}",
-            "",
-            self.validation.format(),
-        ]
-
-        if self.context:
-            lines.append("")
-            lines.append("**Context**:")
-            lines.append(f"  - Summary: {self.context.summary}")
-            if self.context.critical_files:
-                lines.append(f"  - Critical files: {', '.join(self.context.critical_files)}")
-            if self.context.blockers:
-                lines.append(f"  - Blockers: {', '.join(self.context.blockers)}")
-
-        if self.handoff.next_steps:
-            lines.append("")
-            lines.append(f"**Next**: {self.handoff.next_steps}")
-
         return "\n".join(lines)

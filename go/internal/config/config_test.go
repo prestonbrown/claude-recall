@@ -52,8 +52,8 @@ func Test_LoadConfig_ValidFile_ReturnsValues(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.json")
 
 	configData := map[string]interface{}{
-		"base":       "/custom/base",
-		"state_dir":  "/custom/state",
+		"base":        "/custom/base",
+		"state_dir":   "/custom/state",
 		"project_dir": "/custom/project",
 		"debug_level": 2,
 	}
@@ -150,9 +150,9 @@ func Test_LoadConfig_LegacyEnvVars(t *testing.T) {
 
 	// Set legacy env vars
 	t.Setenv("RECALL_BASE", "/legacy/recall-base")
-	t.Setenv("LESSONS_BASE", "/legacy/lessons-base")  // This is also a legacy alias
+	t.Setenv("LESSONS_BASE", "/legacy/lessons-base") // This is also a legacy alias
 	t.Setenv("RECALL_DEBUG", "2")
-	t.Setenv("LESSONS_DEBUG", "1")  // RECALL_DEBUG takes precedence
+	t.Setenv("LESSONS_DEBUG", "1") // RECALL_DEBUG takes precedence
 
 	cfg, err := Load(nonExistentPath)
 	if err != nil {

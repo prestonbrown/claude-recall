@@ -3,7 +3,7 @@
 """
 LessonsManager class - Main entry point for Claude Recall.
 
-This module provides the LessonsManager class that combines lesson and handoff
+This module provides the LessonsManager class for lesson
 functionality through composition of mixins.
 """
 
@@ -41,24 +41,19 @@ def _read_claude_recall_settings() -> dict:
 # Handle both module import and direct script execution
 try:
     from core.lessons import LessonsMixin
-    from core.handoffs import HandoffsMixin
     from core.paths import PathResolver
 except ImportError:
     from lessons import LessonsMixin
-    from handoffs import HandoffsMixin
     from paths import PathResolver
 
 
-class LessonsManager(LessonsMixin, HandoffsMixin):
+class LessonsManager(LessonsMixin):
     """
     Manager for AI coding agent lessons.
 
     Provides methods to add, cite, edit, delete, promote, and list lessons
     stored in markdown format.
 
-    This class composes functionality from:
-    - LessonsMixin: All lesson-related operations
-    - HandoffsMixin: All handoff-related operations (formerly ApproachesMixin)
     """
 
     def __init__(self, lessons_base: Path, project_root: Path):

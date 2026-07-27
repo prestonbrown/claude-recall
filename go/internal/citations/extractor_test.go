@@ -143,21 +143,6 @@ func Test_Extract_NoCitations(t *testing.T) {
 	}
 }
 
-func Test_Extract_HandoffCitation(t *testing.T) {
-	text := "Working on [H001] handoff"
-	citations := Extract(text)
-
-	if len(citations) != 1 {
-		t.Fatalf("expected 1 citation, got %d", len(citations))
-	}
-	if citations[0].Type != "H" {
-		t.Errorf("expected type H, got %s", citations[0].Type)
-	}
-	if citations[0].ID != "H001" {
-		t.Errorf("expected ID H001, got %s", citations[0].ID)
-	}
-}
-
 func Test_Extract_MixedContent(t *testing.T) {
 	text := `Rating [★★★☆☆] score [3|4] template [L###]
 But valid citations: [L001], [S002], [H003]

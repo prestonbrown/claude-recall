@@ -22,13 +22,13 @@ func TestLesson_Tokens(t *testing.T) {
 			name:     "short title and content",
 			title:    "Test",
 			content:  "Content here",
-			expected: (4 + 12) / 4 + 20, // 24
+			expected: (4+12)/4 + 20, // 24
 		},
 		{
 			name:     "longer content",
 			title:    "A longer title here",
 			content:  "This is some longer content that should result in more tokens",
-			expected: (19 + 61) / 4 + 20, // 40
+			expected: (19+61)/4 + 20, // 40
 		},
 	}
 

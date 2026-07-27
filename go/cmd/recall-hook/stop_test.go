@@ -11,7 +11,6 @@ import (
 	"github.com/pbrown/claude-recall/internal/lessons"
 )
 
-
 func Test_StopHook_ParsesInput(t *testing.T) {
 	input := stopInput{
 		Cwd:            "/path/to/project",

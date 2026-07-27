@@ -426,7 +426,7 @@ class TestEndToEndTimingFlow:
             [
                 "python3", "-m", "core.cli",
                 "debug", "hook-end", "inject", "150.5",
-                "--phases", '{"load_lessons": 80.0, "load_handoffs": 70.5}'
+                "--phases", '{"load_lessons": 80.0, "score_lessons": 70.5}'
             ],
             capture_output=True,
             text=True,
@@ -457,67 +457,4 @@ class TestEndToEndTimingFlow:
         assert event["total_ms"] == 150.5
         assert "phases" in event, "hook_end should have phases"
         assert event["phases"]["load_lessons"] == 80.0
-        assert event["phases"]["load_handoffs"] == 70.5
-
-    def test_stats_aggregator_extracts_timing_from_hook_end(self, tmp_path):
-        """
-        Stats aggregator should correctly extract timing data from hook_end events.
-        """
-        from datetime import datetime, timezone, timedelta
-
-        # Create log file with hook_end events
-        log_dir = tmp_path / "state"
-        log_dir.mkdir(parents=True)
-        log_file = log_dir / "debug.log"
-
-        # Create recent timestamps (within 24h rolling window)
-        now = datetime.now(timezone.utc)
-        ts = now.isoformat().replace("+00:00", "Z")
-
-        events = [
-            {
-                "event": "hook_end",
-                "level": "debug",
-                "timestamp": ts,
-                "session_id": "sess-1",
-                "pid": 1,
-                "project": "test-proj",
-                "hook": "inject",
-                "total_ms": 100.0,
-                "phases": {"load_lessons": 60.0, "load_handoffs": 40.0}
-            },
-            {
-                "event": "hook_end",
-                "level": "debug",
-                "timestamp": ts,
-                "session_id": "sess-1",
-                "pid": 2,
-                "project": "test-proj",
-                "hook": "stop",
-                "total_ms": 200.0,
-                "phases": {"parse": 80.0, "cite": 120.0}
-            },
-        ]
-
-        with open(log_file, "w") as f:
-            for e in events:
-                f.write(json.dumps(e) + "\n")
-
-        # Import and use stats aggregator
-        from core.tui.log_reader import LogReader
-        from core.tui.stats import StatsAggregator
-
-        reader = LogReader(log_file, max_buffer=1000)
-        aggregator = StatsAggregator(reader)
-        stats = aggregator.compute()
-
-        # Verify timing stats are computed
-        assert stats.avg_hook_ms > 0, f"avg_hook_ms should be > 0, got {stats.avg_hook_ms}"
-        assert stats.avg_hook_ms == 150.0, f"Expected avg 150.0ms, got {stats.avg_hook_ms}"
-        assert stats.max_hook_ms == 200.0, f"Expected max 200.0ms, got {stats.max_hook_ms}"
-
-        # Verify hook breakdown
-        assert "inject" in stats.hook_timings, "Should have inject hook timing"
-        assert "stop" in stats.hook_timings, "Should have stop hook timing"
-        assert stats.hook_timings["inject"] == [100.0]
-        assert stats.hook_timings["stop"] == [200.0]
+        assert event["phases"]["score_lessons"] == 70.5

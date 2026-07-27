@@ -13,7 +13,6 @@ import (
 	"github.com/pbrown/claude-recall/internal/config"
 	"github.com/pbrown/claude-recall/internal/debuglog"
 	"github.com/pbrown/claude-recall/internal/eventlog"
-	"github.com/pbrown/claude-recall/internal/handoffs"
 	"github.com/pbrown/claude-recall/internal/lessons"
 	"github.com/pbrown/claude-recall/internal/models"
 )
@@ -26,9 +25,7 @@ type injectInput struct {
 
 // injectCombinedOutput is the JSON output for inject-combined
 type injectCombinedOutput struct {
-	Lessons  string `json:"lessons"`
-	Handoffs string `json:"handoffs"`
-	Todos    string `json:"todos"`
+	Lessons string `json:"lessons"`
 }
 
 // runInject outputs top n lessons for context injection
@@ -117,7 +114,7 @@ func runInject() int {
 	return 0
 }
 
-// runInjectCombined outputs lessons, handoffs, and todos as JSON
+// runInjectCombined outputs lessons as JSON
 func runInjectCombined() int {
 	// Parse optional n from args
 	n := 5
@@ -169,18 +166,6 @@ func runInjectCombined() int {
 	}
 	topLessons := allLessons[:n]
 
-	// Set up handoff store paths
-	handoffsPath := filepath.Join(projectDir, ".claude-recall", "HANDOFFS.md")
-	stealthPath := filepath.Join(projectDir, ".claude-recall", "HANDOFFS_LOCAL.md")
-	handoffStore := handoffs.NewStore(handoffsPath, stealthPath)
-
-	// Get active handoffs
-	activeHandoffs, err := handoffStore.List()
-	if err != nil {
-		// Non-fatal - continue without handoffs
-		activeHandoffs = []*models.Handoff{}
-	}
-
 	// Log which lessons are being injected
 	dlog := debuglog.New(cfg.StateDir, cfg.DebugLevel)
 	entries := make([]debuglog.LessonEntry, len(topLessons))
@@ -222,9 +207,7 @@ func runInjectCombined() int {
 
 	// Build output
 	result := injectCombinedOutput{
-		Lessons:  formatLessonsForInjection(topLessons),
-		Handoffs: formatHandoffsForInjection(activeHandoffs),
-		Todos:    formatTodosForInjection(activeHandoffs),
+		Lessons: formatLessonsForInjection(topLessons),
 	}
 
 	// Output JSON
@@ -261,84 +244,6 @@ func formatLessonsForInjection(lessons []*models.Lesson) string {
 	for _, l := range lessons {
 		output += fmt.Sprintf("### [%s] %s %s\n", l.ID, l.Rating(), l.Title)
 		output += fmt.Sprintf("> %s\n\n", l.Content)
-	}
-
-	return output
-}
-
-// formatHandoffsForInjection formats handoffs in markdown for context injection
-func formatHandoffsForInjection(handoffList []*models.Handoff) string {
-	if len(handoffList) == 0 {
-		return ""
-	}
-
-	output := "## Active Handoffs\n\n"
-	for _, h := range handoffList {
-		output += fmt.Sprintf("### [%s] %s\n", h.ID, h.Title)
-		output += fmt.Sprintf("- **Status**: %s | **Phase**: %s\n", h.Status, h.Phase)
-
-		if h.Description != "" {
-			output += fmt.Sprintf("- **Description**: %s\n", h.Description)
-		}
-
-		if h.Checkpoint != "" {
-			output += fmt.Sprintf("- **Checkpoint**: %s\n", h.Checkpoint)
-		}
-
-		if len(h.Tried) > 0 {
-			output += "\n**Tried**:\n"
-			for i, t := range h.Tried {
-				output += fmt.Sprintf("%d. [%s] %s\n", i+1, t.Outcome, t.Description)
-			}
-		}
-
-		if h.NextSteps != "" {
-			output += fmt.Sprintf("\n**Next**: %s\n", h.NextSteps)
-		}
-
-		output += "\n"
-	}
-
-	return output
-}
-
-// formatTodosForInjection formats handoffs as TodoWrite continuation prompts
-func formatTodosForInjection(handoffList []*models.Handoff) string {
-	if len(handoffList) == 0 {
-		return ""
-	}
-
-	// Find the most recent in_progress handoff
-	var activeHandoff *models.Handoff
-	for _, h := range handoffList {
-		if h.Status == "in_progress" {
-			activeHandoff = h
-			break
-		}
-	}
-
-	if activeHandoff == nil {
-		return ""
-	}
-
-	output := "## Todo Continuation\n\n"
-	output += fmt.Sprintf("Continue work on: **%s** [%s]\n\n", activeHandoff.Title, activeHandoff.ID)
-
-	if activeHandoff.NextSteps != "" {
-		output += fmt.Sprintf("Next steps: %s\n\n", activeHandoff.NextSteps)
-	}
-
-	if len(activeHandoff.Tried) > 0 {
-		output += "Previous attempts:\n"
-		// Show last 3 tried steps
-		start := len(activeHandoff.Tried) - 3
-		if start < 0 {
-			start = 0
-		}
-		for i := start; i < len(activeHandoff.Tried); i++ {
-			t := activeHandoff.Tried[i]
-			output += fmt.Sprintf("- [%s] %s\n", t.Outcome, t.Description)
-		}
 	}
 
 	return output

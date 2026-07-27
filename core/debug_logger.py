@@ -295,48 +295,6 @@ class DebugLogger:
             }
         )
 
-    def handoff_created(
-        self,
-        handoff_id: str,
-        title: str,
-        phase: str,
-        agent: str,
-    ) -> None:
-        """Log new handoff creation."""
-        if self._level < 1:
-            return
-        self._write(
-            {
-                "event": "handoff_created",
-                "level": "info",
-                "handoff_id": handoff_id,
-                "title": title,
-                "phase": phase,
-                "agent": agent,
-            }
-        )
-
-    def handoff_change(
-        self,
-        handoff_id: str,
-        action: str,  # status_change, phase_change, agent_change, tried_added
-        old_value: Optional[str] = None,
-        new_value: Optional[str] = None,
-    ) -> None:
-        """Log handoff state changes."""
-        if self._level < 1:
-            return
-        self._write(
-            {
-                "event": "handoff_change",
-                "level": "info",
-                "handoff_id": handoff_id,
-                "action": action,
-                "old_value": old_value,
-                "new_value": new_value,
-            }
-        )
-
     def handoff_completed(
         self,
         handoff_id: str,

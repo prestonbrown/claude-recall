@@ -143,13 +143,7 @@ class InjectCommand(Command):
 
 
 class InjectCombinedCommand(Command):
-    """Output lessons, handoffs, and todos in JSON for single-call injection.
-
-    Combines three separate calls into one to reduce subprocess overhead:
-    - inject (lessons)
-    - handoff inject (active handoffs)
-    - handoff inject-todos (todo continuation prompt)
-    """
+    """Output lessons in JSON for single-call injection."""
 
     def execute(self, args: Namespace, manager: Any) -> int:
         import json
@@ -158,22 +152,8 @@ class InjectCombinedCommand(Command):
         lessons_result = manager.inject_context(args.top_n)
         lessons_formatted = lessons_result.format()
 
-        # Get handoffs
-        handoffs_formatted = manager.handoff_inject(max_active=5)
-        # Normalize empty handoffs to empty string
-        if handoffs_formatted == "(no active handoffs)":
-            handoffs_formatted = ""
-
-        # Get todos for continuation (only if there are active handoffs)
-        todos_prompt = ""
-        active_handoffs = manager.handoff_list(include_completed=False)
-        if active_handoffs:
-            todos_prompt = manager.handoff_inject_todos()
-
         output = {
             "lessons": lessons_formatted,
-            "handoffs": handoffs_formatted,
-            "todos": todos_prompt,
         }
         print(json.dumps(output))
         return 0
@@ -341,11 +321,8 @@ class StopHookBatchCommand(Command):
     """Process multiple stop-hook operations in a single Python invocation.
 
     This command combines the following operations to reduce Python startup overhead:
-    1. Process handoffs from transcript (handoff process-transcript)
-    2. Sync todos to handoffs (handoff sync-todos)
-    3. Cite all provided lessons (cite)
-    4. Add transcript to linked handoff (handoff add-transcript)
-    5. Add AI-generated lessons in batch (add-ai-batch)
+    1. Cite all provided lessons (cite)
+    2. Add AI-generated lessons in batch (add-ai-batch)
 
     Expected savings: ~400-600ms (fewer Python startups + cached transcript)
     """
@@ -361,8 +338,6 @@ class StopHookBatchCommand(Command):
         ai_lessons_str = getattr(args, "ai_lessons", "")
 
         results = {
-            "handoffs_processed": 0,
-            "todos_synced": False,
             "citations_count": 0,
             "transcript_added": False,
             "git_commit_detected": False,
@@ -402,7 +377,7 @@ class StopHookBatchCommand(Command):
                             except json.JSONDecodeError:
                                 continue
 
-                    # Build transcript_data in the format expected by parse_transcript_for_handoffs
+                    # Build transcript_data for downstream processing
                     assistant_texts = []
                     last_todowrite = None
                     for entry in entries:
@@ -427,37 +402,7 @@ class StopHookBatchCommand(Command):
             except Exception as e:
                 results["errors"].append(f"transcript_read: {str(e)}")
 
-        # 2. Process handoffs from transcript data
-        if transcript_data:
-            try:
-                # Process handoffs
-                operations = manager.parse_transcript_for_handoffs(
-                    transcript_data, session_id=session_id
-                )
-                if operations:
-                    result = manager.handoff_batch_process(operations)
-                    results["handoffs_processed"] = len(
-                        [r for r in result.get("results", []) if r.get("ok")]
-                    )
-
-                # Sync todos if found
-                last_todowrite = transcript_data.get("last_todowrite")
-                if last_todowrite and isinstance(last_todowrite, list):
-                    # Get session handoff for priority targeting
-                    session_handoff = None
-                    if session_id:
-                        session_handoff = manager.handoff_get_by_session(session_id)
-                    sync_result = manager.handoff_sync_todos(
-                        last_todowrite,
-                        session_handoff=session_handoff,
-                        session_id=session_id,  # Prevents cross-session pollution
-                    )
-                    results["todos_synced"] = sync_result is not None
-
-            except Exception as e:
-                results["errors"].append(f"transcript_processing: {str(e)}")
-
-        # 3. Cite all provided lessons
+        # 1. Cite all provided lessons
         if citations_str:
             # Parse comma-separated citation IDs (L001,L002,S001)
             citation_ids = [c.strip() for c in citations_str.split(",") if c.strip()]
@@ -468,38 +413,9 @@ class StopHookBatchCommand(Command):
                 except ValueError as e:
                     results["errors"].append(f"cite_{lesson_id}: {str(e)}")
 
-        # 4. Add transcript to linked handoff
-        if session_id and transcript_path:
-            try:
-                add_result = manager.handoff_add_transcript(session_id, transcript_path)
-                results["transcript_added"] = add_result is not None
-            except Exception as e:
-                results["errors"].append(f"add_transcript: {str(e)}")
 
-        # 5. Auto-complete ready_for_review handoffs when git commit detected
-        results["git_commit_detected"] = git_commit_detected
-        if git_commit_detected:
-            try:
-                # Find handoff to complete - prefer session-linked, else any ready_for_review
-                handoff_to_complete = None
-                if session_id:
-                    handoff_to_complete = manager.handoff_get_by_session(session_id)
 
-                if handoff_to_complete and handoff_to_complete.status == "ready_for_review":
-                    manager.handoff_complete(handoff_to_complete.id)
-                    results["auto_completed"] = True
-                elif not handoff_to_complete:
-                    # No session-linked handoff - check for any ready_for_review
-                    handoffs = manager.handoff_list()
-                    for hf in handoffs:
-                        if hf.status == "ready_for_review":
-                            manager.handoff_complete(hf.id)
-                            results["auto_completed"] = True
-                            break
-            except Exception as e:
-                results["errors"].append(f"auto_complete: {str(e)}")
-
-        # 6. Add AI lessons in batch (saves 70-150ms per lesson vs individual calls)
+        # 2. Add AI lessons in batch (saves 70-150ms per lesson vs individual calls)
         if ai_lessons_str:
             try:
                 ai_lessons = json.loads(ai_lessons_str)

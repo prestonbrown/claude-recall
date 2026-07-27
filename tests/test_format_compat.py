@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 """Cross-implementation compatibility for the LESSONS.md on-disk format.
 
-The Go CLI owns writes in normal operation; the Python manager, the TUI's
-state reader, and the OpenCode adapter read the same files. When the stats
+The Go CLI owns writes in normal operation; the Python manager and the
+OpenCode adapter read the same files. When the stats
 split moved Uses/Velocity/Last into `.claude-recall/stats.json` and dropped
 the inline rating from headers, only the Go parser learned the new shape.
 
@@ -158,42 +158,6 @@ class TestStatsSidecar:
         apply_stats([lesson], {"L999": {"uses": 1, "velocity": 1.0, "last": "2026-01-01"}})
 
         assert lesson.uses == 12, "inline value must survive when sidecar lacks the ID"
-
-
-# =============================================================================
-# core/tui/state_reader.py
-# =============================================================================
-
-
-class TestStateReaderFormats:
-    """The TUI dashboard reads the same store."""
-
-    def _reader(self, tmp_path, markdown, stats):
-        from core.tui.state_reader import StateReader
-
-        project = tmp_path / "proj"
-        write_store(project / ".claude-recall", markdown, stats)
-        state = tmp_path / "state"
-        state.mkdir()
-        return StateReader(state_dir=state, project_root=project), project
-
-    def test_reads_current_format_with_sidecar(self, tmp_path):
-        reader, _ = self._reader(tmp_path, CURRENT, STATS)
-
-        lessons = reader.get_project_lessons()
-
-        assert [l.id for l in lessons] == ["L001", "L002"], "current format must parse"
-        assert lessons[0].uses == 12, "counters must come from the sidecar"
-        assert lessons[0].velocity == pytest.approx(3.67)
-        assert lessons[0].title == "Delimiter conflicts"
-
-    def test_reads_legacy_format_without_sidecar(self, tmp_path):
-        reader, _ = self._reader(tmp_path, LEGACY, None)
-
-        lessons = reader.get_project_lessons()
-
-        assert [l.id for l in lessons] == ["L001", "L002"]
-        assert lessons[0].uses == 12, "inline counters still work"
 
 
 # =============================================================================

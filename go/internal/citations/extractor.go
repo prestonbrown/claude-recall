@@ -6,7 +6,7 @@ import (
 	"github.com/pbrown/claude-recall/internal/transcript"
 )
 
-// Citation represents a lesson or handoff citation.
+// Citation represents a lesson citation.
 type Citation struct {
 	Type string // "L", "S", or "H"
 	ID   string // Full ID like "L001", "S002", "H001"

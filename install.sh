@@ -335,7 +335,7 @@ cleanup_old_commands() {
     # Commands are now served via plugin namespace (e.g., /claude-recall:lessons)
     local commands_dir="$HOME/.claude/commands"
     local removed=0
-    for cmd in lessons.md handoffs.md implement.md delegate.md review.md test-first.md; do
+    for cmd in lessons.md implement.md delegate.md review.md test-first.md; do
         if [[ -f "$commands_dir/$cmd" ]]; then
             rm -f "$commands_dir/$cmd"
             ((removed++))
@@ -393,20 +393,6 @@ sync_working_dir() {
         # Remove built binaries (will rebuild on install)
         rm -rf "$install_path/go/bin" 2>/dev/null || true
         log_success "Synced Go source to plugin cache"
-    fi
-}
-
-install_cli() {
-    # Install claude-recall TUI wrapper (Python-based, deps managed externally)
-    if [[ -f "$SCRIPT_DIR/bin/claude-recall" ]]; then
-        mkdir -p "$HOME/.local/bin"
-        cp "$SCRIPT_DIR/bin/claude-recall" "$HOME/.local/bin/"
-        chmod +x "$HOME/.local/bin/claude-recall"
-        log_success "Installed claude-recall TUI to ~/.local/bin/"
-    fi
-
-    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-        log_warn "Add ~/.local/bin to PATH for 'recall' and 'claude-recall' commands"
     fi
 }
 
@@ -495,7 +481,6 @@ install_claude() {
     # Install supporting files
     cleanup_old_commands
     install_state_dir
-    install_cli
 
     # Build and install Go binaries
     build_go_binaries
@@ -538,10 +523,6 @@ install_opencode() {
         log_success "Installed /lessons command"
     fi
 
-    if [[ -f "$SCRIPT_DIR/adapters/opencode/command/handoffs.md" ]]; then
-        cp "$SCRIPT_DIR/adapters/opencode/command/handoffs.md" "$command_dir/"
-        log_success "Installed /handoffs command"
-    fi
 
     # Ensure shared config exists
     merge_config
@@ -569,7 +550,7 @@ install_opencode() {
         claude_recall_section='
 ## Claude Recall
 
-Usage instructions (lessons, handoffs, LESSON:/HANDOFF: patterns) live in
+Usage instructions (lessons, LESSON: patterns) live in
 ~/.claude/CLAUDE.md, which opencode also loads — see the "Claude Recall"
 section there. Not duplicated here to avoid double injection.
 '
@@ -577,7 +558,7 @@ section there. Not duplicated here to avoid double injection.
         claude_recall_section='
 ## Claude Recall
 
-A learning system that tracks lessons and handoffs across sessions.
+A learning system that captures lessons across sessions.
 
 **Lessons System** - Track corrections/patterns:
 - Project lessons (`[L###]`): `.claude-recall/LESSONS.md`
@@ -586,12 +567,6 @@ A learning system that tracks lessons and handoffs across sessions.
 - Cite: Reference `[L001]` when applying lessons
 - View: `/lessons` command
 
-**Handoffs System** - Track multi-step work:
-- Active handoffs: `.claude-recall/HANDOFFS.md`
-- Create: Type `HANDOFF: title` or use `/handoffs add`
-- Update: `HANDOFF UPDATE H001: tried success - description`
-- Complete: `HANDOFF COMPLETE H001`
-- View: `/handoffs` command
 '
     fi
 
@@ -603,8 +578,6 @@ A learning system that tracks lessons and handoffs across sessions.
     fi
     echo "$claude_recall_section" >> "$agents_md"
     log_success "Wrote Claude Recall section to AGENTS.md"
-
-    install_cli
 
     log_success "Installed OpenCode adapter"
 }

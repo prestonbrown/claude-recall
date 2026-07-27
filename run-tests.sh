@@ -6,7 +6,6 @@
 # Modes:
 #   fast        Unit tests only, parallel (default)
 #   full        All tests, parallel
-#   tui         TUI tests only, parallel
 #   integration Integration tests only
 #   e2e         Live OpenCode adapter e2e (real model calls, NOT hermetic CI)
 #   bun         TypeScript unit tests only (tests/plugin_ts/, tsc + node)
@@ -65,7 +64,7 @@ run_ts_tests() {
 # no positional args were given - only shift when $1 is a known mode keyword.
 MODE="fast"
 case "${1:-}" in
-    full|tui|integration|e2e|bun|ts|fast)
+    full|integration|e2e|bun|ts|fast)
         MODE="$1"
         shift
         ;;
@@ -75,10 +74,6 @@ case "$MODE" in
         echo "Running full test suite (parallel, no live e2e)..."
         python -m pytest -n auto -m "not e2e" "$@"
         run_ts_tests
-        ;;
-    tui)
-        echo "Running TUI tests (parallel)..."
-        python -m pytest -n auto tests/test_tui/ "$@"
         ;;
     integration)
         echo "Running integration tests..."
@@ -93,7 +88,7 @@ case "$MODE" in
         ;;
     fast)
         echo "Running fast tests (parallel, no TUI/integration/e2e)..."
-        python -m pytest -n auto -m "not integration and not tui and not e2e" "$@"
+        python -m pytest -n auto -m "not integration and not e2e" "$@"
         run_ts_tests
         ;;
 esac

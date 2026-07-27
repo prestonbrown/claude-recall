@@ -200,7 +200,7 @@ LESSON DUTY: When user corrects you, something fails, or you discover a pattern:
         # Log token budget to debug log (background, non-blocking)
         if [[ $total_tokens -gt 0 && -n "$GO_RECALL" && -x "$GO_RECALL" ]]; then
             PROJECT_DIR="$cwd" "$GO_RECALL" debug injection-budget \
-                "$total_tokens" "$lessons_tokens" "0" "$duties_tokens" \
+                "$total_tokens" "$lessons_tokens" "$duties_tokens" \
                 >/dev/null 2>&1 &
         fi
 

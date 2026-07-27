@@ -324,61 +324,6 @@ class TestJsonLinesOutput:
         assert entry["velocity_after"] == 3.0
         assert entry["promotion_ready"] is False
 
-    def test_handoff_events(self, monkeypatch, temp_state_dir):
-        """Should log handoff lifecycle events."""
-        monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))
-        monkeypatch.setenv("CLAUDE_RECALL_DEBUG", "1")
-
-        logger = DebugLogger()
-
-        # Created event
-        logger.handoff_created(
-            handoff_id="H001",
-            title="Test handoff",
-            phase="research",
-            agent="user",
-        )
-
-        # Change event
-        logger.handoff_change(
-            handoff_id="H001",
-            action="phase_change",
-            old_value="research",
-            new_value="implementing",
-        )
-
-        # Completed event
-        logger.handoff_completed(
-            handoff_id="H001",
-            tried_count=3,
-            duration_days=5,
-        )
-
-        log_file = temp_state_dir / "debug.log"
-        lines = log_file.read_text().strip().split("\n")
-        assert len(lines) == 3
-
-        created = json.loads(lines[0])
-        assert created["event"] == "handoff_created"
-        assert created["handoff_id"] == "H001"
-
-        changed = json.loads(lines[1])
-        assert changed["event"] == "handoff_change"
-        assert changed["action"] == "phase_change"
-
-        completed = json.loads(lines[2])
-        assert completed["event"] == "handoff_completed"
-        assert completed["tried_count"] == 3
-
-
-# =============================================================================
-# Tests: Level Gating
-# =============================================================================
-
-
-class TestLevelGating:
-    """Test that events are gated by debug level."""
-
     def test_info_events_at_level_1(self, monkeypatch, temp_state_dir):
         """Info events should log at level 1."""
         monkeypatch.setenv("CLAUDE_RECALL_STATE", str(temp_state_dir))

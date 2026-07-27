@@ -47,11 +47,11 @@ Commands:
   inject [n]          Output top n lessons for context injection
                       Default: 5 lessons
 
-  inject-combined [n] Output lessons, handoffs, and todos as JSON
+  inject-combined [n] Output lessons as JSON
                       Input: JSON {"cwd", "session_id"} (optional)
-                      Output: JSON {"lessons", "handoffs", "todos"}
+                      Output: JSON {"lessons"}
 
-  stop-hook-batch     Batch process citations, handoffs, and todos
+  stop-hook-batch     Batch process citations and lessons
                       Input: JSON from stdin with transcript data
                       Output: JSON results
 

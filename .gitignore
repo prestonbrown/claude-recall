@@ -40,3 +40,6 @@ go/bin/
 # Trust experiment generated artifacts (regenerable, contain verbose transcript text)
 experiments/trust/data/
 experiments/trust/results/
+
+# Python virtualenv created by run-tests.sh
+.venv/

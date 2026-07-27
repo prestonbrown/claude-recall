@@ -38,7 +38,6 @@ CURRENT_SUITES=(
 #   test-velocity.sh         same, via core/lessons-manager.sh
 #   test-stop-hook.sh        expects ~/.config/claude-recall/.citation-state
 #                            (pre-XDG; state now lives in ~/.local/state)
-#   test-hook-guards.sh      expects APPROACHES.md (renamed to HANDOFFS.md)
 LEGACY_SUITES=(
     test-lessons-manager.sh
     test-velocity.sh

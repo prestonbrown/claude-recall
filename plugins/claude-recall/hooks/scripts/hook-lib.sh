@@ -8,7 +8,6 @@
 #
 # Functions provided:
 #   setup_env()         - Environment variable resolution + legacy exports
-#   find_python_manager() - Locate core/cli.py with fallback chain
 #   load_debug_level()  - Read from env > config.json > default
 #   get_ms()            - Get current time in milliseconds
 #   log_phase()         - Log timing for a phase
@@ -56,8 +55,9 @@ setup_env() {
     export LESSONS_BASE
     export LESSONS_DEBUG
 
-    # Locate Python manager
-    find_python_manager
+    # Locate the Go binaries. This used to hang off the Python helper that
+    # resolved the TUI; with the TUI gone it belongs here directly.
+    find_go_binary
 
     # Legacy bash manager path (rarely used now)
     BASH_MANAGER="$CLAUDE_RECALL_BASE/lessons-manager.sh"
@@ -109,41 +109,6 @@ find_go_binary() {
     export GO_RECALL GO_RECALL_HOOK
 }
 
-# Find Python TUI and set up Python environment.
-# The Python CLI (cli.py) has been removed - Go handles all CLI operations.
-# Python is only used for the TUI (tui_cli.py).
-#
-# Sets PYTHON_BIN to venv python if available (for anthropic support)
-# Sets PYTHON_TUI to the TUI entry point path
-find_python_manager() {
-    local base_dir=""
-    if [[ -f "$CLAUDE_RECALL_BASE/core/tui_cli.py" ]]; then
-        PYTHON_TUI="$CLAUDE_RECALL_BASE/core/tui_cli.py"
-        base_dir="$CLAUDE_RECALL_BASE"
-    else
-        # Dev location - relative to hook-lib.sh
-        local script_dir
-        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        PYTHON_TUI="$script_dir/../../core/tui_cli.py"
-        base_dir="$script_dir/../.."
-    fi
-
-    # Use venv python if available (has anthropic for trigger generation)
-    if [[ -x "$base_dir/.venv/bin/python" ]]; then
-        PYTHON_BIN="$base_dir/.venv/bin/python"
-    else
-        PYTHON_BIN="python3"
-    fi
-
-    # Legacy variable for backward compatibility (some scripts may reference it)
-    PYTHON_MANAGER="$PYTHON_TUI"
-
-    export PYTHON_MANAGER PYTHON_BIN PYTHON_TUI
-
-    # Also find Go binary (primary path for CLI operations)
-    find_go_binary
-}
-
 # ============================================================
 # SETTINGS HELPERS
 # ============================================================
@@ -158,15 +123,6 @@ is_enabled() {
     local enabled
     enabled=$(jq -r '.enabled' "$config" 2>/dev/null)
     [[ "$enabled" != "false" ]]  # Enabled unless explicitly false
-}
-
-# Check if handoffs are enabled in config.json
-# Returns 0 (true) if enabled, 1 (false) if disabled
-# Defaults to true if not set
-handoffs_enabled() {
-    local enabled
-    enabled=$(get_setting "handoffsEnabled" "true")
-    [[ "$enabled" == "true" ]]
 }
 
 # Read a numeric setting with default

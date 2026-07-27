@@ -20,9 +20,9 @@ func TestTrust_ExactValues(t *testing.T) {
 		c, i int
 		want float64
 	}{
-		{c: 0, i: 2, want: 0.25},              // (0+1)/(2+2)
-		{c: 1, i: 1, want: 2.0 / 3.0},         // (1+1)/(1+2)
-		{c: 3, i: 10, want: 4.0 / 12.0},       // (3+1)/(10+2)
+		{c: 0, i: 2, want: 0.25},        // (0+1)/(2+2)
+		{c: 1, i: 1, want: 2.0 / 3.0},   // (1+1)/(1+2)
+		{c: 3, i: 10, want: 4.0 / 12.0}, // (3+1)/(10+2)
 	}
 	for _, tc := range cases {
 		got := Trust(LessonStats{Injections: tc.i, Citations: tc.c}, 1, 1)
