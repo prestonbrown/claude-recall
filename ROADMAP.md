@@ -8,10 +8,9 @@ evidence behind it, not a wishlist. Shipped design docs live in
 
 ### Reap session dedup files
 
-`~/.local/state/claude-recall/` holds **2,310** `session-dedup-*.json` files, the
-oldest from 2026-02-23, and the state directory is **74 MB**. Nothing deletes
-them — `hook-lib.sh` only resolves the path and reads/writes. One file per
-session accumulates forever.
+One dedup file per session accumulates forever — nothing deletes them, and
+`hook-lib.sh` only resolves the path. A manual sweep on 2026-07-27 removed 2,270
+files dating back to 2026-02-23; without a reaper they will accumulate again.
 
 Needs an age-based sweep (the dedup set is only meaningful for a live session),
 run from a hook that already fires, or on `recall decay`.
@@ -70,13 +69,9 @@ increment is unscoped.
 
 ## Housekeeping
 
-- Remove the orphaned `~/.claude/plugins/cache/claude-recall/claude-recall/1.2.0/`
-  directory (with a stray `1.1.0` nested inside it). Unregistered since the
-  cache moved to 1.4.0.
-- `recall.log` reached 7.5 MB with no rotation policy documented.
-- The `chore/remove-handoffs` branch was squash-merged, so git cannot verify it
-  as merged; it also carries an accidental `.venv/` commit in its history.
-  Delete with `git branch -D` once you are satisfied with the merge.
+- `session-log.jsonl` is 57 MB and has no rotation or pruning policy. It is the
+  event log behind `recall stats`, `digest`, decay and the feedback loop, so it
+  cannot simply be truncated — pruning has to preserve the precision history.
 
 ## Conventions
 
