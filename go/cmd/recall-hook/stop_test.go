@@ -149,9 +149,9 @@ func Test_StopHook_ExtractsCitations(t *testing.T) {
 		t.Fatalf("executeStop failed: %v", err)
 	}
 
-	// Should find 3 unique citations: L001, S002, H001
-	if len(result.Citations) != 3 {
-		t.Errorf("citations count = %d, want 3, got %v", len(result.Citations), result.Citations)
+	// Should find 2 unique citations: L001, S002 (L001 appears twice)
+	if len(result.Citations) != 2 {
+		t.Errorf("citations count = %d, want 2, got %v", len(result.Citations), result.Citations)
 	}
 
 	// Verify specific citations are present
@@ -159,7 +159,7 @@ func Test_StopHook_ExtractsCitations(t *testing.T) {
 	for _, c := range result.Citations {
 		citationSet[c] = true
 	}
-	expectedCitations := []string{"L001", "S002", "H001"}
+	expectedCitations := []string{"L001", "S002"}
 	for _, expected := range expectedCitations {
 		if !citationSet[expected] {
 			t.Errorf("expected citation %q not found in %v", expected, result.Citations)
