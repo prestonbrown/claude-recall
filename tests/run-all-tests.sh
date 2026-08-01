@@ -27,6 +27,7 @@ NC='\033[0m'
 
 CURRENT_SUITES=(
     test-install.sh
+    test-hook-guards.sh
 )
 
 # Suites written against interfaces that later changed. Each fails on stale
@@ -42,7 +43,6 @@ LEGACY_SUITES=(
     test-lessons-manager.sh
     test-velocity.sh
     test-stop-hook.sh
-    test-hook-guards.sh
 )
 
 run_legacy=0
