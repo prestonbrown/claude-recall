@@ -104,7 +104,6 @@ Edit `~/.config/claude-recall/config.json`:
   "enabled": true,
   "topLessonsToShow": 5,
   "relevanceTopN": 5,
-  "remindEvery": 12,
   "decayIntervalDays": 7,
   "debugLevel": 1,
   "small_model": "claude-3-5-haiku-latest"
@@ -231,7 +230,6 @@ cp -r core/*.py ~/.config/claude-recall/
 | `RECALL_BASE` | - | Legacy alias for system lessons location |
 | `LESSONS_BASE` | - | Legacy alias for system lessons location |
 | `PROJECT_DIR` | Current directory | Project root |
-| `LESSON_REMIND_EVERY` | `12` | Reminder frequency (prompts) |
 
 ### Claude Recall Settings
 

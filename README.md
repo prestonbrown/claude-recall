@@ -76,7 +76,7 @@ Installs `plugins/lessons.ts` + `plugins/lib/memory.ts`, the `/lessons` command,
 
 ### Features
 
-- [x] Lessons system (injection, capture, decay, reminders)
+- [x] Lessons system (injection, capture, decay)
 - [x] Compaction support (`experimental.session.compacting`)
 - [x] Claude auto-memory integration
   - reads project `MEMORY.md` (+ global tier) at session start
@@ -93,7 +93,6 @@ Create or edit `~/.config/claude-recall/config.json`:
   "enabled": true,
   "topLessonsToShow": 5,
   "relevanceTopN": 5,
-  "remindEvery": 12,
   "decayIntervalDays": 7,
   "debugLevel": 1,
   "mirrorMemory": true,
@@ -269,7 +268,6 @@ In `~/.config/claude-recall/config.json`:
 {
   "enabled": true,
   "debugLevel": 0,
-  "remindEvery": 12,
   "topLessonsToShow": 5,
   "relevanceTopN": 5,
   "promotionThreshold": 50,
@@ -285,7 +283,7 @@ When installed as a plugin, hooks are automatically configured via `plugins/clau
 | Hook | Scripts | Purpose |
 |------|---------|---------|
 | `SessionStart` | inject-hook.sh | Inject lessons |
-| `UserPromptSubmit` | capture-hook.sh, smart-inject-hook.sh, lesson-reminder-hook.sh | Capture prompt, relevance scoring, reminders |
+| `UserPromptSubmit` | capture-hook.sh, smart-inject-hook.sh | Capture prompt, relevance scoring |
 | `Stop` | stop-hook.sh | Extract citations, capture lessons |
 | `PreCompact` | precompact-hook.sh | Preserve session progress |
 
@@ -295,7 +293,6 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full hook registration 
 |---------|---------|-------------|
 | `enabled` | true | Enable/disable the lessons system |
 | `debugLevel` | 0 | 0=off, 1=info, 2=debug, 3=trace |
-| `remindEvery` | 12 | Show lesson duty reminder every N prompts |
 | `topLessonsToShow` | 5 | Lessons injected at session start (with full content) |
 | `relevanceTopN` | 5 | Lessons injected by relevance scoring |
 | `promotionThreshold` | 50 | Uses before project→system promotion |

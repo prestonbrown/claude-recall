@@ -74,19 +74,14 @@ class TestChatMessage:
         assert "isFirstPrompt" in plugin_content, \
             "Plugin should track isFirstPrompt state"
 
-    def test_periodic_reminders_on_nth_prompt(self, plugin_content):
-        """Verify periodic reminders show high-star lessons every N prompts."""
-        assert "promptCount" in plugin_content, \
-            "Plugin should track prompt count for periodic reminders"
-        assert "CONFIG.remindEvery" in plugin_content, \
-            "Plugin should use CONFIG.remindEvery for reminder frequency"
-
-    def test_periodic_reminders_inject_top_lessons(self, plugin_content):
-        """Verify periodic reminders inject top lessons by stars."""
-        assert "inject" in plugin_content, \
-            "Plugin should call inject CLI command for periodic reminders"
-        assert "CONFIG.topLessonsToShow" in plugin_content, \
-            "Plugin should use CONFIG.topLessonsToShow for reminders"
+    def test_no_periodic_reminder_injection(self, plugin_content):
+        """Periodic re-injection is gone. Session-start context plus per-prompt
+        relevance cover the same ground, and a prompt counter fires on nothing
+        that correlates with the model actually losing the lessons."""
+        assert "remindEvery" not in plugin_content, \
+            "Plugin should not carry a periodic reminder interval"
+        assert "promptCount" not in plugin_content, \
+            "Plugin should not count prompts for periodic reminders"
 
     def test_injections_append_synthetic_parts(self, plugin_content):
         """Verify per-prompt injections append synthetic parts to the message."""
@@ -409,8 +404,6 @@ class TestSessionState:
             "Plugin should use Map for session state tracking"
         assert "isFirstPrompt" in plugin_content, \
             "Plugin should track isFirstPrompt state"
-        assert "promptCount" in plugin_content, \
-            "Plugin should track promptCount state"
         assert "compactionOccurred" in plugin_content, \
             "Plugin should track compactionOccurred state"
 

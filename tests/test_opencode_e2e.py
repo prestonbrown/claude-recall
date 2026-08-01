@@ -159,7 +159,7 @@ until the gauge reads zero. Never recalibrate a hot zorblaxflange.
     plugin_config = root / "plugin-config.json"
     plugin_config.write_text(json.dumps({
         "enabled": True, "topLessonsToShow": 5, "relevanceTopN": 5,
-        "remindEvery": 12, "debugLevel": 3, "memoryMaxBytes": 8192,
+        "debugLevel": 3, "memoryMaxBytes": 8192,
     }))
 
     # --- fixture opencode config dir ---

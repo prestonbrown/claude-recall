@@ -363,7 +363,7 @@ Claude Recall uses four hooks provided by Claude Code:
 | Hook | Trigger | Purpose | Target Latency |
 |------|---------|---------|----------------|
 | `SessionStart` | Session begins | Inject lessons | <500ms |
-| `UserPromptSubmit` | User sends message | Capture prompt, relevance scoring, reminders | <2s (Haiku) |
+| `UserPromptSubmit` | User sends message | Capture prompt, relevance scoring | <2s (Haiku) |
 | `Stop` | Assistant turn complete | Extract citations + patterns | <100ms (Go) |
 | `PreCompact` | Before context compaction | Preserve session progress | <3s (Haiku) |
 
@@ -379,8 +379,7 @@ Claude Recall uses four hooks provided by Claude Code:
     "UserPromptSubmit": [{
       "hooks": [
         { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/capture-hook.sh\"", "timeout": 5000 },
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/smart-inject-hook.sh\"", "timeout": 15000 },
-        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lesson-reminder-hook.sh\"", "timeout": 2000 }
+        { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/smart-inject-hook.sh\"", "timeout": 15000 }
       ]
     }],
     "Stop": [{

@@ -1,6 +1,6 @@
 {
   "name": "claude-recall",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "AI memory for Claude Code - captures lessons across sessions",
   "author": { "name": "Claude Recall Contributors" },
   "repository": "https://github.com/prestonbrown/claude-recall",

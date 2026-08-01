@@ -350,6 +350,9 @@ install_state_dir() {
     # Create state directory structure
     mkdir -p "$CLAUDE_RECALL_STATE"
 
+    # The periodic lesson reminder is gone; its prompt counter has no reader left
+    rm -f "$CLAUDE_RECALL_STATE/.reminder-state" 2>/dev/null || true
+
     # Create system lessons file if it doesn't exist
     if [[ ! -f "$CLAUDE_RECALL_STATE/LESSONS.md" ]]; then
         cat > "$CLAUDE_RECALL_STATE/LESSONS.md" << 'EOF'

@@ -7,8 +7,8 @@
 //     "session.compacted"/"command.executed" hooks no longer exist.
 //   - Session-start context (lessons + duty reminders +
 //     MEMORY.md) is injected via experimental.chat.system.transform.
-//   - First-prompt relevance + periodic reminders append synthetic parts in
-//     chat.message instead of client.session.prompt({ noReply: true }).
+//   - First-prompt relevance appends synthetic parts in chat.message instead
+//     of client.session.prompt({ noReply: true }).
 //   - /lessons is a native OpenCode command (command/*.md): the
 //     agent runs the claude-recall CLI itself. The command.executed +
 //     client.session.revert interception hack is deleted.
@@ -34,7 +34,7 @@ import {
 
 // Configuration
 const DEFAULT_CONFIG = {
-  enabled: true, topLessonsToShow: 5, relevanceTopN: 5, remindEvery: 12, debugLevel: 1,
+  enabled: true, topLessonsToShow: 5, relevanceTopN: 5, debugLevel: 1,
   memoryMaxBytes: 8192,
   mirrorMemory: true,            // write bridge: opencode lessons -> memory files
   mirrorMemoryMaxPerSession: 10, // runaway cap on mirrored files per session
@@ -120,7 +120,7 @@ function syntheticTextPart(sessionID: string, messageID: string, text: string): 
   return { id: `prt_cr${Date.now().toString(36)}${(partCounter++).toString(36)}`, sessionID, messageID, type: "text", text, synthetic: true };
 }
 
-interface SessionState { isFirstPrompt: boolean; promptCount: number; compactionOccurred: boolean }
+interface SessionState { isFirstPrompt: boolean; compactionOccurred: boolean }
 
 // Plugin export
 export const LessonsPlugin: Plugin = async ({ client, directory }) => {
@@ -250,7 +250,7 @@ export const LessonsPlugin: Plugin = async ({ client, directory }) => {
       pending = (async () => {
         log('info', 'session.start', { session_id: sid });
         const ctx = await buildSessionContext(sid);
-        state.set(sid, { isFirstPrompt: true, promptCount: 0, compactionOccurred: false });
+        state.set(sid, { isFirstPrompt: true, compactionOccurred: false });
         systemContext.set(sid, ctx);
         touchSession(sid);
       })().finally(() => pendingInit.delete(sid));
@@ -415,8 +415,8 @@ export const LessonsPlugin: Plugin = async ({ client, directory }) => {
       }
     },
 
-    // First-prompt relevance injection + periodic reminders, appended as
-    // synthetic parts on the incoming user message.
+    // First-prompt relevance injection, appended as a synthetic part on the
+    // incoming user message.
     "chat.message": async (input, output) => {
       if (!CONFIG.enabled) return;
       const sid = input.sessionID;
@@ -468,19 +468,6 @@ export const LessonsPlugin: Plugin = async ({ client, directory }) => {
             } catch (e) { log('debug', 'injection.memory_relevance_failed', { error: String(e) }); }
           }
           s.isFirstPrompt = false;
-        }
-
-        s.promptCount++;
-        if (s.promptCount % CONFIG.remindEvery === 0) {
-          try {
-            const { stdout } = await execCli(["inject", String(CONFIG.topLessonsToShow)]);
-            if (stdout.trim()) {
-              const part = `<periodic-reminder>\n${stdout.trim()}\n</periodic-reminder>`;
-              output.parts.push(syntheticTextPart(sid, messageID, part));
-              log('info', 'chat.reminder_injected', { session_id: sid, bytes: part.length });
-            }
-          } catch (e) { log('debug', 'injection.periodic_failed', { error: String(e) }); }
-          s.promptCount = 0;
         }
       } catch (e) {
         log('debug', 'chat.message_failed', { error: String(e) });
